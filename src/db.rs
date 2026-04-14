@@ -46,18 +46,21 @@ fn extract_pg_host(url: &str) -> String {
 
 /// Extract the `sslmode` query parameter value from a PostgreSQL URL.
 ///
-/// Parses only the query string portion (after `?`), splitting on `&` and
-/// looking for a parameter whose key is exactly `sslmode`.
+/// Matches sqlx behavior (sqlx-postgres 0.8.6):
+/// - Accepts both `sslmode` and `ssl-mode` as key names (parse.rs:52)
+/// - Lowercases the value (`PgSslMode::from_str` does `to_ascii_lowercase()`)
+/// - Returns the **last** occurrence if duplicated (parse.rs:50 reassigns each match)
 fn extract_sslmode(url: &str) -> Option<String> {
     let query = url.split('?').nth(1)?;
+    let mut result = None;
     for param in query.split('&') {
         if let Some((key, value)) = param.split_once('=') {
-            if key == "sslmode" {
-                return Some(value.to_string());
+            if key == "sslmode" || key == "ssl-mode" {
+                result = Some(value.to_ascii_lowercase());
             }
         }
     }
-    None
+    result
 }
 
 /// Validate that a remote PostgreSQL connection uses TLS.
@@ -283,5 +286,74 @@ mod tests {
             false
         )
         .is_err());
+    }
+
+    // ─── P1: last sslmode wins (matches sqlx behavior) ──
+
+    #[test]
+    fn last_sslmode_wins_when_duplicated() {
+        // sqlx reassigns on each occurrence, so the last value wins.
+        assert_eq!(
+            extract_sslmode("postgres://host/db?sslmode=require&sslmode=disable"),
+            Some("disable".to_string())
+        );
+    }
+
+    #[test]
+    fn duplicate_sslmode_require_then_disable_rejects_tls() {
+        assert!(validate_database_tls(
+            "postgres://db.example.com/db?sslmode=require&sslmode=disable",
+            Environment::Prod,
+            false
+        )
+        .is_err());
+    }
+
+    // ─── P2: ssl-mode alias + case insensitive (matches sqlx) ──
+
+    #[test]
+    fn accepts_ssl_mode_hyphenated_key() {
+        assert_eq!(
+            extract_sslmode("postgres://host/db?ssl-mode=require"),
+            Some("require".to_string())
+        );
+    }
+
+    #[test]
+    fn ssl_mode_hyphenated_passes_tls_validation() {
+        assert!(validate_database_tls(
+            "postgres://db.example.com/db?ssl-mode=verify-full",
+            Environment::Prod,
+            false
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn sslmode_value_is_case_insensitive() {
+        assert_eq!(
+            extract_sslmode("postgres://host/db?sslmode=VERIFY-FULL"),
+            Some("verify-full".to_string())
+        );
+    }
+
+    #[test]
+    fn uppercase_sslmode_passes_tls_validation() {
+        assert!(validate_database_tls(
+            "postgres://db.example.com/db?sslmode=REQUIRE",
+            Environment::Prod,
+            false
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn mixed_case_ssl_mode_passes_tls_validation() {
+        assert!(validate_database_tls(
+            "postgres://db.example.com/db?ssl-mode=Verify-Ca",
+            Environment::Prod,
+            false
+        )
+        .is_ok());
     }
 }
