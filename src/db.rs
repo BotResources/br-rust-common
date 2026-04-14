@@ -44,6 +44,22 @@ fn extract_pg_host(url: &str) -> String {
         .to_string()
 }
 
+/// Extract the `sslmode` query parameter value from a PostgreSQL URL.
+///
+/// Parses only the query string portion (after `?`), splitting on `&` and
+/// looking for a parameter whose key is exactly `sslmode`.
+fn extract_sslmode(url: &str) -> Option<String> {
+    let query = url.split('?').nth(1)?;
+    for param in query.split('&') {
+        if let Some((key, value)) = param.split_once('=') {
+            if key == "sslmode" {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Validate that a remote PostgreSQL connection uses TLS.
 ///
 /// - Localhost connections are always allowed (no TLS needed for local dev).
@@ -62,9 +78,8 @@ pub fn validate_database_tls(
         return Ok(());
     }
 
-    let has_tls = url.contains("sslmode=require")
-        || url.contains("sslmode=verify-ca")
-        || url.contains("sslmode=verify-full");
+    let has_tls = extract_sslmode(url)
+        .is_some_and(|m| matches!(m.as_str(), "require" | "verify-ca" | "verify-full"));
 
     if !has_tls {
         if allow_insecure && environment != Environment::Prod {
@@ -223,6 +238,49 @@ mod tests {
             "postgres://db.example.com/db",
             Environment::Prod,
             true
+        )
+        .is_err());
+    }
+
+    // ─── extract_sslmode ─────────────────────────────
+
+    #[test]
+    fn extracts_sslmode_require() {
+        assert_eq!(
+            extract_sslmode("postgres://host/db?sslmode=require"),
+            Some("require".to_string())
+        );
+    }
+
+    #[test]
+    fn extracts_sslmode_among_other_params() {
+        assert_eq!(
+            extract_sslmode("postgres://host/db?connect_timeout=10&sslmode=verify-full&app=test"),
+            Some("verify-full".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_when_no_sslmode() {
+        assert_eq!(
+            extract_sslmode("postgres://host/db?connect_timeout=10"),
+            None
+        );
+    }
+
+    #[test]
+    fn returns_none_when_no_query_string() {
+        assert_eq!(extract_sslmode("postgres://host/db"), None);
+    }
+
+    #[test]
+    fn sslmode_in_path_does_not_count_as_param() {
+        // A URL where "sslmode=require" appears in a non-query-param position
+        // must not be treated as having TLS enabled.
+        assert!(validate_database_tls(
+            "postgres://db.example.com/app?foo=sslmode=require",
+            Environment::Prod,
+            false
         )
         .is_err());
     }
