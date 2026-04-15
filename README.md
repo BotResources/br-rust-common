@@ -11,7 +11,7 @@ Provides the shared foundation that all backend services depend on: authenticati
 | `passport` | `Passport` enum (Human/Service) with typed identity fields + generic `claims: Value` |
 | `passport_header` | `PassportHeader` trait — base64 JSON encode/decode for `X-Passport` header |
 | `middleware` | Axum middleware that parses `X-Passport` into `Extension<Passport>` |
-| `rls` | `set_rls_context()` — injects `app.current_user_id`, `app.is_super_admin`, `app.is_active` into Postgres session |
+| `rls` | `set_rls_context()` — transaction-local RLS settings (`app.current_user_id`, `app.is_super_admin`, `app.is_active`) via `set_config(..., true)` — requires explicit transaction |
 | `grant` | `grant_app_access(pool, role_name)` — parameterized GRANT for app role |
 | `db` | `init_pool()`, `init_migration_pool()`, `validate_database_tls()` |
 | `config` | `Environment` enum, `Config::from_env()` |
