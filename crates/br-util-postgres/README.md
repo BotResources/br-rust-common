@@ -15,4 +15,4 @@ via `set_config(..., true)`).
 pooling/RLS strategy. Don't reach into this crate to "bypass" TLS — set
 `ALLOW_INSECURE=true` in non-prod environments instead.
 
-**Current version.** `0.1.0`
+**Current version.** `0.3.0`

@@ -1,11 +1,11 @@
 [package]
 name = "br-util-postgres"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 description = "Postgres helpers for BotResources services: pools, TLS validation, RLS context, grants"
-repository = "https://github.com/BotResources/br-service-core"
+repository = "https://github.com/BotResources/br-rust-common"
 
 [dependencies]
 br-core-auth = { workspace = true }

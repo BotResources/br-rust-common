@@ -12,4 +12,4 @@ share an event shape with other services (replay, analytics, projections).
 should be defined per-context, not here. This crate holds only the neutral
 transport shapes.
 
-**Current version.** `0.1.0`
+**Current version.** `0.3.0`

@@ -13,4 +13,4 @@ Missing, empty, or malformed headers return `401 Unauthorized`.
 **When not to use.** The service uses a different HTTP framework, or does
 its own identity extraction (e.g. parses a JWT directly).
 
-**Current version.** `0.1.0`
+**Current version.** `0.3.0`

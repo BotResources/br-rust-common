@@ -13,4 +13,4 @@ encapsulates the base64/JSON encoding for the `X-Passport` HTTP header.
 extracted the identity from the Passport into its own domain types. Don't
 pass `Passport` through the domain layer.
 
-**Current version.** `0.1.0`
+**Current version.** `0.3.0`
