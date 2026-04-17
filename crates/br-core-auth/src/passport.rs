@@ -47,7 +47,13 @@ impl Passport {
     /// Returns `true` only for `Human { is_super_admin: true, .. }`.
     /// Service accounts are never super admin.
     pub fn is_super_admin(&self) -> bool {
-        matches!(self, Passport::Human { is_super_admin: true, .. })
+        matches!(
+            self,
+            Passport::Human {
+                is_super_admin: true,
+                ..
+            }
+        )
     }
 
     /// Returns `true` for `Human { is_active: true, .. }`.
@@ -69,7 +75,9 @@ impl Passport {
     /// Extract a typed value from the claims bag by key.
     /// Returns `None` if the key is missing or deserialization fails.
     pub fn claim<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.claims().get(key).and_then(|v| serde_json::from_value(v.clone()).ok())
+        self.claims()
+            .get(key)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 }
 
@@ -239,7 +247,10 @@ mod tests {
         }"#;
         let p: Passport = serde_json::from_str(json).unwrap();
         assert!(matches!(p, Passport::Human { .. }));
-        assert_eq!(p.claim::<String>("email").as_deref(), Some("bob@example.com"));
+        assert_eq!(
+            p.claim::<String>("email").as_deref(),
+            Some("bob@example.com")
+        );
     }
 
     #[test]

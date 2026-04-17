@@ -1,57 +1,47 @@
-# br-service-core
+# br-rust-common
 
-Generic service infrastructure core for BotResources projects.
+Catalogue de petites crates Rust réutilisables par les services BotResources.
 
-Provides the shared foundation that all backend services depend on: authentication (Passport), database (RLS, connection pools), messaging (NATS, KV), configuration, and foundational types (UserId, events).
+> Le repo s'appelle encore `br-service-core` pour le rename GitHub prévu en
+> post-merge. Les crates publiées vivent dans `crates/`.
 
-## Modules
+## Catalogue
 
-| Module | Purpose |
-|--------|---------|
-| `passport` | `Passport` enum (Human/Service) with typed identity fields + generic `claims: Value` |
-| `passport_header` | `PassportHeader` trait — base64 JSON encode/decode for `X-Passport` header |
-| `middleware` | Axum middleware that parses `X-Passport` into `Extension<Passport>` |
-| `rls` | `set_rls_context()` — transaction-local RLS settings (`app.current_user_id`, `app.is_super_admin`, `app.is_active`) via `set_config(..., true)` — requires explicit transaction |
-| `grant` | `grant_app_access(pool, role_name)` — parameterized GRANT for app role |
-| `db` | `init_pool()`, `init_migration_pool()`, `validate_database_tls()` |
-| `config` | `Environment` enum, `Config::from_env()` |
-| `error` | `InfraError` (Db, Config, Unauthenticated) |
-| `ids` | `UserId(Uuid)`, `ServiceAccountId(Uuid)` newtypes |
-| `event` | `EventMetadata`, `RawEvent`, `DomainEvent` |
-| `kv` | `KvPorts` trait + `InMemoryKv` (behind `test-support` feature) |
-| `kv_nats` | `NatsKv` — NATS JetStream KV implementation of `KvPorts` |
-| `pat` | PAT / API key generation + SHA-256 hashing |
-| `net` | `is_localhost()` with `TRUSTED_HOSTS` support |
+| Crate | Catégorie | Purpose |
+|-------|-----------|---------|
+| [`br-core-kernel`](crates/br-core-kernel) | core | Typed ID wrappers (`UserId`, `ServiceAccountId`) |
+| [`br-core-auth`](crates/br-core-auth) | core | `Passport` DTO + `PassportHeader` trait pour `X-Passport` |
+| [`br-core-events`](crates/br-core-events) | core | Types partagés pour événements (`EventMetadata`, `RawEvent`, `DomainEvent`) |
+| [`br-util-postgres`](crates/br-util-postgres) | util | Pools Postgres, validation TLS, RLS context, grants |
+| [`br-util-axum-auth`](crates/br-util-axum-auth) | util | Middleware Axum qui injecte `Passport` depuis `X-Passport` |
 
-## Passport Design
+## Règles d'architecture
 
-The Passport is a transport DTO — it carries identity through the system without imposing domain-specific types.
-
-```rust
-enum Passport {
-    Human {
-        user_id: Uuid,
-        is_super_admin: bool,
-        is_active: bool,
-        claims: serde_json::Value,  // project-specific: email, role, tenant_id, etc.
-    },
-    Service {
-        service_account_id: Uuid,
-        claims: serde_json::Value,
-    },
-}
-```
-
-Typed fields (`user_id`, `is_super_admin`, `is_active`) are universal — used by RLS and subscriptions in every project. Everything else goes in `claims`, which each project fills and reads as needed.
+- `core` = contraintes transverses minimales, aucune dépendance à `util`.
+- `util` = wrappers techniques Rust optionnels, peuvent dépendre de `core`.
+- Pas de `svc-*` ni de logique métier dans ce repo.
+- Chaque crate définit ses propres erreurs — pas d'erreur globale partagée.
 
 ## Usage
 
-Add to your workspace `Cargo.toml`:
+Chaque crate est publiée par tag git, à piocher à la carte :
 
 ```toml
 [workspace.dependencies]
-br-service-core = { git = "https://github.com/BotResources/br-service-core" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "..." }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "..." }
 ```
+
+## Development
+
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all
+```
+
+MSRV : **1.85** (edition 2024).
 
 ## License
 

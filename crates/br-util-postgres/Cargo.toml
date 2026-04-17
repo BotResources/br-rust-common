@@ -1,0 +1,14 @@
+[package]
+name = "br-util-postgres"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Postgres helpers for BotResources services: pools, TLS validation, RLS context, grants"
+repository = "https://github.com/BotResources/br-service-core"
+
+[dependencies]
+br-core-auth = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

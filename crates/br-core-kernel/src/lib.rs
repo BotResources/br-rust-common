@@ -1,3 +1,8 @@
+//! Minimal kernel types shared across BotResources Rust services.
+//!
+//! Today this crate exposes typed ID wrappers. Keep it intentionally small:
+//! only add types that are genuinely universal across every service.
+
 use std::fmt;
 use std::ops::Deref;
 

@@ -1,6 +1,5 @@
+use br_core_auth::Passport;
 use sqlx::Postgres;
-
-use crate::passport::Passport;
 
 /// Inject Passport fields into Postgres session variables for RLS policies.
 ///

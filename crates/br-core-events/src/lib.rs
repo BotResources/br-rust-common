@@ -1,3 +1,9 @@
+//! Shared data structures for domain events.
+//!
+//! `RawEvent` is what aggregates emit before persistence. `DomainEvent` is
+//! what the event store stores and replays. `EventMetadata` carries the
+//! identity/correlation context attached to each event.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
