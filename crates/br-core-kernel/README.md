@@ -12,4 +12,4 @@ actor identifier and want compile-time separation from other UUIDs.
 Don't add project-specific ID types here; keep them local to their bounded
 context.
 
-**Current version.** `0.1.0`
+**Current version.** `0.3.0`

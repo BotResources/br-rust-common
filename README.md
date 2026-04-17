@@ -2,9 +2,6 @@
 
 Catalogue de petites crates Rust réutilisables par les services BotResources.
 
-> Le repo s'appelle encore `br-service-core` pour le rename GitHub prévu en
-> post-merge. Les crates publiées vivent dans `crates/`.
-
 ## Catalogue
 
 | Crate | Catégorie | Purpose |
@@ -28,8 +25,8 @@ Chaque crate est publiée par tag git, à piocher à la carte :
 
 ```toml
 [workspace.dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "..." }
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "..." }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth-v0.3.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.3.0" }
 ```
 
 ## Development

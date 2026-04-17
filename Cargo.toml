@@ -12,15 +12,15 @@ members = [
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/BotResources/br-service-core"
+repository = "https://github.com/BotResources/br-rust-common"
 
 [workspace.dependencies]
 # Internal (this repo)
-br-core-auth = { path = "crates/br-core-auth", version = "0.1.0" }
-br-core-events = { path = "crates/br-core-events", version = "0.1.0" }
-br-core-kernel = { path = "crates/br-core-kernel", version = "0.1.0" }
-br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.1.0" }
-br-util-postgres = { path = "crates/br-util-postgres", version = "0.1.0" }
+br-core-auth = { path = "crates/br-core-auth", version = "0.3.0" }
+br-core-events = { path = "crates/br-core-events", version = "0.3.0" }
+br-core-kernel = { path = "crates/br-core-kernel", version = "0.3.0" }
+br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.3.0" }
+br-util-postgres = { path = "crates/br-util-postgres", version = "0.3.0" }
 
 # External
 axum = "0.8"

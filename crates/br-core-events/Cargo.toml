@@ -1,11 +1,11 @@
 [package]
 name = "br-core-events"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 description = "Shared domain-event data structures for BotResources services"
-repository = "https://github.com/BotResources/br-service-core"
+repository = "https://github.com/BotResources/br-rust-common"
 
 [dependencies]
 chrono = { workspace = true }
