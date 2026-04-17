@@ -6,7 +6,7 @@
 /// `TRUSTED_HOSTS` is designed for Docker Compose networking where service
 /// hostnames (e.g. `postgres`, `nats`) are on an isolated internal network
 /// and do not require TLS.
-pub fn is_localhost(host: &str) -> bool {
+pub(crate) fn is_localhost(host: &str) -> bool {
     if matches!(host, "localhost" | "127.0.0.1" | "::1") {
         return true;
     }

@@ -1,0 +1,15 @@
+[package]
+name = "br-core-kernel"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Minimal kernel types shared across BotResources Rust services"
+repository = "https://github.com/BotResources/br-service-core"
+
+[dependencies]
+serde = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

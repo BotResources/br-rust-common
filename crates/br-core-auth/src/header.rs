@@ -1,6 +1,6 @@
 use base64::Engine;
 
-use crate::error::InfraError;
+use crate::error::PassportError;
 use crate::passport::Passport;
 
 /// Trait for types that can be serialized into / deserialized from the
@@ -10,7 +10,7 @@ pub trait PassportHeader: Sized {
     fn to_header(&self) -> String;
 
     /// Deserialize from a base64-encoded JSON string (X-Passport header value).
-    fn from_header(header: &str) -> Result<Self, InfraError>;
+    fn from_header(header: &str) -> Result<Self, PassportError>;
 }
 
 impl PassportHeader for Passport {
@@ -19,15 +19,13 @@ impl PassportHeader for Passport {
         base64::engine::general_purpose::STANDARD.encode(json.as_bytes())
     }
 
-    fn from_header(header: &str) -> Result<Self, InfraError> {
+    fn from_header(header: &str) -> Result<Self, PassportError> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(header)
-            .map_err(|e| {
-                InfraError::Unauthenticated(format!("invalid base64 in X-Passport: {e}"))
-            })?;
+            .map_err(|e| PassportError::Malformed(format!("invalid base64 in X-Passport: {e}")))?;
 
         serde_json::from_slice(&bytes)
-            .map_err(|e| InfraError::Unauthenticated(format!("invalid JSON in X-Passport: {e}")))
+            .map_err(|e| PassportError::Malformed(format!("invalid JSON in X-Passport: {e}")))
     }
 }
 
@@ -87,21 +85,21 @@ mod tests {
     #[test]
     fn from_header_rejects_garbage() {
         let err = Passport::from_header("not-base64!!!").unwrap_err();
-        assert!(matches!(err, InfraError::Unauthenticated(_)));
+        assert!(matches!(err, PassportError::Malformed(_)));
     }
 
     #[test]
     fn from_header_rejects_valid_base64_invalid_json() {
         let b64 = base64::engine::general_purpose::STANDARD.encode("this is not json");
         let err = Passport::from_header(&b64).unwrap_err();
-        assert!(matches!(err, InfraError::Unauthenticated(_)));
+        assert!(matches!(err, PassportError::Malformed(_)));
     }
 
     #[test]
     fn from_header_rejects_wrong_json_shape() {
         let b64 = base64::engine::general_purpose::STANDARD.encode(r#"{"foo":"bar"}"#);
         let err = Passport::from_header(&b64).unwrap_err();
-        assert!(matches!(err, InfraError::Unauthenticated(_)));
+        assert!(matches!(err, PassportError::Malformed(_)));
     }
 
     #[test]
@@ -109,6 +107,6 @@ mod tests {
         let json = r#"{"user_id":"00000000-0000-0000-0000-000000000000","is_super_admin":false,"is_active":true,"claims":{}}"#;
         let b64 = base64::engine::general_purpose::STANDARD.encode(json);
         let err = Passport::from_header(&b64).unwrap_err();
-        assert!(matches!(err, InfraError::Unauthenticated(_)));
+        assert!(matches!(err, PassportError::Malformed(_)));
     }
 }

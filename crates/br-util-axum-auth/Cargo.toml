@@ -1,0 +1,18 @@
+[package]
+name = "br-util-axum-auth"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Axum middleware that extracts the X-Passport header into a request extension"
+repository = "https://github.com/BotResources/br-service-core"
+
+[dependencies]
+axum = { workspace = true }
+br-core-auth = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+uuid = { workspace = true }

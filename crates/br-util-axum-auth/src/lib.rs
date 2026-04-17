@@ -1,11 +1,15 @@
+//! Axum middleware that decodes the `X-Passport` header into a typed
+//! [`br_core_auth::Passport`] request extension.
+//!
+//! Returns `401 Unauthorized` for a missing, empty, or malformed header.
+
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use crate::passport::Passport;
-use crate::passport_header::PassportHeader;
+use br_core_auth::{Passport, PassportHeader};
 
 /// Axum middleware that extracts the `X-Passport` header, decodes the
 /// base64-encoded JSON into a [`Passport`], and inserts it as a request
@@ -23,9 +27,7 @@ pub async fn passport_header_middleware(mut request: Request<Body>, next: Next) 
 
     let passport = match Passport::from_header(&header_val) {
         Ok(p) => p,
-        Err(_) => {
-            return (StatusCode::UNAUTHORIZED, "malformed X-Passport header").into_response()
-        }
+        Err(_) => return (StatusCode::UNAUTHORIZED, "malformed X-Passport header").into_response(),
     };
 
     request.extensions_mut().insert(passport);
@@ -83,10 +85,7 @@ mod tests {
     #[tokio::test]
     async fn missing_header_returns_401() {
         let app = test_router();
-        let req = Request::builder()
-            .uri("/test")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);

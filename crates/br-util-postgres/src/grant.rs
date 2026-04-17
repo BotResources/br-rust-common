@@ -1,6 +1,6 @@
 use sqlx::PgPool;
 
-use crate::error::InfraError;
+use crate::error::PostgresError;
 
 /// Grant table access to the application database role after migrations.
 ///
@@ -9,7 +9,7 @@ use crate::error::InfraError;
 ///
 /// The `app_role` parameter is project-specific (e.g., "hanshow_app",
 /// "medisup_app"). Each project passes its own role name.
-pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), InfraError> {
+pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), PostgresError> {
     for sql in [
         format!("GRANT USAGE ON SCHEMA public TO {app_role}"),
         format!(
@@ -20,7 +20,7 @@ pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), Infra
         sqlx::query(&sql)
             .execute(pool)
             .await
-            .map_err(InfraError::Db)?;
+            .map_err(PostgresError::Db)?;
     }
     Ok(())
 }
