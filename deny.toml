@@ -1,0 +1,44 @@
+# cargo-deny configuration — https://embarkstudios.github.io/cargo-deny/
+#
+# Enforced in CI via the `cargo-deny check` job. Run locally with:
+#   cargo install --locked cargo-deny
+#   cargo deny check
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# Crates can opt out of specific advisories here, with a comment explaining why.
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses we accept across the workspace and its transitive deps.
+# Keep the list tight — every addition is a deliberate policy decision.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# When we add internal git deps (br-* from other repos), allowlist them here.
+allow-git = []
