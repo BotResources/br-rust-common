@@ -41,6 +41,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
+    use br_core_auth::AuthMethod;
     use serde_json::json;
     use tower::ServiceExt;
     use uuid::Uuid;
@@ -64,6 +65,8 @@ mod tests {
             user_id: Uuid::nil(),
             is_super_admin: false,
             is_active: true,
+            auth_method: AuthMethod::Jwt,
+            impersonator: None,
             claims: json!({}),
         };
         p.to_header()

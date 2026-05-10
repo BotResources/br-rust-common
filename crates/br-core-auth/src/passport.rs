@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
+use crate::auth_method::AuthMethod;
+
 /// The authenticated caller's identity, built by svc-identity and consumed
 /// by all downstream services. Serialized to JSON, base64-encoded into the
 /// `X-Passport` header.
@@ -8,10 +10,15 @@ use uuid::Uuid;
 /// Tagged enum with two variants: `Human` (person authenticated via JWT or PAT)
 /// and `Service` (machine identity authenticated via API key).
 ///
-/// Three typed fields on Human are universal (used by RLS in every project):
+/// Universal typed fields on `Human` (used by RLS / auth checks in every project):
 /// - `user_id` — identity
 /// - `is_super_admin` — platform-level admin access
 /// - `is_active` — whether the user is active or blocked
+/// - `auth_method` — how the credential was authenticated (JWT vs PAT)
+/// - `impersonator` — `Some(admin_id)` when an admin is acting on behalf of
+///   `user_id`; `None` for a direct request. The effective identity remains
+///   `user_id` so RLS applies the impersonated user's permissions naturally;
+///   `impersonator` is the audit trail of who really triggered the request.
 ///
 /// Everything else goes in `claims` — a free-form JSON bag that each project
 /// fills with whatever it needs (email, role, tenant_id, etc.).
@@ -22,6 +29,9 @@ pub enum Passport {
         user_id: Uuid,
         is_super_admin: bool,
         is_active: bool,
+        auth_method: AuthMethod,
+        #[serde(default)]
+        impersonator: Option<Uuid>,
         claims: serde_json::Value,
     },
     Service {
@@ -33,7 +43,8 @@ pub enum Passport {
 impl Passport {
     /// Returns the actor's UUID.
     ///
-    /// - `Human` returns `user_id`
+    /// - `Human` returns `user_id` (the impersonated user when impersonating —
+    ///   use [`impersonator_id`](Self::impersonator_id) for the real admin)
     /// - `Service` returns `service_account_id`
     pub fn actor_id(&self) -> Uuid {
         match self {
@@ -65,6 +76,36 @@ impl Passport {
         }
     }
 
+    /// Returns the authentication method for `Human`, `None` for `Service`
+    /// (the variant itself is the auth signal for service accounts).
+    pub fn auth_method(&self) -> Option<&AuthMethod> {
+        match self {
+            Passport::Human { auth_method, .. } => Some(auth_method),
+            Passport::Service { .. } => None,
+        }
+    }
+
+    /// Returns `true` if this is a `Human` authenticated via PAT.
+    /// Always `false` for `Service`.
+    pub fn is_pat(&self) -> bool {
+        matches!(self.auth_method(), Some(m) if m.is_pat())
+    }
+
+    /// Returns `true` if this `Human` request is being made by an admin on
+    /// behalf of another user. Always `false` for `Service`.
+    pub fn is_impersonating(&self) -> bool {
+        self.impersonator_id().is_some()
+    }
+
+    /// Returns the impersonating admin's UUID if this is an impersonated
+    /// `Human` request, else `None`.
+    pub fn impersonator_id(&self) -> Option<Uuid> {
+        match self {
+            Passport::Human { impersonator, .. } => *impersonator,
+            Passport::Service { .. } => None,
+        }
+    }
+
     /// Returns a reference to the claims bag.
     pub fn claims(&self) -> &serde_json::Value {
         match self {
@@ -91,7 +132,33 @@ mod tests {
             user_id: Uuid::nil(),
             is_super_admin: admin,
             is_active: active,
+            auth_method: AuthMethod::Jwt,
+            impersonator: None,
             claims: json!({"email": "alice@example.com", "role": "manager"}),
+        }
+    }
+
+    fn pat_human() -> Passport {
+        Passport::Human {
+            user_id: Uuid::from_u128(1),
+            is_super_admin: false,
+            is_active: true,
+            auth_method: AuthMethod::Pat {
+                token_id: Uuid::from_u128(100),
+            },
+            impersonator: None,
+            claims: json!({}),
+        }
+    }
+
+    fn impersonated_human() -> Passport {
+        Passport::Human {
+            user_id: Uuid::from_u128(1),
+            is_super_admin: false,
+            is_active: true,
+            auth_method: AuthMethod::Jwt,
+            impersonator: Some(Uuid::from_u128(999)),
+            claims: json!({}),
         }
     }
 
@@ -111,6 +178,8 @@ mod tests {
             user_id: uid,
             is_super_admin: false,
             is_active: true,
+            auth_method: AuthMethod::Jwt,
+            impersonator: None,
             claims: json!({}),
         };
         assert_eq!(p.actor_id(), uid);
@@ -124,6 +193,13 @@ mod tests {
             claims: json!({}),
         };
         assert_eq!(p.actor_id(), sid);
+    }
+
+    #[test]
+    fn actor_id_returns_impersonated_user_not_admin() {
+        let p = impersonated_human();
+        assert_eq!(p.actor_id(), Uuid::from_u128(1));
+        assert_ne!(p.actor_id(), Uuid::from_u128(999));
     }
 
     // ─── is_super_admin ───────────────────────────────
@@ -158,6 +234,76 @@ mod tests {
     #[test]
     fn is_active_always_true_for_service() {
         assert!(service().is_active());
+    }
+
+    // ─── auth_method ──────────────────────────────────
+
+    #[test]
+    fn auth_method_returns_jwt_for_jwt_human() {
+        assert_eq!(human(false, true).auth_method(), Some(&AuthMethod::Jwt));
+    }
+
+    #[test]
+    fn auth_method_returns_pat_for_pat_human() {
+        let p = pat_human();
+        assert!(matches!(p.auth_method(), Some(AuthMethod::Pat { .. })));
+    }
+
+    #[test]
+    fn auth_method_none_for_service() {
+        assert!(service().auth_method().is_none());
+    }
+
+    // ─── is_pat ───────────────────────────────────────
+
+    #[test]
+    fn is_pat_true_for_pat_human() {
+        assert!(pat_human().is_pat());
+    }
+
+    #[test]
+    fn is_pat_false_for_jwt_human() {
+        assert!(!human(false, true).is_pat());
+    }
+
+    #[test]
+    fn is_pat_false_for_service() {
+        assert!(!service().is_pat());
+    }
+
+    // ─── impersonation ────────────────────────────────
+
+    #[test]
+    fn is_impersonating_true_when_impersonator_set() {
+        assert!(impersonated_human().is_impersonating());
+    }
+
+    #[test]
+    fn is_impersonating_false_for_direct_human() {
+        assert!(!human(false, true).is_impersonating());
+    }
+
+    #[test]
+    fn is_impersonating_false_for_service() {
+        assert!(!service().is_impersonating());
+    }
+
+    #[test]
+    fn impersonator_id_returns_admin_uuid() {
+        assert_eq!(
+            impersonated_human().impersonator_id(),
+            Some(Uuid::from_u128(999))
+        );
+    }
+
+    #[test]
+    fn impersonator_id_none_for_direct_human() {
+        assert!(human(false, true).impersonator_id().is_none());
+    }
+
+    #[test]
+    fn impersonator_id_none_for_service() {
+        assert!(service().impersonator_id().is_none());
     }
 
     // ─── claims ───────────────────────────────────────
@@ -206,6 +352,22 @@ mod tests {
     }
 
     #[test]
+    fn serde_roundtrip_pat_human() {
+        let p = pat_human();
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Passport = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_impersonated_human() {
+        let p = impersonated_human();
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Passport = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
     fn serde_roundtrip_service() {
         let p = service();
         let json = serde_json::to_string(&p).unwrap();
@@ -221,7 +383,26 @@ mod tests {
         assert!(v.get("user_id").is_some());
         assert!(v.get("is_super_admin").is_some());
         assert!(v.get("is_active").is_some());
+        assert!(v.get("auth_method").is_some());
         assert!(v.get("claims").is_some());
+    }
+
+    #[test]
+    fn json_human_auth_method_jwt_shape() {
+        let p = human(false, true);
+        let v: serde_json::Value = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["auth_method"]["method"], "jwt");
+    }
+
+    #[test]
+    fn json_human_auth_method_pat_shape() {
+        let p = pat_human();
+        let v: serde_json::Value = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["auth_method"]["method"], "pat");
+        assert_eq!(
+            v["auth_method"]["token_id"],
+            Uuid::from_u128(100).to_string()
+        );
     }
 
     #[test]
@@ -234,6 +415,8 @@ mod tests {
         // Service should not have human fields
         assert!(v.get("user_id").is_none());
         assert!(v.get("is_super_admin").is_none());
+        assert!(v.get("auth_method").is_none());
+        assert!(v.get("impersonator").is_none());
     }
 
     #[test]
@@ -243,6 +426,7 @@ mod tests {
             "user_id": "00000000-0000-0000-0000-000000000000",
             "is_super_admin": false,
             "is_active": true,
+            "auth_method": {"method": "jwt"},
             "claims": {"email": "bob@example.com"}
         }"#;
         let p: Passport = serde_json::from_str(json).unwrap();
@@ -251,6 +435,65 @@ mod tests {
             p.claim::<String>("email").as_deref(),
             Some("bob@example.com")
         );
+        assert!(!p.is_pat());
+        assert!(!p.is_impersonating());
+    }
+
+    #[test]
+    fn deserialize_human_pat_from_json() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000001",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "pat", "token_id": "00000000-0000-0000-0000-000000000064"},
+            "claims": {}
+        }"#;
+        let p: Passport = serde_json::from_str(json).unwrap();
+        assert!(p.is_pat());
+    }
+
+    #[test]
+    fn deserialize_human_impersonated_from_json() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000001",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt"},
+            "impersonator": "00000000-0000-0000-0000-0000000003e7",
+            "claims": {}
+        }"#;
+        let p: Passport = serde_json::from_str(json).unwrap();
+        assert!(p.is_impersonating());
+        assert_eq!(p.impersonator_id(), Some(Uuid::from_u128(999)));
+    }
+
+    #[test]
+    fn deserialize_human_accepts_missing_impersonator() {
+        // impersonator is `#[serde(default)]` → optional in input
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt"},
+            "claims": {}
+        }"#;
+        let p: Passport = serde_json::from_str(json).unwrap();
+        assert!(!p.is_impersonating());
+    }
+
+    #[test]
+    fn deserialize_human_rejects_missing_auth_method() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "is_super_admin": false,
+            "is_active": true,
+            "claims": {}
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
     }
 
     #[test]
@@ -266,7 +509,7 @@ mod tests {
 
     #[test]
     fn deserialize_rejects_missing_kind() {
-        let json = r#"{"user_id":"00000000-0000-0000-0000-000000000000","is_super_admin":false,"is_active":true,"claims":{}}"#;
+        let json = r#"{"user_id":"00000000-0000-0000-0000-000000000000","is_super_admin":false,"is_active":true,"auth_method":{"method":"jwt"},"claims":{}}"#;
         assert!(serde_json::from_str::<Passport>(json).is_err());
     }
 
@@ -288,6 +531,16 @@ mod tests {
         assert_ne!(human(false, true), service());
     }
 
+    #[test]
+    fn jwt_and_pat_humans_are_not_equal() {
+        assert_ne!(human(false, true), pat_human());
+    }
+
+    #[test]
+    fn impersonated_and_direct_humans_are_not_equal() {
+        assert_ne!(human(false, true), impersonated_human());
+    }
+
     // ─── empty claims ─────────────────────────────────
 
     #[test]
@@ -296,6 +549,8 @@ mod tests {
             user_id: Uuid::nil(),
             is_super_admin: false,
             is_active: true,
+            auth_method: AuthMethod::Jwt,
+            impersonator: None,
             claims: json!({}),
         };
         assert_eq!(p.claims(), &json!({}));

@@ -18,9 +18,13 @@ use sqlx::Postgres;
 /// ```
 ///
 /// Variables set:
-/// - `app.current_user_id` — actor's UUID (user_id or service_account_id)
+/// - `app.current_user_id` — actor's UUID (user_id or service_account_id;
+///   the impersonated user when impersonating, not the admin)
 /// - `app.is_super_admin` — "true" or "false" (always "false" for Service)
 /// - `app.is_active` — "true" or "false" (always "true" for Service)
+/// - `app.is_pat` — "true" or "false" (always "false" for Service and JWT)
+/// - `app.impersonator_id` — admin's UUID when impersonating, empty string
+///   otherwise. Policies test `current_setting('app.impersonator_id') <> ''`.
 pub async fn set_rls_context(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     passport: &Passport,
@@ -36,6 +40,11 @@ pub async fn set_rls_context(
     } else {
         "false"
     };
+    let is_pat = if passport.is_pat() { "true" } else { "false" };
+    let impersonator_id = passport
+        .impersonator_id()
+        .map(|u| u.to_string())
+        .unwrap_or_default();
 
     sqlx::query("SELECT set_config('app.current_user_id', $1, true)")
         .bind(&current_user_id)
@@ -49,6 +58,16 @@ pub async fn set_rls_context(
 
     sqlx::query("SELECT set_config('app.is_active', $1, true)")
         .bind(is_active)
+        .execute(&mut **tx)
+        .await?;
+
+    sqlx::query("SELECT set_config('app.is_pat', $1, true)")
+        .bind(is_pat)
+        .execute(&mut **tx)
+        .await?;
+
+    sqlx::query("SELECT set_config('app.impersonator_id', $1, true)")
+        .bind(&impersonator_id)
         .execute(&mut **tx)
         .await?;
 
