@@ -40,6 +40,8 @@ mod tests {
             user_id: Uuid::now_v7(),
             is_super_admin: true,
             is_active: true,
+            auth_method: crate::AuthMethod::Jwt,
+            impersonator: None,
             claims: json!({"email": "test@example.com"}),
         }
     }

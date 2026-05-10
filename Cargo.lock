@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64",
  "serde",
@@ -158,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "br-core-auth",
@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "br-core-auth",
  "sqlx",
