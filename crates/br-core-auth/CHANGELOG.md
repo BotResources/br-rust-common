@@ -1,12 +1,10 @@
-# Changelog
+# Changelog — br-core-auth
 
-All notable changes to the crates in this workspace are documented in this
-file. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-crates follow [SemVer](https://semver.org/) and are versioned independently.
+All notable changes to this crate are documented in this file. Format inspired
+by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
+[SemVer](https://semver.org/).
 
-## [0.4.0] — Unreleased
-
-### `br-core-auth` — 0.4.0 (breaking)
+## [0.4.0] — 2026-05-10
 
 **Added**
 - New public type `AuthMethod` (`Jwt` | `Pat { token_id: Uuid }`), re-exported
@@ -36,31 +34,8 @@ crates follow [SemVer](https://semver.org/) and are versioned independently.
   impersonated user so RLS continues to apply their permissions naturally —
   `impersonator` is the audit trail.
 
-### `br-util-postgres` — 0.4.0
+## [0.3.0] — 2026-04-17
 
-**Changed**
-- `set_rls_context` now injects two additional Postgres session variables on
-  top of the existing three:
-  - `app.is_pat` — `"true"` / `"false"` (always `"false"` for Service and JWT).
-  - `app.impersonator_id` — admin UUID when impersonating, empty string
-    otherwise. Policies test `current_setting('app.impersonator_id') <> ''`.
-- Bump of `br-core-auth` dependency to 0.4.
-
-### `br-util-axum-auth` — 0.4.0
-
-**Changed**
-- Bump of `br-core-auth` dependency to 0.4. No own API change.
-
-### `br-core-kernel` — unchanged (0.3.0)
-### `br-core-events` — unchanged (0.3.0)
-
-## [0.3.0] — 2026-05-10
-
-- Workspace split: `br-service-core` carved into independent crates
-  (`br-core-auth`, `br-core-events`, `br-core-kernel`, `br-util-axum-auth`,
-  `br-util-postgres`) and the repo renamed to `br-rust-common`.
-
-## [0.2.0] — earlier
-
-- `set_rls_context` switched to transaction-local `set_config(..., true)` to
-  eliminate RLS identity leakage on pooled connections.
+- Carved out of `br-service-core` during the workspace split into
+  `br-rust-common`. Provides the `Passport` DTO + `PassportHeader` trait for
+  the `X-Passport` header.

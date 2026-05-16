@@ -2,6 +2,7 @@
 //!
 //! - [`init_pool`] / [`init_migration_pool`] — long-lived app pool + short-lived migration pool
 //! - [`validate_database_tls`] — mirrors sqlx sslmode parsing and enforces TLS for remote hosts
+//! - [`ensure_app_role`] — idempotent CREATE ROLE + ALTER PASSWORD for the two-role model
 //! - [`set_rls_context`] — transaction-local `set_config(..., true)` for RLS identity
 //! - [`grant_app_access`] — post-migration GRANTs for the app role
 //!
@@ -13,8 +14,10 @@ mod grant;
 mod net;
 mod pool;
 mod rls;
+mod role;
 
 pub use error::PostgresError;
 pub use grant::grant_app_access;
 pub use pool::{Environment, init_migration_pool, init_pool, validate_database_tls};
 pub use rls::set_rls_context;
+pub use role::ensure_app_role;
