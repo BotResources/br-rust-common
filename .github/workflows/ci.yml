@@ -88,17 +88,30 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-semver-checks
-      - name: Compute baseline tag
-        id: base
+      - name: cargo semver-checks (per-crate)
+        # For each crate, baseline = its own latest tag (`<crate>-vX.Y.Z`).
+        # When `Cargo.toml` version > latest tag, semver-checks allows
+        # breaking changes proportional to the bump; when versions match,
+        # it enforces "no API change". Crates without any prior tag are
+        # skipped (first release).
         run: |
-          # Pick the latest workspace-wide tag (vX.Y.Z) reachable from HEAD.
-          # Per-crate tags (br-*-vX.Y.Z) are skipped — semver-checks compares
-          # the whole workspace against a single coherent revision.
-          rev=$(git describe --tags --abbrev=0 --match='v[0-9]*.[0-9]*.[0-9]*' HEAD)
-          echo "rev=$rev" >> "$GITHUB_OUTPUT"
-          echo "Baseline: $rev"
-      - name: cargo semver-checks
-        run: cargo semver-checks --workspace --baseline-rev "${{ steps.base.outputs.rev }}"
+          set -euo pipefail
+          shopt -s nullglob
+          fail=0
+          for toml in crates/*/Cargo.toml; do
+            crate=$(basename "$(dirname "$toml")")
+            latest=$(git tag --list "${crate}-v*" | sort -V | tail -n1)
+            if [ -z "$latest" ]; then
+              echo "::notice::no prior tag for ${crate}, skipping semver-checks"
+              continue
+            fi
+            echo "::group::${crate} vs ${latest}"
+            if ! cargo semver-checks -p "${crate}" --baseline-rev "${latest}"; then
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
 
   trufflehog:
     name: trufflehog (secret scan)

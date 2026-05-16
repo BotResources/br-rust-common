@@ -28,6 +28,18 @@ Not published on crates.io. Each crate is versioned and tagged independently
 br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.5.0" }
 ```
 
+## Release process
+
+1. In your PR, bump the affected crate's `Cargo.toml` version and add a
+   matching `## [X.Y.Z] — YYYY-MM-DD` section to its `CHANGELOG.md`.
+2. Open the PR. CI runs `cargo semver-checks` per crate against its own
+   latest tag (`<crate>-v…`), so a version bump that doesn't match the
+   actual API change will fail the check.
+3. On merge to `main`, the `release-tags` workflow scans every
+   `crates/*/Cargo.toml`, creates the matching `<crate>-vX.Y.Z` annotated
+   tag if missing, and pushes it. That tag *is* the published version —
+   downstream consumers pin to it.
+
 ## Dev
 
 ```bash

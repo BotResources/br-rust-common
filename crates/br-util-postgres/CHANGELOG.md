@@ -4,7 +4,7 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
-## [0.5.0] — Unreleased
+## [0.5.0] — 2026-05-16
 
 **Added**
 - New `ensure_app_role(pool, role_name, password)` helper for the two-role
