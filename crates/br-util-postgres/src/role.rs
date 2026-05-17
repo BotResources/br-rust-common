@@ -45,13 +45,15 @@ fn is_valid_role_name(name: &str) -> bool {
 ///    [`PostgresError::InvalidRoleName`] without touching the database.
 /// 2. Executes a `DO $$ ... END $$` block that runs `CREATE ROLE ... LOGIN`
 ///    only when the role does not already exist. Safe to call on every
-///    startup.
-/// 3. Runs `ALTER ROLE "<name>" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
-///    NOBYPASSRLS NOREPLICATION INHERIT` — defense in depth in case the role
-///    was created out-of-band with elevated privileges. Fresh roles already
-///    default to these, so it's a no-op for them.
-/// 4. Runs `ALTER ROLE "<name>" PASSWORD $1` with `password` bound as a
-///    parameter — the secret never enters the SQL text.
+///    startup. `CREATE ROLE` defaults to no-privilege (NOSUPERUSER,
+///    NOCREATEDB, NOCREATEROLE, NOBYPASSRLS, NOREPLICATION, INHERIT), so no
+///    follow-up attribute hardening is needed — and attempting one would
+///    require SUPERUSER (PG 16+ rejects NOSUPERUSER/NOBYPASSRLS/NOREPLICATION
+///    from non-superuser CREATEROLE callers even as a no-op).
+/// 3. Runs `ALTER ROLE "<name>" PASSWORD $1` with `password` bound as a
+///    parameter — the secret never enters the SQL text. Setting the password
+///    only needs membership in the target role, which the CREATEROLE creator
+///    receives implicitly.
 ///
 /// The DO block runs as a single statement so the existence check and the
 /// `CREATE ROLE` happen in the same snapshot, which avoids the race where
@@ -84,25 +86,6 @@ pub async fn ensure_app_role(
          END $$"
     );
     sqlx::query(&create_sql)
-        .execute(pool)
-        .await
-        .map_err(PostgresError::Db)?;
-
-    // Defense in depth: if the role pre-exists (created by a human, an older
-    // version of this code, or a different tool), force it back to the
-    // intended low-privilege shape. Fresh roles already default to all NO*
-    // flags — this is a no-op for them.
-    let harden_sql = format!(
-        "ALTER ROLE \"{role_name}\" \
-         LOGIN \
-         NOSUPERUSER \
-         NOCREATEDB \
-         NOCREATEROLE \
-         NOBYPASSRLS \
-         NOREPLICATION \
-         INHERIT"
-    );
-    sqlx::query(&harden_sql)
         .execute(pool)
         .await
         .map_err(PostgresError::Db)?;

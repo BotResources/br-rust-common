@@ -4,6 +4,19 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.5.1] — 2026-05-17
+
+**Fixed**
+- `ensure_app_role` no longer issues the defense-in-depth `ALTER ROLE
+  "<name>" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION
+  INHERIT` after creation. On PG 16+, that statement requires SUPERUSER even
+  when the attributes match the current state, so non-superuser CREATEROLE
+  callers (e.g. a CNPG-managed `<svc>_owner`) failed with `permission denied
+  to alter role`. `CREATE ROLE ... LOGIN` already defaults to all NO* flags,
+  and `ensure_app_role` is the sole creator of `<svc>_app` roles, so the
+  hardening step was redundant. The `ALTER ROLE "<name>" PASSWORD $1` step is
+  unchanged — it only needs membership in the created role.
+
 ## [0.5.0] — 2026-05-16
 
 **Added**
