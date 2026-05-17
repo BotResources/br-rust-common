@@ -4,6 +4,24 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.5.2] — 2026-05-17
+
+**Fixed**
+- `ensure_app_role` no longer binds the password as a query parameter on the
+  `ALTER ROLE` step. Postgres rejects bind parameters in DDL — `ALTER ROLE
+  "<name>" PASSWORD $1` fails with `syntax error at or near "$1"`, so 0.5.0
+  and 0.5.1 could never actually set or rotate the app password (the
+  `permission denied` failure in 0.5.0 masked this; 0.5.1 exposed it). The
+  step now embeds the password as a dollar-quoted literal using a per-call
+  random tag of the form `br_<uuid-v7-simple>`: `ALTER ROLE "<name>"
+  PASSWORD $br_<32hex>$<password>$br_<32hex>$`. Dollar-quoting passes the
+  password through byte-for-byte with no escape rules to mishandle, and the
+  unguessable tag prevents a malicious password from breaking out of the
+  literal. The generated SQL is never logged or surfaced in errors, and the
+  string buffer is overwritten with zeros after the query executes to
+  shorten the secret's residency in our own memory. Public API is
+  unchanged.
+
 ## [0.5.1] — 2026-05-17
 
 **Fixed**

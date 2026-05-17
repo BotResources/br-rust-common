@@ -170,12 +170,14 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "br-core-auth",
  "sqlx",
  "thiserror",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 [package]
 name = "br-util-postgres"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -12,3 +12,10 @@ br-core-auth = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+# Needed only by the `#[ignore]`d live-Postgres tests in role.rs that
+# verify ensure_app_role behavior against a real cluster (set
+# TEST_DATABASE_URL and run with `cargo test -- --ignored`).
+tokio = { workspace = true }
