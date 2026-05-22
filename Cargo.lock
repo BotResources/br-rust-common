@@ -246,6 +246,7 @@ name = "br-util-postgres"
 version = "0.5.2"
 dependencies = [
  "br-core-auth",
+ "serde_json",
  "sqlx",
  "thiserror",
  "tokio",
