@@ -1,13 +1,17 @@
 # br-rust-common
 
 > [!IMPORTANT]
-> **This repository is intended for BotResources and its authorized clients.**
-> It is published read-only for visibility and dependency consumption.
+> **This repository is maintained for BotResources and its authorized clients.**
+> It is published under MIT and made available read-only for visibility and
+> dependency consumption. The MIT license governs your rights to use, modify,
+> and fork the code; the rest of this notice describes our operational stance,
+> not a legal restriction.
 >
 > **We do not accept external pull requests, issues, or support requests.**
 > Issues and Discussions are disabled. PRs from accounts that are not on the
-> internal contributor allowlist will be closed without review. Forks are
-> disabled.
+> internal contributor allowlist will be closed without review. The GitHub
+> fork button is disabled — you may still fork under MIT, but we provide no
+> support outside the BR commercial relationship.
 >
 > - Clients with a commercial relationship: contact your BR account manager.
 > - Security reports: see [SECURITY.md](SECURITY.md) (private email channel).
