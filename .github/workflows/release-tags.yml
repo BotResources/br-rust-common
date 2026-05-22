@@ -23,7 +23,7 @@ concurrency:
 jobs:
   tag:
     name: Auto-tag per-crate versions
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
