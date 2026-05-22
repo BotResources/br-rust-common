@@ -4,6 +4,16 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.5.3] — 2026-05-22
+
+**Changed**
+- Workspace metadata cleanup: `edition`, `rust-version`, `license`, and
+  `repository` now inherit from `[workspace.package]` via
+  `.workspace = true`. The crate's `rust-version` was previously declared as
+  `1.85` per-crate while the workspace, CI, and top-level README all
+  advertised `1.88`; the inherited value is now consistently `1.88`. No API
+  or runtime behavior change.
+
 ## [0.5.2] — 2026-05-17
 
 **Fixed**

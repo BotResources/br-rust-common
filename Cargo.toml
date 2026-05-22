@@ -17,12 +17,12 @@ repository = "https://github.com/BotResources/br-rust-common"
 
 [workspace.dependencies]
 # Internal (this repo)
-br-core-auth = { path = "crates/br-core-auth", version = "0.5.0" }
-br-core-events = { path = "crates/br-core-events", version = "0.3.0" }
+br-core-auth = { path = "crates/br-core-auth", version = "0.5.1" }
+br-core-events = { path = "crates/br-core-events", version = "0.3.1" }
 br-core-integration = { path = "crates/br-core-integration", version = "0.1.0" }
-br-core-kernel = { path = "crates/br-core-kernel", version = "0.3.0" }
-br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.0" }
-br-util-postgres = { path = "crates/br-util-postgres", version = "0.5.2" }
+br-core-kernel = { path = "crates/br-core-kernel", version = "0.3.1" }
+br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.1" }
+br-util-postgres = { path = "crates/br-util-postgres", version = "0.5.3" }
 
 # External
 async-nats = "0.48"

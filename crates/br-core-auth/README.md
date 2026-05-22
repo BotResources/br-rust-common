@@ -1,15 +1,19 @@
 # br-core-auth
 
-`Passport` identity DTO and `X-Passport` header codec used across all
-BotResources services.
+`Passport` identity DTO + `X-Passport` header codec, plus the canonical PAT
+bearer-token contract, shared across all BotResources services.
 
 **Purpose.** `Passport` (Human | Service) is the identity representation
 that `svc-identity` builds and every downstream service consumes. It is
 transported between services as a base64-encoded JSON value in the
-`X-Passport` HTTP header.
+`X-Passport` HTTP header. For PAT-authenticated requests, this crate also
+defines the canonical key/value shape (`bearer_token_key` +
+`BearerTokenEntry`) that every service uses to resolve a PAT against the
+shared `bearer_tokens` NATS KV bucket.
 
 **When to use.** Any service that authenticates incoming requests (receives
-`X-Passport`) or propagates identity downstream.
+`X-Passport`), propagates identity downstream, or resolves PATs against
+the shared bearer-token KV.
 
 **When not to use.** You are inside a bounded context that has already
 extracted the identity from the Passport into its own domain types. Don't
@@ -79,6 +83,33 @@ invalid JSON, and JSON that doesn't match the `Passport` enum shape.
 Returned by `from_header` and friends. Inspect via `Debug` /
 `thiserror::Error` impl.
 
+### `bearer_token_key` + `BearerTokenEntry` (PAT bearer-token contract)
+
+```rust
+pub fn bearer_token_key(plaintext: &str) -> String;
+
+pub struct BearerTokenEntry {
+    pub email: String,
+    pub token_id: Uuid,
+}
+```
+
+Canonical contract for the shared `bearer_tokens` NATS KV bucket used to
+resolve a PAT into a `Passport`:
+
+- `bearer_token_key` derives the KV key as lowercase-hex SHA-256 of the
+  plaintext bearer token. **Issuance** hashes a freshly-generated token to
+  write the entry; **authentication** hashes the inbound token to look the
+  entry up. Both sides MUST go through this function so the hashing stays
+  in lockstep. The plaintext token is never stored.
+- `BearerTokenEntry` is the value stored under that key. `token_id` is the
+  PAT's stable identifier — the same UUID surfaced on `Passport::Human`
+  via `AuthMethod::Pat { token_id }` for audit / revocation.
+
+PATs are server-issued high-entropy random secrets, so a fast hash is the
+right tool here (key derivation, not password storage). Do **not** adapt
+`bearer_token_key` for human-chosen secrets — those need argon2/bcrypt.
+
 ## Usage
 
 ```rust
@@ -108,7 +139,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth-v0.4.0" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth-v0.5.1" }
 ```
 
 ---
