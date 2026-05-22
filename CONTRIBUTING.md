@@ -1,0 +1,13 @@
+# Contributing
+
+**This repository does not accept external contributions.**
+
+It is published read-only for the benefit of BotResources and its authorized
+clients. Pull requests from accounts that are not on the internal contributor
+allowlist will be closed without review. Forking is disabled at the repository
+level.
+
+If you have a commercial relationship with BotResources and need a change in
+this repo, contact your BR account manager — not GitHub.
+
+Internal contributors: follow the workflow documented in Outline.

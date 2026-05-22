@@ -330,46 +330,31 @@ mod tests {
 
 /// Live-Postgres tests for `ensure_app_role`.
 ///
-/// CI does not provision a database; these tests are `#[ignore]` and only
-/// run when:
-///   - `TEST_DATABASE_URL` is set to a superuser/CREATEROLE connection
-///   - they are invoked explicitly with `cargo test -- --ignored`
+/// Run in CI under the `e2e-postgres` job against a `postgres:16-alpine`
+/// service, and locally with `TEST_DATABASE_URL` pointing at any PG 16+
+/// superuser connection — invoke explicitly via `cargo test -- --ignored`.
+///
+/// Each test bootstraps a fresh `caller_<uuid>` role configured exactly
+/// like CNPG's `<svc>_owner` in production (`LOGIN CREATEROLE NOSUPERUSER`,
+/// no other attributes), opens a pool **as that caller**, and passes that
+/// pool to `ensure_app_role`. Calling through a SUPERUSER admin pool would
+/// hide the Scenario 1 regression from issue #13 — PG 16+ rejects
+/// `NOSUPERUSER` / `NOBYPASSRLS` / `NOREPLICATION` assertions from
+/// non-superuser CREATEROLE callers even when value-equivalent, and only
+/// the non-superuser caller path can catch a re-introduction of that bug.
 ///
 /// They exercise the two behavioral guarantees that broke between 0.5.0
-/// and 0.5.1: that the call succeeds end-to-end (no `syntax error at or
-/// near "$1"`), and that calling twice with different passwords actually
-/// rotates the secret on the server.
+/// and 0.5.1: that the call succeeds end-to-end against the production
+/// privilege model (no `permission denied to alter role`, no
+/// `syntax error at or near "$1"`), and that calling twice with different
+/// passwords actually rotates the secret on the server.
 #[cfg(test)]
 mod live_tests {
     use super::*;
+    use crate::test_support::{cleanup_role, setup_caller, test_db_url, unique_role_name};
     use sqlx::Connection;
     use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
     use std::str::FromStr;
-
-    /// Returns `Some(url)` only when the live-test prerequisite env var is
-    /// set; `None` skips silently so the test body can early-return when
-    /// developers run the full suite without provisioning a DB.
-    fn test_db_url() -> Option<String> {
-        std::env::var("TEST_DATABASE_URL").ok()
-    }
-
-    /// Unique role name per test process so parallel runs do not collide,
-    /// and so a stale role from a crashed run does not pollute the next.
-    fn unique_role_name() -> String {
-        // UUID v7 simple = 32 lowercase hex digits; prefix with a letter to
-        // satisfy the `[a-z][a-z0-9_]*` validator. Truncated to stay well
-        // under the 63-byte cap.
-        let suffix = &Uuid::now_v7().simple().to_string()[..24];
-        format!("br_test_{suffix}")
-    }
-
-    async fn drop_role(admin: &PgPool, role: &str) {
-        // Best-effort cleanup. Quote the identifier to match how
-        // ensure_app_role created it.
-        let _ = sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
-            .execute(admin)
-            .await;
-    }
 
     /// Connect to the same cluster as `admin_url` but as `role`/`password`.
     /// Returns the connection on success, the sqlx error on failure (we use
@@ -387,7 +372,7 @@ mod live_tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL pointing at a Postgres with CREATEROLE"]
+    #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_is_idempotent_for_same_password() {
         let Some(url) = test_db_url() else { return };
         let admin = PgPoolOptions::new()
@@ -395,13 +380,14 @@ mod live_tests {
             .connect(&url)
             .await
             .expect("connect as admin");
+        let (caller_pool, caller) = setup_caller(&admin, &url).await;
         let role = unique_role_name();
         let password = "idempotency_check_pw_42";
 
-        ensure_app_role(&admin, &role, password)
+        ensure_app_role(&caller_pool, &role, password)
             .await
             .expect("first call");
-        ensure_app_role(&admin, &role, password)
+        ensure_app_role(&caller_pool, &role, password)
             .await
             .expect("second call must not fail");
 
@@ -412,11 +398,16 @@ mod live_tests {
             .await
             .ok();
 
-        drop_role(&admin, &role).await;
+        caller_pool.close().await;
+        // Drop the app role before the caller — the caller owns it (it
+        // created it via CREATEROLE) and PG refuses to drop a role that
+        // still owns other roles.
+        cleanup_role(&admin, &role).await;
+        cleanup_role(&admin, &caller).await;
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL pointing at a Postgres with CREATEROLE"]
+    #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_rotates_password_on_change() {
         let Some(url) = test_db_url() else { return };
         let admin = PgPoolOptions::new()
@@ -424,11 +415,12 @@ mod live_tests {
             .connect(&url)
             .await
             .expect("connect as admin");
+        let (caller_pool, caller) = setup_caller(&admin, &url).await;
         let role = unique_role_name();
         let old_pw = "old_pw_v1_aaa";
         let new_pw = "new_pw_v2_bbb";
 
-        ensure_app_role(&admin, &role, old_pw)
+        ensure_app_role(&caller_pool, &role, old_pw)
             .await
             .expect("set old");
         try_login(&url, &role, old_pw)
@@ -438,7 +430,7 @@ mod live_tests {
             .await
             .ok();
 
-        ensure_app_role(&admin, &role, new_pw)
+        ensure_app_role(&caller_pool, &role, new_pw)
             .await
             .expect("rotate");
         try_login(&url, &role, new_pw)
@@ -454,11 +446,13 @@ mod live_tests {
             "old password must be rejected after rotation"
         );
 
-        drop_role(&admin, &role).await;
+        caller_pool.close().await;
+        cleanup_role(&admin, &role).await;
+        cleanup_role(&admin, &caller).await;
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL pointing at a Postgres with CREATEROLE"]
+    #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_handles_password_with_dollar_signs() {
         // 0.5.0/0.5.1 never got far enough to exercise this — but with
         // dollar-quoting in 0.5.2 a password containing `$` characters
@@ -469,10 +463,11 @@ mod live_tests {
             .connect(&url)
             .await
             .expect("connect as admin");
+        let (caller_pool, caller) = setup_caller(&admin, &url).await;
         let role = unique_role_name();
         let password = r#"weird $ pw $$ with $foo$ markers and 'quotes'"#;
 
-        ensure_app_role(&admin, &role, password)
+        ensure_app_role(&caller_pool, &role, password)
             .await
             .expect("special-char password must be set successfully");
         try_login(&url, &role, password)
@@ -482,6 +477,8 @@ mod live_tests {
             .await
             .ok();
 
-        drop_role(&admin, &role).await;
+        caller_pool.close().await;
+        cleanup_role(&admin, &role).await;
+        cleanup_role(&admin, &caller).await;
     }
 }
