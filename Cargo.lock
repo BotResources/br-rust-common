@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "base64",
  "serde",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-events"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "serde",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-kernel"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "axum",
  "br-core-auth",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "br-core-auth",
  "serde_json",

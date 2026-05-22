@@ -113,6 +113,18 @@ jobs:
           done
           exit $fail
 
+  changelog:
+    name: changelog entry per Cargo.toml version
+    runs-on: arc-ubuntu
+    # Gate: every crate's current Cargo.toml version must have a matching
+    # `## [X.Y.Z]` section in its CHANGELOG.md. Catches the "bumped version
+    # but forgot the changelog entry" mistake at PR time, before the
+    # release-tags workflow would push an undocumented tag.
+    steps:
+      - uses: actions/checkout@v5
+      - name: check changelog entries
+        run: bash .github/scripts/check-changelog.sh
+
   trufflehog:
     name: trufflehog (secret scan)
     runs-on: arc-ubuntu

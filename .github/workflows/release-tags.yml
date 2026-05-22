@@ -34,28 +34,68 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Tag missing per-crate versions
+      - name: Verify changelog entries before tagging
+        # Defense in depth: the same check runs as a required PR gate in
+        # ci.yml. Re-running it here means a tag never lands without a
+        # matching `## [X.Y.Z]` section, even if the gate is bypassed.
+        run: bash .github/scripts/check-changelog.sh
+
+      - name: Tag and release missing per-crate versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          created=0
+          created_tags=0
+          created_releases=0
           for toml in crates/*/Cargo.toml; do
             crate=$(basename "$(dirname "$toml")")
+            changelog="crates/${crate}/CHANGELOG.md"
             version=$(grep -m1 '^version = ' "$toml" | sed -E 's/^version = "([^"]+)".*/\1/')
             if [ -z "$version" ]; then
               echo "::error::could not extract version from $toml"
               exit 1
             fi
             tag="${crate}-v${version}"
+
+            # --- Tag (idempotent) -------------------------------------------
             if git rev-parse --verify "refs/tags/${tag}" >/dev/null 2>&1; then
-              echo "✓ ${tag} already exists"
-              continue
+              echo "✓ tag ${tag} already exists"
+            else
+              echo "→ creating tag ${tag}"
+              git tag -a "${tag}" \
+                -m "${crate} ${version}" \
+                -m "Auto-tagged from main. See ${changelog} for the entry."
+              git push origin "${tag}"
+              created_tags=$((created_tags + 1))
             fi
-            echo "→ creating ${tag}"
-            git tag -a "${tag}" \
-              -m "${crate} ${version}" \
-              -m "Auto-tagged from main. See crates/${crate}/CHANGELOG.md for the entry."
-            git push origin "${tag}"
-            created=$((created + 1))
+
+            # --- GitHub Release (idempotent) --------------------------------
+            # Extract the matching CHANGELOG section as the release body. The
+            # check-changelog step above already verified the entry exists, so
+            # this should always succeed; the empty-body guard below is just
+            # defense in depth.
+            if gh release view "${tag}" >/dev/null 2>&1; then
+              echo "✓ release ${tag} already exists"
+            else
+              echo "→ creating release ${tag}"
+              notes_file=$(mktemp)
+              awk -v target="## [${version}]" '
+                index($0, target) == 1 { in_section = 1; print; next }
+                in_section && index($0, "## [") == 1 { exit }
+                in_section { print }
+              ' "$changelog" > "$notes_file"
+              if [ ! -s "$notes_file" ]; then
+                echo "::warning file=${changelog}::could not extract notes for ${tag}; using placeholder"
+                printf 'See [%s](https://github.com/%s/blob/%s/%s) for changes.\n' \
+                  "$changelog" "$GITHUB_REPOSITORY" "$tag" "$changelog" > "$notes_file"
+              fi
+              gh release create "${tag}" \
+                --title "${crate} ${version}" \
+                --notes-file "$notes_file" \
+                --verify-tag
+              rm -f "$notes_file"
+              created_releases=$((created_releases + 1))
+            fi
           done
-          echo "Created ${created} tag(s)."
+          echo "Created ${created_tags} tag(s) and ${created_releases} release(s)."

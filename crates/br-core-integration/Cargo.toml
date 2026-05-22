@@ -1,11 +1,11 @@
 [package]
 name = "br-core-integration"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.88"
-license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Typed integration-event/command envelopes and IntegrationPublisher trait for cross-bounded-context messaging over NATS"
-repository = "https://github.com/BotResources/br-rust-common"
 
 [dependencies]
 async-nats = { workspace = true }

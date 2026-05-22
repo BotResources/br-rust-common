@@ -57,7 +57,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth-v0.4.0" }
+br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth-v0.4.1" }
 ```
 
 ---

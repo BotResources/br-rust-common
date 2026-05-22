@@ -1,11 +1,11 @@
 [package]
 name = "br-core-auth"
-version = "0.5.0"
-edition = "2024"
-rust-version = "1.85"
-license = "MIT"
-description = "Passport identity DTO and X-Passport header codec shared across services"
-repository = "https://github.com/BotResources/br-rust-common"
+version = "0.5.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Passport identity DTO, X-Passport header codec, and PAT bearer-token contract shared across BotResources services"
 
 [dependencies]
 base64 = { workspace = true }
