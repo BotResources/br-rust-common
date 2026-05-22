@@ -9,11 +9,15 @@ use uuid::Uuid;
 /// key. Issuance hashes the freshly-generated token to write the entry, and
 /// every authenticated request hashes the inbound token to look the entry up.
 /// Both sides MUST go through this function so the hashing stays in lockstep.
+///
+/// PATs are server-issued, high-entropy random secrets, so a fast hash is the
+/// right tool here — it's a key-derivation step, not password storage. Do not
+/// adapt this function for human-chosen secrets; those need argon2/bcrypt.
 pub fn bearer_token_key(plaintext: &str) -> String {
+    use std::fmt::Write;
     let digest = Sha256::digest(plaintext.as_bytes());
     let mut out = String::with_capacity(digest.len() * 2);
     for byte in digest {
-        use std::fmt::Write;
         write!(&mut out, "{byte:02x}").expect("writing to String never fails");
     }
     out
