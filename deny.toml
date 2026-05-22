@@ -29,6 +29,10 @@ allow = [
     "Zlib",
     "CC0-1.0",
     "MPL-2.0",
+    # webpki-roots ships Mozilla's CA bundle data under this Community Data
+    # License Agreement. Permissive, attribution-only — pulled in via
+    # async-nats → tokio-websockets.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 

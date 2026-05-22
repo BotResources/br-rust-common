@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/br-core-auth",
     "crates/br-core-events",
+    "crates/br-core-integration",
     "crates/br-core-kernel",
     "crates/br-util-axum-auth",
     "crates/br-util-postgres",
@@ -10,7 +11,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/BotResources/br-rust-common"
 
@@ -18,11 +19,15 @@ repository = "https://github.com/BotResources/br-rust-common"
 # Internal (this repo)
 br-core-auth = { path = "crates/br-core-auth", version = "0.5.0" }
 br-core-events = { path = "crates/br-core-events", version = "0.3.0" }
+br-core-integration = { path = "crates/br-core-integration", version = "0.1.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.3.0" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.0" }
 br-util-postgres = { path = "crates/br-util-postgres", version = "0.5.2" }
 
 # External
+async-nats = "0.48"
+async-trait = "0.1"
+futures-util = "0.3"
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

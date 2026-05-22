@@ -65,10 +65,11 @@ fn extract_sslmode(url: &str) -> Option<String> {
     let query = url.split('?').nth(1)?;
     let mut result = None;
     for param in query.split('&') {
-        if let Some((key, value)) = param.split_once('=') {
-            if key == "sslmode" || key == "ssl-mode" {
-                result = Some(value.to_ascii_lowercase());
-            }
+        let Some((key, value)) = param.split_once('=') else {
+            continue;
+        };
+        if key == "sslmode" || key == "ssl-mode" {
+            result = Some(value.to_ascii_lowercase());
         }
     }
     result

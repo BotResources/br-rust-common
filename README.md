@@ -23,6 +23,7 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-core-kernel` | core | Typed ID wrappers (`UserId`, `ServiceAccountId`) | [README](crates/br-core-kernel/README.md) | [CHANGELOG](crates/br-core-kernel/CHANGELOG.md) |
 | `br-core-auth` | core | `Passport` DTO + `X-Passport` header codec | [README](crates/br-core-auth/README.md) | [CHANGELOG](crates/br-core-auth/CHANGELOG.md) |
 | `br-core-events` | core | Shared event envelopes (`EventMetadata`, `RawEvent`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](crates/br-core-events/CHANGELOG.md) |
+| `br-core-integration` | core | Typed integration envelopes + `IntegrationPublisher` (NATS JetStream / noop) | [README](crates/br-core-integration/README.md) | [CHANGELOG](crates/br-core-integration/CHANGELOG.md) |
 | `br-util-postgres` | util | Postgres pools, TLS, RLS context, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
 
@@ -63,4 +64,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt    --all
 ```
 
-MSRV: **1.85** (edition 2024). License: MIT.
+MSRV: **1.88** (edition 2024). License: MIT.
