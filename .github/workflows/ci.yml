@@ -156,7 +156,13 @@ jobs:
         with:
           key: e2e-postgres
       - name: cargo test (live PG tests)
-        run: cargo test -p br-util-postgres --locked -- --ignored
+        # --test-threads=1: the live tests bootstrap a non-superuser
+        # CREATEROLE owner per test, then run `GRANT ON ALL TABLES IN
+        # SCHEMA public TO <app>`. With parallel tests, owner A's GRANT
+        # iterates over tables owned by owner B and fails with
+        # "permission denied for table". Sequential matches the
+        # single-service / single-database production shape.
+        run: cargo test -p br-util-postgres --locked -- --ignored --test-threads=1
 
   coverage:
     name: coverage (per-crate, UT vs UT+E2E)
@@ -209,7 +215,8 @@ jobs:
       - name: snapshot UT-only report
         run: cargo llvm-cov report --json --output-path coverage-ut.json
       - name: instrument + run e2e tests (accumulating)
-        run: cargo llvm-cov --workspace --locked --no-clean -- --ignored
+        # See e2e-postgres job comment for why --test-threads=1.
+        run: cargo llvm-cov --workspace --locked --no-clean -- --ignored --test-threads=1
       - name: snapshot UT+E2E report
         run: cargo llvm-cov report --json --output-path coverage-ut-e2e.json
       - name: generate lcov (UT+E2E)

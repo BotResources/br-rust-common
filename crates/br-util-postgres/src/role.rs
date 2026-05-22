@@ -351,34 +351,12 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
+    use crate::test_support::{
+        cleanup_role, setup_caller, test_db_url, unique_role_name,
+    };
     use sqlx::Connection;
     use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
     use std::str::FromStr;
-
-    /// Returns `Some(url)` only when the live-test prerequisite env var is
-    /// set; `None` skips silently so the test body can early-return when
-    /// developers run the full suite without provisioning a DB.
-    fn test_db_url() -> Option<String> {
-        std::env::var("TEST_DATABASE_URL").ok()
-    }
-
-    /// Unique role name per test process so parallel runs do not collide,
-    /// and so a stale role from a crashed run does not pollute the next.
-    fn unique_role_name() -> String {
-        // UUID v7 simple = 32 lowercase hex digits; prefix with a letter to
-        // satisfy the `[a-z][a-z0-9_]*` validator. Truncated to stay well
-        // under the 63-byte cap.
-        let suffix = &Uuid::now_v7().simple().to_string()[..24];
-        format!("br_test_{suffix}")
-    }
-
-    async fn drop_role(admin: &PgPool, role: &str) {
-        // Best-effort cleanup. Quote the identifier to match how
-        // ensure_app_role created it.
-        let _ = sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
-            .execute(admin)
-            .await;
-    }
 
     /// Connect to the same cluster as `admin_url` but as `role`/`password`.
     /// Returns the connection on success, the sqlx error on failure (we use
@@ -393,41 +371,6 @@ mod live_tests {
             .username(role)
             .password(password);
         PgConnection::connect_with(&opts).await
-    }
-
-    /// Bootstrap a fresh `caller_<uuid>` role with the production privilege
-    /// model and return a pool connected as that caller. Mirrors CNPG's
-    /// `<svc>_owner`: `LOGIN CREATEROLE NOSUPERUSER`, nothing else. The
-    /// app-role tests run *through* this pool so they exercise the same
-    /// code path as production — see the module-level docs for why a
-    /// SUPERUSER admin pool would hide the Scenario 1 regression.
-    async fn setup_caller(admin: &PgPool, admin_url: &str) -> (PgPool, String) {
-        let caller = unique_role_name();
-        let password = "caller_pw_for_e2e_only";
-
-        // caller is a freshly generated unique_role_name() — matches the
-        // [a-z][a-z0-9_]* validator, so identifier and literal interpolation
-        // are both safe. Password is a test-only constant, no secret.
-        let create_sql = format!(
-            "CREATE ROLE \"{caller}\" LOGIN CREATEROLE NOSUPERUSER \
-             PASSWORD '{password}'"
-        );
-        sqlx::query(&create_sql)
-            .execute(admin)
-            .await
-            .expect("create caller role");
-
-        let opts = PgConnectOptions::from_str(admin_url)
-            .expect("TEST_DATABASE_URL must parse as a Postgres URL")
-            .username(&caller)
-            .password(password);
-        let pool = PgPoolOptions::new()
-            .max_connections(2)
-            .connect_with(opts)
-            .await
-            .expect("connect as caller");
-
-        (pool, caller)
     }
 
     #[tokio::test]
@@ -461,8 +404,8 @@ mod live_tests {
         // Drop the app role before the caller — the caller owns it (it
         // created it via CREATEROLE) and PG refuses to drop a role that
         // still owns other roles.
-        drop_role(&admin, &role).await;
-        drop_role(&admin, &caller).await;
+        cleanup_role(&admin, &role).await;
+        cleanup_role(&admin, &caller).await;
     }
 
     #[tokio::test]
@@ -506,8 +449,8 @@ mod live_tests {
         );
 
         caller_pool.close().await;
-        drop_role(&admin, &role).await;
-        drop_role(&admin, &caller).await;
+        cleanup_role(&admin, &role).await;
+        cleanup_role(&admin, &caller).await;
     }
 
     #[tokio::test]
@@ -537,7 +480,7 @@ mod live_tests {
             .ok();
 
         caller_pool.close().await;
-        drop_role(&admin, &role).await;
-        drop_role(&admin, &caller).await;
+        cleanup_role(&admin, &role).await;
+        cleanup_role(&admin, &caller).await;
     }
 }
