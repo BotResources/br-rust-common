@@ -15,7 +15,7 @@ env:
 jobs:
   fmt-clippy-test:
     name: cargo fmt + clippy + test
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -31,7 +31,7 @@ jobs:
 
   msrv:
     name: MSRV 1.88 build
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -44,7 +44,7 @@ jobs:
 
   docs:
     name: cargo doc
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
@@ -57,7 +57,7 @@ jobs:
 
   deny:
     name: cargo-deny check
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -66,7 +66,7 @@ jobs:
 
   unused-deps:
     name: cargo-machete (unused deps)
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: taiki-e/install-action@v2
@@ -76,7 +76,7 @@ jobs:
 
   semver:
     name: cargo semver-checks
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
@@ -115,7 +115,7 @@ jobs:
 
   changelog:
     name: changelog entry per Cargo.toml version
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     # Gate: every crate's current Cargo.toml version must have a matching
     # `## [X.Y.Z]` section in its CHANGELOG.md. Catches the "bumped version
     # but forgot the changelog entry" mistake at PR time, before the
@@ -127,7 +127,7 @@ jobs:
 
   trufflehog:
     name: trufflehog (secret scan)
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
@@ -138,7 +138,7 @@ jobs:
 
   e2e-postgres:
     name: e2e (br-util-postgres vs PG 16)
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     # Closes issue #13. Two regressions (0.5.0, 0.5.1) shipped because
     # `ensure_app_role` was never exercised against a real PG with the
     # production privilege model (non-superuser CREATEROLE caller). The
@@ -178,7 +178,7 @@ jobs:
 
   e2e-nats:
     name: e2e (br-core-integration vs NATS JetStream)
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     # GHA `services:` cannot override an image's CMD, but NATS needs
     # `-js` (enable JetStream) and `-m 8222` (monitoring for healthcheck).
     # We start the broker via `docker run` in a step — works on ARC
@@ -221,7 +221,7 @@ jobs:
 
   coverage:
     name: coverage (per-crate, UT vs UT+E2E)
-    runs-on: arc-ubuntu
+    runs-on: ubuntu-latest
     # Per-crate × {UT only, UT+E2E} so the Δ column shows exactly how much
     # of each crate is protected *only* by the e2e jobs — that is the
     # surface that would silently regress if those jobs were skipped.
