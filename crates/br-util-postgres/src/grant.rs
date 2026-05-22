@@ -73,8 +73,7 @@ mod live_tests {
     use super::*;
     use crate::role::ensure_app_role;
     use crate::test_support::{
-        cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name,
-        unique_table_name,
+        cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
     };
     use sqlx::Row;
     use sqlx::postgres::PgPoolOptions;
@@ -84,9 +83,7 @@ mod live_tests {
     /// Bootstrap: admin → owner → app role created by owner. Returns the
     /// admin pool (for cleanup), the owner pool (for migrations + grants),
     /// and the names of the two roles so the test can drop them.
-    async fn bootstrap(
-        url: &str,
-    ) -> (sqlx::PgPool, sqlx::PgPool, String, String) {
+    async fn bootstrap(url: &str) -> (sqlx::PgPool, sqlx::PgPool, String, String) {
         let admin = PgPoolOptions::new()
             .max_connections(2)
             .connect(url)
@@ -161,10 +158,12 @@ mod live_tests {
             .await
             .expect("SELECT after grant");
         assert_eq!(rows.len(), 2);
-        sqlx::query(&format!("INSERT INTO \"{table}\" (id, val) VALUES (3, 'c')"))
-            .execute(&app_pool)
-            .await
-            .expect("INSERT after grant");
+        sqlx::query(&format!(
+            "INSERT INTO \"{table}\" (id, val) VALUES (3, 'c')"
+        ))
+        .execute(&app_pool)
+        .await
+        .expect("INSERT after grant");
         sqlx::query(&format!("UPDATE \"{table}\" SET val = 'x' WHERE id = 1"))
             .execute(&app_pool)
             .await

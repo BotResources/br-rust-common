@@ -29,8 +29,7 @@ use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
 use common::{
-    cleanup_role, open_pool_as, setup_owner, test_db_url, unique_role_name,
-    unique_table_name,
+    cleanup_role, open_pool_as, setup_owner, test_db_url, unique_role_name, unique_table_name,
 };
 
 const APP_PW: &str = "bootstrap_app_pw_e2e_only";

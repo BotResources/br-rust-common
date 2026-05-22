@@ -91,8 +91,7 @@ mod live_tests {
     use crate::grant::grant_app_access;
     use crate::role::ensure_app_role;
     use crate::test_support::{
-        cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name,
-        unique_table_name,
+        cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
     };
     use br_core_auth::{AuthMethod, Passport};
     use serde_json::json;

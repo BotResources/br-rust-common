@@ -351,9 +351,7 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
-    use crate::test_support::{
-        cleanup_role, setup_caller, test_db_url, unique_role_name,
-    };
+    use crate::test_support::{cleanup_role, setup_caller, test_db_url, unique_role_name};
     use sqlx::Connection;
     use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
     use std::str::FromStr;
