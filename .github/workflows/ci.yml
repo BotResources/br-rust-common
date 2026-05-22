@@ -123,3 +123,109 @@ jobs:
       - uses: trufflesecurity/trufflehog@main
         with:
           extra_args: --results=verified,unknown
+
+  e2e-postgres:
+    name: e2e (br-util-postgres vs PG 16)
+    runs-on: arc-ubuntu
+    # Closes issue #13. Two regressions (0.5.0, 0.5.1) shipped because
+    # `ensure_app_role` was never exercised against a real PG with the
+    # production privilege model (non-superuser CREATEROLE caller). The
+    # `#[ignore]`-gated `live_tests` module in crates/br-util-postgres/
+    # src/role.rs bootstraps that caller from the admin URL below and
+    # runs the rotation / idempotence / dollar-password scenarios.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-postgres
+      - name: cargo test (live PG tests)
+        # --test-threads=1: the live tests bootstrap a non-superuser
+        # CREATEROLE owner per test, then run `GRANT ON ALL TABLES IN
+        # SCHEMA public TO <app>`. With parallel tests, owner A's GRANT
+        # iterates over tables owned by owner B and fails with
+        # "permission denied for table". Sequential matches the
+        # single-service / single-database production shape.
+        run: cargo test -p br-util-postgres --locked -- --ignored --test-threads=1
+
+  coverage:
+    name: coverage (per-crate, UT vs UT+E2E)
+    runs-on: arc-ubuntu
+    # Per-crate × {UT only, UT+E2E} so the Δ column shows exactly how much
+    # of each crate is protected *only* by the e2e-postgres job — that is
+    # the surface that would silently regress if the e2e job were skipped.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      # Flow rationale (cargo-llvm-cov 0.8.x):
+      #   - clean → start from a known empty profile state.
+      #   - --no-report run #1 builds + runs UT without emitting a report,
+      #     keeping the profile data around for the snapshot.
+      #   - `report --json` snapshots UT-only into coverage-ut.json.
+      #   - --no-clean run #2 runs the #[ignore]'d e2e tests on top of the
+      #     existing profile data; it does auto-emit a report to console
+      #     (that we ignore — the snapshot below is what we keep). The
+      #     `--no-report --no-clean` combo is explicitly rejected by
+      #     cargo-llvm-cov, so we accept the spurious console report.
+      #   - `report --json` after the e2e run captures UT+E2E.
+      - name: clean coverage profile
+        run: cargo llvm-cov clean --workspace
+      - name: instrument + run unit tests (no report)
+        run: cargo llvm-cov --workspace --locked --no-report
+      - name: snapshot UT-only report
+        run: cargo llvm-cov report --json --output-path coverage-ut.json
+      - name: instrument + run e2e tests (accumulating)
+        # See e2e-postgres job comment for why --test-threads=1.
+        run: cargo llvm-cov --workspace --locked --no-clean -- --ignored --test-threads=1
+      - name: snapshot UT+E2E report
+        run: cargo llvm-cov report --json --output-path coverage-ut-e2e.json
+      - name: generate lcov (UT+E2E)
+        run: cargo llvm-cov report --lcov --output-path coverage.lcov
+      - name: per-crate summary (UT vs UT+E2E)
+        run: bash .github/scripts/coverage-summary.sh coverage-ut.json coverage-ut-e2e.json >> "$GITHUB_STEP_SUMMARY"
+      - name: upload lcov artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage.lcov
+          if-no-files-found: error
