@@ -1,5 +1,19 @@
 # br-rust-common
 
+> [!IMPORTANT]
+> **This repository is intended for BotResources and its authorized clients.**
+> It is published read-only for visibility and dependency consumption.
+>
+> **We do not accept external pull requests, issues, or support requests.**
+> Issues and Discussions are disabled. PRs from accounts that are not on the
+> internal contributor allowlist will be closed without review. Forks are
+> disabled.
+>
+> - Clients with a commercial relationship: contact your BR account manager.
+> - Security reports: see [SECURITY.md](SECURITY.md) (private email channel).
+> - This is not a community-supported project. No support is provided through
+>   GitHub.
+
 Small, reusable Rust crates for [BotResources](https://botresources.ai) services.
 
 ## Catalog
