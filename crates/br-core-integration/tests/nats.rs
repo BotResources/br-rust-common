@@ -57,11 +57,12 @@ fn sample_metadata() -> MessageMetadata {
 async fn setup(
     subject_pattern: String,
     stream_name: String,
-) -> (NatsIntegrationPublisher, async_nats::jetstream::stream::Stream) {
+) -> (
+    NatsIntegrationPublisher,
+    async_nats::jetstream::stream::Stream,
+) {
     let url = nats_url().expect("NATS_URL set");
-    let client = async_nats::connect(&url)
-        .await
-        .expect("connect to NATS");
+    let client = async_nats::connect(&url).await.expect("connect to NATS");
     let js = async_nats::jetstream::new(client);
 
     // Always start from a clean slate — a previous failed run could have
@@ -87,7 +88,9 @@ async fn teardown(stream: async_nats::jetstream::stream::Stream) {
     let url = nats_url().unwrap_or_default();
     if let Ok(client) = async_nats::connect(&url).await {
         let js = async_nats::jetstream::new(client);
-        let _ = js.delete_stream(stream.cached_info().config.name.clone()).await;
+        let _ = js
+            .delete_stream(stream.cached_info().config.name.clone())
+            .await;
     }
 }
 
@@ -97,8 +100,7 @@ async fn publish_event_roundtrips_through_jetstream() {
     let Some(_) = nats_url() else { return };
     let prefix = unique_prefix();
     let subject = format!("{prefix}.evt.user.created.v1");
-    let (publisher, stream) =
-        setup(format!("{prefix}.>"), format!("STREAM_{prefix}")).await;
+    let (publisher, stream) = setup(format!("{prefix}.>"), format!("STREAM_{prefix}")).await;
 
     let event = IntegrationEvent {
         event_id: Uuid::now_v7(),
@@ -153,8 +155,7 @@ async fn publish_command_roundtrips_through_jetstream() {
     let Some(_) = nats_url() else { return };
     let prefix = unique_prefix();
     let subject = format!("{prefix}.cmd.notification.send.v1");
-    let (publisher, stream) =
-        setup(format!("{prefix}.>"), format!("STREAM_{prefix}")).await;
+    let (publisher, stream) = setup(format!("{prefix}.>"), format!("STREAM_{prefix}")).await;
 
     let command = IntegrationCommand {
         command_id: Uuid::now_v7(),
@@ -209,9 +210,7 @@ async fn publish_returns_err_when_no_stream_matches() {
     // matched" — `publish()` must surface that as IntegrationError::Publish
     // rather than silently succeeding.
     let Some(url) = nats_url() else { return };
-    let client = async_nats::connect(&url)
-        .await
-        .expect("connect to NATS");
+    let client = async_nats::connect(&url).await.expect("connect to NATS");
     let js = async_nats::jetstream::new(client);
     let publisher = NatsIntegrationPublisher::new(js);
 
@@ -234,9 +233,7 @@ async fn publish_if_connected_swallows_no_stream_error() {
     // and return. Verified by calling against an unmatched subject and
     // asserting only that the call completes without panic.
     let Some(url) = nats_url() else { return };
-    let client = async_nats::connect(&url)
-        .await
-        .expect("connect to NATS");
+    let client = async_nats::connect(&url).await.expect("connect to NATS");
     let js = async_nats::jetstream::new(client);
     let publisher = NatsIntegrationPublisher::new(js);
 
