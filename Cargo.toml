@@ -16,7 +16,7 @@ repository = "https://github.com/BotResources/br-rust-common"
 
 [workspace.dependencies]
 # Internal (this repo)
-br-core-auth = { path = "crates/br-core-auth", version = "0.4.0" }
+br-core-auth = { path = "crates/br-core-auth", version = "0.5.0" }
 br-core-events = { path = "crates/br-core-events", version = "0.3.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.3.0" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.0" }
@@ -28,6 +28,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }

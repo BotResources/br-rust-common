@@ -1,6 +1,6 @@
 [package]
 name = "br-core-auth"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -11,5 +11,6 @@ repository = "https://github.com/BotResources/br-rust-common"
 base64 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
