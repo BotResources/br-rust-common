@@ -123,3 +123,46 @@ jobs:
       - uses: trufflesecurity/trufflehog@main
         with:
           extra_args: --results=verified,unknown
+
+  e2e-nats:
+    name: e2e (br-core-integration vs NATS JetStream)
+    runs-on: arc-ubuntu
+    # NATS image needs `-js` (enable JetStream) and `-m 8222` (monitoring
+    # for healthcheck), but GHA `services:` has no way to override an
+    # image's CMD. We run the broker via `docker run` directly — works on
+    # ARC because each runner pod ships with a dind sidecar.
+    env:
+      NATS_URL: nats://localhost:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-nats
+      - name: start NATS JetStream broker
+        run: |
+          docker run -d --name nats-jetstream \
+            -p 4222:4222 -p 8222:8222 \
+            nats:2-alpine -js -m 8222
+          # Wait for /healthz to flip to "ok" before letting tests fire.
+          # NATS starts in <1s normally; 30 retries × 1s is generous
+          # cover for cold-pulled image + slow runner.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
+              echo "NATS ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "NATS failed to become healthy within 30s" >&2
+          docker logs nats-jetstream >&2
+          exit 1
+      - name: cargo test (live NATS tests)
+        # --test-threads=1: tests share a single JetStream namespace
+        # and each one creates/deletes its own stream; sequential
+        # execution avoids racy create/delete ordering against the
+        # broker. Aligns with the e2e-postgres job's reasoning.
+        run: cargo test -p br-core-integration --locked -- --ignored --test-threads=1
+      - name: stop NATS
+        if: always()
+        run: docker rm -f nats-jetstream || true
