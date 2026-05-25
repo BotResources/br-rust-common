@@ -1,11 +1,11 @@
 [package]
 name = "br-core-auth"
-version = "0.5.1"
+version = "0.6.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Passport identity DTO, X-Passport header codec, and PAT bearer-token contract shared across BotResources services"
+description = "Passport identity DTO, X-Passport header codec, PAT bearer-token contract, and session-cookie contract shared across BotResources services"
 
 [dependencies]
 base64 = { workspace = true }
