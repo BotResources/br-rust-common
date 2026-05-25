@@ -11,11 +11,7 @@ const INSECURE_NAME: &str = "session_id";
 /// svc-auth sets this cookie; downstream services (svc-identity) read it
 /// from the forwarded `Cookie` header via [`extract_session_id`].
 pub fn session_cookie_name(secure: bool) -> &'static str {
-    if secure {
-        SECURE_NAME
-    } else {
-        INSECURE_NAME
-    }
+    if secure { SECURE_NAME } else { INSECURE_NAME }
 }
 
 /// Extract the session ID value from a raw `Cookie` header string.
