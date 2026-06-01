@@ -3,7 +3,7 @@ use std::time::Duration;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
 use crate::error::PostgresError;
-use crate::net::is_on_trusted_network;
+use crate::net::{is_loopback, is_on_trusted_network, resolve_trusted_network_hosts};
 
 /// Deployment environment flag used by TLS validation.
 ///
@@ -24,7 +24,8 @@ pub enum Environment {
 /// Extract the host from a PostgreSQL connection URL.
 ///
 /// Handles `postgres://[user[:pass]@]host[:port]/db[?params]`.
-/// Returns `"localhost"` if parsing fails.
+/// An unparseable host yields `""`, which is on no trusted list, so TLS
+/// validation **fails closed** (TLS required) rather than skipping the check.
 fn extract_pg_host(url: &str) -> String {
     let without_scheme = url
         .strip_prefix("postgres://")
@@ -44,15 +45,11 @@ fn extract_pg_host(url: &str) -> String {
             .trim_start_matches('[')
             .split(']')
             .next()
-            .unwrap_or("localhost")
+            .unwrap_or_default()
             .to_string();
     }
 
-    host_port
-        .split(':')
-        .next()
-        .unwrap_or("localhost")
-        .to_string()
+    host_port.split(':').next().unwrap_or_default().to_string()
 }
 
 /// Extract the `sslmode` query parameter value from a PostgreSQL URL.
@@ -92,7 +89,14 @@ pub fn validate_database_tls(
 ) -> Result<(), PostgresError> {
     let host = extract_pg_host(url);
 
-    if is_on_trusted_network(&host) {
+    // Loopback short-circuits before any env read, so a loopback host never
+    // triggers the `TRUSTED_HOSTS` deprecation warning. Only a genuinely
+    // remote host pays the cost of resolving the trusted-network list.
+    if is_loopback(&host) {
+        return Ok(());
+    }
+
+    if is_on_trusted_network(&host, &resolve_trusted_network_hosts()) {
         return Ok(());
     }
 
@@ -212,7 +216,25 @@ mod tests {
 
     #[test]
     fn localhost_always_allowed() {
+        // Loopback short-circuits before any env read, so this is Ok regardless
+        // of TLS params and never emits the deprecation warning.
         assert!(validate_database_tls("postgres://localhost/db", Environment::Prod, false).is_ok());
+    }
+
+    #[test]
+    fn ipv6_loopback_always_allowed() {
+        assert!(
+            validate_database_tls("postgres://user@[::1]:5432/db", Environment::Prod, false)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn unparseable_host_fails_closed() {
+        // A URL with no host parses to "" — on no trusted list, no loopback —
+        // so TLS is required and the connection is rejected (fail closed).
+        assert!(validate_database_tls("postgres://", Environment::Prod, false).is_err());
+        assert_eq!(extract_pg_host("postgres://"), "");
     }
 
     #[test]

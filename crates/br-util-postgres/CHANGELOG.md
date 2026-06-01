@@ -22,12 +22,12 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 
 **Deprecated**
 - `TRUSTED_HOSTS` — the former name. It is still honored as a fallback when
-  `TRUSTED_NETWORK_HOSTS` is unset, and `is_on_trusted_network` now emits a
-  `tracing::warn!` each time the fallback name is read (it does not warn when
-  the new name is set, nor when neither is set). The read happens only at pool
-  init, so this fires a couple of times at boot — fine, and not deduplicated.
-  No behavior changes for existing deployments; the old name keeps working.
-  Removal is targeted for `1.0.0` — rename the variable before then.
+  `TRUSTED_NETWORK_HOSTS` is unset, and a deprecation `tracing::warn!` is
+  emitted each time the fallback name is read (no warning when the new name is
+  set, nor when neither is set). The read happens only at pool init, so this
+  fires a couple of times at boot — fine, and not deduplicated. No behavior
+  changes for existing deployments; the old name keeps working. Removal is
+  targeted for `1.0.0` — rename the variable before then.
 
 ## [0.5.3] — 2026-05-22
 
