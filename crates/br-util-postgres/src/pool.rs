@@ -3,7 +3,7 @@ use std::time::Duration;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
 use crate::error::PostgresError;
-use crate::net::is_localhost;
+use crate::net::is_on_trusted_network;
 
 /// Deployment environment flag used by TLS validation.
 ///
@@ -77,7 +77,10 @@ fn extract_sslmode(url: &str) -> Option<String> {
 
 /// Validate that a remote PostgreSQL connection uses TLS.
 ///
-/// - Localhost connections are always allowed (no TLS needed for local dev).
+/// - Hosts on a trusted network segment are always allowed: loopback, plus
+///   any host listed in `TRUSTED_NETWORK_HOSTS` (e.g. an intra-namespace
+///   CloudNativePG database reached over plaintext behind a default-deny
+///   `NetworkPolicy`). We trust the network segment, not the host.
 /// - Remote connections must include `sslmode=require`, `sslmode=verify-ca`,
 ///   or `sslmode=verify-full` in the URL.
 /// - In non-production environments, `allow_insecure=true` bypasses this check.
@@ -89,7 +92,7 @@ pub fn validate_database_tls(
 ) -> Result<(), PostgresError> {
     let host = extract_pg_host(url);
 
-    if is_localhost(&host) {
+    if is_on_trusted_network(&host) {
         return Ok(());
     }
 

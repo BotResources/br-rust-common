@@ -25,7 +25,7 @@ fundamentally different RLS strategy. Don't reach into this crate to
 |---|---|
 | `init_pool(url, env, allow_insecure) -> PgPool` | Long-lived runtime pool (max 20, min 2 connections). Validates TLS before connecting. **Does not run migrations.** |
 | `init_migration_pool(env, allow_insecure) -> PgPool` | Short-lived owner pool (max 2). Reads `DATABASE_URL_OWNER` (falls back to `DATABASE_URL`). Use to run migrations, then drop before creating the app pool. |
-| `validate_database_tls(url, env, allow_insecure)` | Standalone TLS validator: mirrors sqlx's `sslmode` parsing (accepts `sslmode` and `ssl-mode`, case-insensitive, last value wins). Localhost and `TRUSTED_HOSTS` entries are always allowed; remote hosts must have `sslmode=require/verify-ca/verify-full` unless `allow_insecure` is set in non-prod. |
+| `validate_database_tls(url, env, allow_insecure)` | Standalone TLS validator: mirrors sqlx's `sslmode` parsing (accepts `sslmode` and `ssl-mode`, case-insensitive, last value wins). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; remote hosts must have `sslmode=require/verify-ca/verify-full` unless `allow_insecure` is set in non-prod. |
 | `Environment` | Enum: `Local`, `Dev`, `Test`, `Prod`. Only `Prod` is load-bearing today (forbids the `allow_insecure` bypass). |
 
 ### Role provisioning
@@ -53,7 +53,8 @@ fundamentally different RLS strategy. Don't reach into this crate to
 | `DATABASE_URL` | App runtime pool URL. |
 | `DATABASE_URL_OWNER` | Migration pool URL (falls back to `DATABASE_URL`). |
 | `ALLOW_INSECURE` | When `true`, lets non-prod environments connect over plaintext. Ignored in `Prod`. |
-| `TRUSTED_HOSTS` | Comma-separated hostnames treated as local (no TLS required). Use for Docker Compose service names (`postgres`, `nats`). |
+| `TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass. |
+| `TRUSTED_HOSTS` | **Deprecated** (since 0.6.0; removal targeted for 1.0.0). Former name of `TRUSTED_NETWORK_HOSTS`; still honored as a fallback when the new name is unset, and warns on use. Rename it. |
 
 ## Two-role startup recipe
 
@@ -84,7 +85,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.5.3" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.6.0" }
 ```
 
 ---

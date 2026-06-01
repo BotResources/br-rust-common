@@ -4,6 +4,31 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.6.0] — 2026-06-01
+
+**Added**
+- `TRUSTED_NETWORK_HOSTS` environment variable — the canonical name for the
+  comma-separated list of DB hosts exempted from the remote-TLS requirement.
+  The rename exists to name the real concept: a listed host is exempted
+  because it sits on a **trusted network segment**, not because of any
+  property of the host itself. BR runs each service alongside its
+  CloudNativePG database in the same Kubernetes namespace, behind a
+  default-deny `NetworkPolicy`; that intra-namespace app↔DB traffic is
+  intentionally plaintext, so there is no untrusted segment between them for
+  transport TLS to protect. `TRUSTED_NETWORK_HOSTS` is how a service makes
+  that opt-out an explicit, per-host, conscious declaration rather than a
+  blanket bypass — the lib stays secure-by-default for genuinely remote
+  hosts. Behavior is otherwise identical to the former variable.
+
+**Deprecated**
+- `TRUSTED_HOSTS` — the former name. It is still honored as a fallback when
+  `TRUSTED_NETWORK_HOSTS` is unset, and `is_on_trusted_network` now emits a
+  `tracing::warn!` each time the fallback name is read (it does not warn when
+  the new name is set, nor when neither is set). The read happens only at pool
+  init, so this fires a couple of times at boot — fine, and not deduplicated.
+  No behavior changes for existing deployments; the old name keeps working.
+  Removal is targeted for `1.0.0` — rename the variable before then.
+
 ## [0.5.3] — 2026-05-22
 
 **Changed**
