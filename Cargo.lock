@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "br-core-auth",
  "serde_json",
