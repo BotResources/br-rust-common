@@ -242,6 +242,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-util-axum-readiness"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "br-util-postgres"
 version = "0.6.0"
 dependencies = [
