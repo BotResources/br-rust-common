@@ -1,0 +1,16 @@
+[package]
+name = "br-identity-domain"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Identity bounded context — pure domain. Scope-registration slice: the ScopeRegistry aggregate, its commands, events and hydration"
+
+[dependencies]
+br-core-scope = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

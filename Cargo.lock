@@ -242,6 +242,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-identity-domain"
+version = "0.1.0"
+dependencies = [
+ "br-core-scope",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "br-util-axum-auth"
 version = "0.4.2"
 dependencies = [
