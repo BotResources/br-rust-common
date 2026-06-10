@@ -220,7 +220,7 @@ jobs:
   e2e-postgres:
     name: e2e (br-util-postgres vs PG 16)
     runs-on: ubuntu-latest
-    # Closes issue #13. Two regressions (0.5.0, 0.5.1) shipped because
+    # Two regressions (0.5.0, 0.5.1) shipped because
     # `ensure_app_role` was never exercised against a real PG with the
     # production privilege model (non-superuser CREATEROLE caller). The
     # `#[ignore]`-gated `live_tests` module in crates/br-util-postgres/
