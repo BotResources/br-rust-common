@@ -44,7 +44,7 @@ Not published on crates.io. Each crate is versioned and tagged independently
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.5.3" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.6.1" }
 ```
 
 ## Release process

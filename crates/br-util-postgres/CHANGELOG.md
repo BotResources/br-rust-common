@@ -4,6 +4,56 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.6.1] — 2026-06-10
+
+**Fixed**
+- sqlx was built **without a TLS backend**, so the crate's own remote-host TLS
+  requirement could never be satisfied at runtime. The workspace declared
+  `sqlx` with `runtime-tokio` but no `tls-*` feature; with no backend, sqlx
+  0.8 rejects a `sslmode=require` / `verify-ca` / `verify-full` URL at connect
+  time with "TLS upgrade required by connect options but SQLx was built
+  without TLS support enabled", and a `sslmode`-absent URL (`prefer`) silently
+  falls back to plaintext. `validate_database_tls` was therefore validating an
+  intent the build could not honor, and the README's remote-host TLS guarantee
+  was unbacked. This went unnoticed because the real deployment never uses TLS
+  to the DB (see the deployment-model docs below).
+
+**Added**
+- A **rustls TLS backend** via the workspace `sqlx` feature
+  `tls-rustls-ring-webpki`. Chosen deliberately: pure-Rust rustls with the
+  `ring` crypto provider and the bundled **webpki** CA roots — no system trust
+  store, no `rustls-native-certs`, no OpenSSL — so the container build stays
+  hermetic (nothing to install in the image, identical behavior across base
+  images). A genuinely remote `sslmode=require` connection now completes
+  instead of failing client-side.
+- Proof tests (live, `#[ignore]`-gated). `backend_is_compiled_in` connects to
+  the existing *plaintext* `TEST_DATABASE_URL` with `sslmode=require` appended
+  and asserts the failure is the **server-side** refusal ("server does not
+  support TLS"), explicitly **not** the client-side "built without TLS
+  support" error — proving the backend is linked without needing a TLS server.
+  `full_handshake_succeeds` (gated on a separate `TEST_TLS_DATABASE_URL`, skips
+  silently when unset) connects with `sslmode=require` to a TLS-enabled server
+  and expects success; a CI `e2e-postgres-tls` job provisions that server with
+  a generated self-signed cert and `ssl=on`.
+
+**Docs**
+- Rewrote the README's TLS/deployment story, which had misrepresented the
+  model. It now leads with the deployment reality — Kubernetes + default-deny
+  `NetworkPolicy` + CloudNativePG in the service's namespace, where the DB
+  host is non-loopback but sits on a trusted, network-isolated segment and TLS
+  is deliberately not used — then the default (non-trusted remote hosts require
+  `sslmode=require`, now actually fulfillable), then the `TRUSTED_NETWORK_HOSTS`
+  matching contract **as implemented** (bare hostnames, exact match,
+  case-sensitive, port-independent — an entry containing `:port` matches
+  nothing; fail-closed on unparseable hosts).
+- Corrected the `ensure_app_role` table row, which still described removed
+  behavior: it claimed an explicit `NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOBYPASSRLS NOREPLICATION INHERIT` hardening `ALTER` (removed in 0.5.1) and a
+  bound password parameter (the opposite of the 0.5.2 dollar-quoted-literal
+  fix). The row now matches the code: the role inherits PG's no-privilege
+  defaults from `CREATE ROLE … LOGIN`, and the password is a dollar-quoted
+  literal with a per-call UUIDv7 tag.
+
 ## [0.6.0] — 2026-06-01
 
 **Added**

@@ -24,7 +24,7 @@ br-core-integration = { path = "crates/br-core-integration", version = "0.1.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.3.1" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.1" }
 br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.0" }
-br-util-postgres = { path = "crates/br-util-postgres", version = "0.5.3" }
+br-util-postgres = { path = "crates/br-util-postgres", version = "0.6.1" }
 
 # External
 async-nats = "0.48"
@@ -36,7 +36,17 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio"] }
+# `tls-rustls-ring-webpki`: pure-Rust rustls with the `ring` crypto provider
+# and the bundled webpki-roots CA set — no system trust store, no OpenSSL, so
+# the container build stays hermetic. Without a TLS backend, sqlx 0.8 rejects
+# `sslmode=require|verify-ca|verify-full` at connect time ("TLS upgrade
+# required … built without TLS support enabled"), making the crate's
+# remote-host TLS requirement unfulfillable at runtime.
+sqlx = { version = "0.8", features = [
+    "postgres",
+    "runtime-tokio",
+    "tls-rustls-ring-webpki",
+] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
