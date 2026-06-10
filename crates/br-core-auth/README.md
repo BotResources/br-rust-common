@@ -110,6 +110,31 @@ PATs are server-issued high-entropy random secrets, so a fast hash is the
 right tool here (key derivation, not password storage). Do **not** adapt
 `bearer_token_key` for human-chosen secrets — those need argon2/bcrypt.
 
+### Session cookie (`session_cookie_name` + `extract_session_id`)
+
+```rust
+pub fn session_cookie_name(secure: bool) -> &'static str;
+pub fn extract_session_id(cookie_header: &str, secure: bool) -> Option<&str>;
+```
+
+Canonical session-cookie contract between svc-auth (producer) and
+svc-identity (consumer). `session_cookie_name` returns `__Host-session_id`
+in production (`secure = true`) or `session_id` in local dev; both sides go
+through it so the name stays in lockstep.
+
+`extract_session_id` parses a raw `Cookie` header and returns the session ID.
+Extraction is **fail-closed on anything ambiguous**:
+
+- **Exact, case-sensitive name match** (RFC 6265). A variant-case name such as
+  `SESSION_ID=…` is rejected. This is load-bearing for the `__Host-` prefix:
+  the browser's `Secure; Path=/; no Domain` guarantees apply only to the
+  exact-case prefix, so a variant-case `__HOST-session_id` would be a cookie
+  the browser never constrained.
+- **Duplicates rejected.** If the exact name appears more than once in the
+  header, the value is ambiguous (the signature of a cookie-tossing /
+  prefix-injection attempt) and `extract_session_id` returns `None` rather
+  than picking a winner.
+
 ## Usage
 
 ```rust
