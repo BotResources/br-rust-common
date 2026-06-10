@@ -13,6 +13,14 @@
 # Required pin shape (per README):
 #   tag = "<crate>-vX.Y.Z"
 #
+# Three failure modes are enforced, not just the first:
+#   (a) a pin whose version differs from the crate's Cargo.toml (stale pin)
+#   (b) a pin that names a crate or version shape the gate can't parse
+#       (malformed pins must fail loud, not slip past the matcher)
+#   (c) a crate README with NO pin for its own crate at all (a crate a
+#       consumer cannot pin is the same discoverability bug this gate exists
+#       to prevent)
+#
 # Used by:
 #   - .github/workflows/ci.yml (pre-merge PR gate, in the changelog job)
 
@@ -25,7 +33,17 @@ fail=0
 for readme in README.md crates/*/README.md; do
   [ -f "$readme" ] || continue
 
-  # Each pin line looks like:  tag = "<crate>-v1.2.3"
+  # (b) Catch every `tag = "..."` line first, however malformed, so a typo'd
+  # pin fails loud instead of silently escaping the strict matcher below.
+  while IFS= read -r raw; do
+    [ -n "$raw" ] || continue
+    if ! grep -qE '^tag = "[a-z][a-z0-9-]*-v[0-9]+\.[0-9]+\.[0-9]+"$' <<<"$raw"; then
+      echo "::error file=${readme}::malformed tag pin ${raw} — expected tag = \"<crate>-vX.Y.Z\"" >&2
+      fail=1
+    fi
+  done < <(grep -oE 'tag = "[^"]*"' "$readme" || true)
+
+  # (a) Each well-formed pin must match its crate's Cargo.toml version.
   while IFS= read -r match; do
     [ -n "$match" ] || continue
     # match = `<crate>-v<X.Y.Z>` — split on the last `-v`.
@@ -55,6 +73,22 @@ for readme in README.md crates/*/README.md; do
     echo "✓ ${readme}: ${crate} pin v${pinned} matches Cargo.toml"
   done < <(grep -oE 'tag = "[a-z][a-z0-9-]*-v[0-9]+\.[0-9]+\.[0-9]+"' "$readme" \
              | sed -E 's/^tag = "(.*)"$/\1/' || true)
+done
+
+# (c) Every crate README must carry at least one well-formed pin of its own
+# crate — a crate without an install pin is undiscoverable to consumers.
+for toml in crates/*/Cargo.toml; do
+  crate=$(basename "$(dirname "$toml")")
+  readme="crates/${crate}/README.md"
+  if [ ! -f "$readme" ]; then
+    echo "::error file=${toml}::${crate} has no README.md" >&2
+    fail=1
+    continue
+  fi
+  if ! grep -qE "tag = \"${crate}-v[0-9]+\.[0-9]+\.[0-9]+\"" "$readme"; then
+    echo "::error file=${readme}::${crate} README has no install pin (tag = \"${crate}-vX.Y.Z\")" >&2
+    fail=1
+  fi
 done
 
 exit $fail
