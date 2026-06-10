@@ -19,23 +19,31 @@ needs to agree with peers on the wire shape and metadata fields.
 
 | Type | Role |
 |---|---|
-| `MessageMetadata` | `actor_id`, `correlation_id`, `causation_id` (skipped on the wire when `None`). Kept separate from `EventMetadata` because it may diverge (e.g. `actor_id` becoming an `Actor` enum). |
-| `IntegrationEvent<T>` | Envelope for a fact: `event_id`, `event_type`, `version: u8`, `occurred_at`, `metadata`, `payload: T`. |
-| `IntegrationCommand<T>` | Envelope for a request: `command_id`, `command_type`, `version: u8`, `issued_at`, `metadata`, `payload: T`. |
-| `IntegrationError` | `Publish(String)` for transport failures, `Serialization(serde_json::Error)` for encoding failures. |
+| `MessageMetadata` | Re-export of `br_core_events::EventMetadata` — one type, one wire contract. Carries a typed `br_core_kernel::Actor` (human or machine), `correlation_id`, `causation_id` (skipped on the wire when `None`). Backward-compatible wire format: pre-`Actor` payloads (no `actor_kind`) default to a human actor. |
+| `IntegrationEvent<T>` | Envelope for a fact: `event_id`, `event_type`, `version: u8`, `occurred_at`, `metadata`, `payload: T`. `#[non_exhaustive]` — build via `IntegrationEvent::new`. |
+| `IntegrationCommand<T>` | Envelope for a request: `command_id`, `command_type`, `version: u8`, `issued_at`, `metadata`, `payload: T`. `#[non_exhaustive]` — build via `IntegrationCommand::new`. |
+| `IntegrationError` | `Publish { kind: PublishErrorKind, detail: String }` for transport failures, `Serialization(serde_json::Error)` for encoding failures. `#[non_exhaustive]`. |
+| `PublishErrorKind` | Classifies a publish failure: `NoStream`, `Timeout`, `Other`. `#[non_exhaustive]`. |
 | `IntegrationPublisher` (trait, object-safe) | `publish(subject, payload) -> Result<(), IntegrationError>` and fire-and-forget `publish_if_connected(subject, payload)`. |
 | `IntegrationPublisherExt` (blanket trait) | Typed helpers: `publish_event`, `publish_command`, and `_if_connected` variants. |
 | `NatsIntegrationPublisher` | JetStream-backed implementation, awaits the broker ack. |
 | `NoopIntegrationPublisher` | No-op; for tests and as a default when messaging is disabled. |
+| `integration_subject` / `MessageKind` / `SubjectError` | Builds and validates the subject convention (see below). |
 
 ## Subject naming convention
 
-Not enforced by the type system, but recommended:
+Subjects follow `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
+(e.g. `identity.evt.user.created.v1`, `notifier.cmd.notification.send.v1`).
+Build them with `integration_subject` rather than formatting strings by hand —
+it is the single source of the convention and validates that each segment is
+non-empty and drawn from `[a-z0-9-]` (no `.`, no NATS wildcards, no whitespace):
 
-- Events:   `{bc}.evt.{aggregate}.{event_name}.v{N}`
-  — e.g. `identity.evt.user.created.v1`
-- Commands: `{bc}.cmd.{aggregate}.{command_name}.v{N}`
-  — e.g. `notifier.cmd.notification.send.v1`
+```rust
+use br_core_integration::{integration_subject, MessageKind};
+
+let subject = integration_subject("identity", MessageKind::Evt, "user", "created", 1).unwrap();
+assert_eq!(subject, "identity.evt.user.created.v1");
+```
 
 Subscribers use NATS wildcards (`identity.evt.>`, `notifier.cmd.>`) to consume
 relevant streams.
@@ -45,9 +53,10 @@ relevant streams.
 ```rust
 use std::sync::Arc;
 use br_core_integration::{
-    IntegrationEvent, IntegrationPublisher, IntegrationPublisherExt,
-    MessageMetadata, NatsIntegrationPublisher,
+    integration_subject, IntegrationEvent, IntegrationPublisher,
+    IntegrationPublisherExt, MessageKind, MessageMetadata, NatsIntegrationPublisher,
 };
+use br_core_integration::{Actor, UserId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -59,25 +68,25 @@ struct UserCreatedV1 { user_id: Uuid, email: String }
 let publisher: Arc<dyn IntegrationPublisher> =
     Arc::new(NatsIntegrationPublisher::new(jetstream));
 
-let evt = IntegrationEvent {
-    event_id: Uuid::new_v4(),
-    event_type: "user.created".into(),
-    version: 1,
-    occurred_at: Utc::now(),
-    metadata: MessageMetadata {
-        actor_id: Uuid::new_v4(),
-        correlation_id: Uuid::new_v4(),
-        causation_id: None,
-    },
-    payload: UserCreatedV1 {
+let metadata = MessageMetadata::new(
+    Actor::Human(UserId::from(Uuid::new_v4())),
+    Uuid::new_v4(),
+);
+
+let evt = IntegrationEvent::new(
+    Uuid::new_v4(),
+    "user.created",
+    1,
+    Utc::now(),
+    metadata,
+    UserCreatedV1 {
         user_id: Uuid::new_v4(),
         email: "alice@example.com".into(),
     },
-};
+);
 
-publisher
-    .publish_event("identity.evt.user.created.v1", &evt)
-    .await?;
+let subject = integration_subject("identity", MessageKind::Evt, "user", "created", 1)?;
+publisher.publish_event(&subject, &evt).await?;
 # Ok(()) }
 ```
 
@@ -88,7 +97,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration-v0.1.0" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration-v0.2.0" }
 ```
 
 ---

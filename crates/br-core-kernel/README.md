@@ -26,8 +26,15 @@ local to their bounded context.
 |---|---|---|
 | `UserId(pub Uuid)` | struct | Human user identifier. |
 | `ServiceAccountId(pub Uuid)` | struct | Machine identity (service account). |
+| `Actor` | enum | `Human(UserId)` or `Service(ServiceAccountId)` — who performed an action. `id() -> Uuid`, `is_human()`, `is_service()`. |
 
-Both types implement:
+`Actor` carries the human-vs-machine distinction in the type where a bare
+`Uuid` could not. Its standalone serde shape is internally tagged
+(`{ "kind": "human", "id": "…" }`), but embedding envelopes
+(`br_core_events::EventMetadata`) flatten it onto their own wire format and own
+that contract.
+
+Both ID types implement:
 
 - `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`
 - `Serialize`, `Deserialize` — `#[serde(transparent)]`, so the JSON wire
@@ -67,7 +74,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "br-core-kernel-v0.4.0" }
+br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "br-core-kernel-v0.4.1" }
 ```
 
 ---
