@@ -68,11 +68,11 @@ fn is_valid_role_name(name: &str) -> bool {
 /// errors with `role already exists`.
 ///
 /// ```ignore
-/// let owner_pool = init_migration_pool(env, allow_insecure).await?;
+/// let owner_pool = init_migration_pool().await?;
 /// ensure_app_role(&owner_pool, "myservice_app", &app_password).await?;
 /// sqlx::migrate!().run(&owner_pool).await?;
 /// drop(owner_pool);
-/// let app_pool = init_pool(&app_url, env, allow_insecure).await?;
+/// let app_pool = init_pool(&app_url).await?;
 /// ```
 pub async fn ensure_app_role(
     pool: &PgPool,
