@@ -21,7 +21,7 @@ repository = "https://github.com/BotResources/br-rust-common"
 br-core-auth = { path = "crates/br-core-auth", version = "0.6.1" }
 br-core-events = { path = "crates/br-core-events", version = "0.3.1" }
 br-core-integration = { path = "crates/br-core-integration", version = "0.1.0" }
-br-core-kernel = { path = "crates/br-core-kernel", version = "0.3.1" }
+br-core-kernel = { path = "crates/br-core-kernel", version = "0.4.0" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.1" }
 br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.0" }
 br-util-postgres = { path = "crates/br-util-postgres", version = "0.5.3" }

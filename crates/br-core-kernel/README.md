@@ -5,9 +5,13 @@ service-account ID at compile time.
 
 **Purpose.** Every BotResources service refers to identities. Without typed
 wrappers, two `Uuid`-typed arguments are interchangeable and a swap is
-silent. This crate fixes that with thin `repr(Uuid)` newtypes that keep
-ergonomics (`Display`, `Deref`, `From<Uuid>`, `Serialize`/`Deserialize`)
-intact.
+silent. This crate fixes that with thin newtypes around `Uuid` that keep the
+ergonomics that don't reopen the hole (`Display`, `From<Uuid>`,
+`Serialize`/`Deserialize`, explicit `as_uuid()` / `AsRef<Uuid>`). They
+deliberately do **not** implement `Deref<Target = Uuid>`: deref coercion would
+silently turn a `UserId` back into a `&Uuid` wherever a `&Uuid` is expected
+(UUID-keyed maps, SQL binds, `&Uuid`-taking functions), defeating the whole
+point. Reaching the inner value is always an explicit call.
 
 **When to use.** You need `UserId` or `ServiceAccountId` to pass or store an
 actor identifier and want compile-time separation from other UUIDs.
@@ -26,10 +30,16 @@ local to their bounded context.
 Both types implement:
 
 - `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`
-- `Serialize`, `Deserialize` (transparent — JSON wire format = a plain UUID string)
+- `Serialize`, `Deserialize` — `#[serde(transparent)]`, so the JSON wire
+  format is a plain UUID string (`"…"`). Serde's default newtype encoding
+  already produced this shape; the attribute turns it from an accident of the
+  default into an enforced, tested contract that cannot drift silently.
 - `Display` (delegates to `Uuid`)
-- `From<Uuid>` (no checked conversion — the wrap is intentionally cheap)
-- `Deref<Target = Uuid>` (so `.to_string()`, `.as_bytes()`, etc. work directly)
+- `From<Uuid>` and `From<UserId> for Uuid` / `From<ServiceAccountId> for Uuid`
+  (no checked conversion — the wrap and unwrap are intentionally cheap)
+- `as_uuid(&self) -> Uuid` (`const`) and `AsRef<Uuid>` — the explicit, only
+  ways to reach the inner UUID. No `Deref`: coercion to `&Uuid` is exactly the
+  silent confusion this crate prevents.
 
 ## Usage
 
@@ -40,12 +50,16 @@ use uuid::Uuid;
 fn process_request(actor: UserId) {
     // `actor` cannot accidentally be passed where ServiceAccountId is expected.
     println!("user {actor}");
+    // Reaching the raw UUID is explicit — by value or by reference.
+    let raw: Uuid = actor.as_uuid();
+    let raw_ref: &Uuid = actor.as_ref();
+    let _ = (raw, raw_ref);
 }
 
 let raw: Uuid = Uuid::new_v4();
 process_request(raw.into());
 
-// Direct serde — wire format is a plain UUID string, not `{"0": "..."}`.
+// Direct serde — the wire format is a plain UUID string, tested + contractual.
 let json = serde_json::to_string(&UserId::from(raw)).unwrap();
 ```
 
@@ -53,7 +67,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "br-core-kernel-v0.3.1" }
+br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "br-core-kernel-v0.4.0" }
 ```
 
 ---
