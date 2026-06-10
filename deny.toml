@@ -31,7 +31,8 @@ allow = [
     "MPL-2.0",
     # webpki-roots ships Mozilla's CA bundle data under this Community Data
     # License Agreement. Permissive, attribution-only — pulled in via
-    # async-nats → tokio-websockets.
+    # async-nats → tokio-websockets, and via sqlx's rustls-webpki TLS
+    # backend (br-util-postgres, since 0.6.1).
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93

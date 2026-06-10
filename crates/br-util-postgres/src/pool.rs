@@ -393,3 +393,86 @@ mod tests {
         );
     }
 }
+
+/// Live-Postgres tests that prove a TLS backend is actually compiled into
+/// sqlx — the defect this crate's 0.6.1 fix closed.
+///
+/// Until 0.6.1 the workspace declared `sqlx` with `runtime-tokio` but **no**
+/// TLS feature. With no backend, sqlx 0.8 fails *before any network I/O* on a
+/// `sslmode=require` URL with the client-side error "TLS upgrade required by
+/// connect options but SQLx was built without TLS support enabled"
+/// (`sqlx-core/src/net/tls/mod.rs::error_if_unavailable`). So
+/// `validate_database_tls` could pass a URL that the build could never honor.
+///
+/// `backend_is_compiled_in` makes the difference observable **without a TLS
+/// server**: pointed at the ordinary *plaintext* `TEST_DATABASE_URL` with
+/// `sslmode=require` appended, a TLS-less build fails client-side ("built
+/// without TLS support") whereas a TLS-enabled build gets past that gate,
+/// sends the `SSLRequest`, the plaintext server answers `N`, and sqlx fails
+/// with the *server-side* error "server does not support TLS"
+/// (`sqlx-postgres/src/connection/tls.rs`). Asserting the message is the
+/// server-side one — and explicitly **not** the client-side one — proves the
+/// backend is linked in.
+///
+/// `full_handshake_succeeds` is the positive path: gated on a separate
+/// `TEST_TLS_DATABASE_URL` (a server started with `ssl=on` and a cert), it
+/// connects with `sslmode=require` and expects success. It skips silently
+/// when that var is unset — TLS-server provisioning is heavier than a plain
+/// `postgres:16-alpine`, so this stays opt-in (wired in CI by the
+/// `e2e-postgres-tls` job).
+#[cfg(test)]
+mod live_tls_tests {
+    use crate::test_support::{test_db_url, test_tls_db_url};
+    use sqlx::Connection;
+    use sqlx::postgres::PgConnection;
+
+    /// Append a query parameter to a Postgres URL, handling the `?`/`&` join.
+    fn with_param(url: &str, param: &str) -> String {
+        let sep = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{sep}{param}")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL pointing at a (plaintext) PG 16+"]
+    async fn backend_is_compiled_in() {
+        let Some(url) = test_db_url() else { return };
+        let tls_url = with_param(&url, "sslmode=require");
+
+        let err = PgConnection::connect(&tls_url)
+            .await
+            .expect_err("plaintext server must refuse a required-TLS connection");
+
+        // The whole point: the failure must be the *server-side* refusal
+        // (backend present, handshake attempted, server said N), NOT the
+        // *client-side* "no backend" error. If the TLS feature regresses out
+        // of the sqlx dependency, this assertion flips and the test fails.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("server does not support TLS"),
+            "expected the server-side TLS refusal, got: {msg}"
+        );
+        assert!(
+            !msg.contains("built without TLS support"),
+            "sqlx was built WITHOUT a TLS backend — the rustls feature is \
+             missing from the workspace sqlx dependency. Got: {msg}"
+        );
+        assert!(
+            matches!(err, sqlx::Error::Tls(_)),
+            "expected sqlx::Error::Tls, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_TLS_DATABASE_URL pointing at a TLS-enabled PG 16+"]
+    async fn full_handshake_succeeds() {
+        let Some(url) = test_tls_db_url() else { return };
+        let tls_url = with_param(&url, "sslmode=require");
+
+        PgConnection::connect(&tls_url)
+            .await
+            .expect("TLS handshake against a TLS-enabled server must succeed")
+            .close()
+            .await
+            .ok();
+    }
+}
