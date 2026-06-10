@@ -10,6 +10,7 @@ members = [
     "crates/br-util-axum-auth",
     "crates/br-util-axum-readiness",
     "crates/br-util-postgres",
+    "crates/br-util-scope-declaration",
 ]
 
 [workspace.package]
@@ -29,6 +30,7 @@ br-identity-domain = { path = "crates/br-identity-domain", version = "0.1.0" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.2" }
 br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.1" }
 br-util-postgres = { path = "crates/br-util-postgres", version = "0.7.0" }
+br-util-scope-declaration = { path = "crates/br-util-scope-declaration", version = "0.1.0" }
 
 # External
 async-nats = "0.48"
@@ -56,4 +58,4 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
-uuid = { version = "1", features = ["v7", "serde"] }
+uuid = { version = "1", features = ["v5", "v7", "serde"] }

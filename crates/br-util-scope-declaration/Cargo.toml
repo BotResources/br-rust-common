@@ -1,0 +1,29 @@
+[package]
+name = "br-util-scope-declaration"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Boot-time scope-declaration handshake helper: a generic service declares its scopes to Identity and gates readiness on the confirmation"
+
+[dependencies]
+br-core-integration = { workspace = true }
+br-core-scope = { workspace = true }
+br-util-axum-readiness = { workspace = true }
+async-nats = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+# uuid `v5`: the deterministic, name-based declaring-service actor; `v7`: the
+# per-boot correlation_id and the per-message envelope ids.
+uuid = { workspace = true, features = ["v5"] }
+
+[dev-dependencies]
+# Real broker for the handshake e2e: the stub receiver subscribes to the declare
+# subject (futures-util drives the message stream), echoes the correlation_id on
+# a confirmation event, and br-core-kernel builds the envelope metadata. tokio
+# is test-only: src/ is runtime-agnostic async (the runtime is the caller's).
+br-core-kernel = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true }
