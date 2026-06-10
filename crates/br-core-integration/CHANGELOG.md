@@ -45,6 +45,16 @@ unchanged** (everything is still importable from the crate root).
   `br-core-events`) so consumers can construct `MessageMetadata` without adding
   a direct `br-core-kernel` dependency.
 
+**Docs**
+- Documented why the envelopes' `version` field is `u8`: a published-contract
+  schema version is bumped only on a breaking payload change and never
+  realistically exceeds 255, so a wider integer would be dead range on the
+  wire. No code change.
+- E2E `tests/nats.rs` teardown cleanup: removed a redundant `delete_message(1)`
+  no-op that ran just before deleting the whole stream, and teardown failures
+  now `eprintln!` instead of being fully silenced — a leaked stream can capture
+  a later test's messages, so a cleanup failure should be diagnosable.
+
 **Migration**
 
 Struct literals → constructors, and the new `Publish` shape:

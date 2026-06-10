@@ -102,10 +102,12 @@ pub async fn ensure_app_role(
     // Deliberately do not include `alter_sql` in any tracing event or error:
     // it contains the plaintext password as a dollar-quoted literal.
     let result = sqlx::query(&alter_sql).execute(pool).await;
-    // Zero the SQL string promptly so the password does not linger in memory
-    // longer than necessary. This is best-effort — sqlx has already copied
-    // the bytes onto the wire — but it shortens the window for an
-    // accidental dump (panic backtrace formatter, allocator reuse, etc).
+    // Best-effort overwrite of our copy of the SQL string. This is NOT a
+    // reliable wipe: the optimizer may elide the write, and sqlx has already
+    // copied the SQL into its own buffers (and onto the wire) before we get
+    // here. The real protections against the password leaking are the
+    // never-log discipline above and the fresh dollar-quote tag — this
+    // overwrite only marginally shortens the residency of our one copy.
     drop(scrub(alter_sql));
     result.map_err(PostgresError::Db)?;
 
@@ -170,10 +172,15 @@ fn is_valid_dollar_quote_tag(tag: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Overwrite the string's bytes with zeros before dropping. Best effort:
-/// the allocator may have already copied the buffer, and the password
-/// has likely already been written to the socket. The intent is just to
-/// shorten the residency window in our own process memory.
+/// Overwrite the string's bytes with zeros before dropping. **Best-effort
+/// only, not a guarantee:** the compiler is free to elide this write (the
+/// buffer is dropped immediately after, so the store is dead from its point
+/// of view — there is no `zeroize`-style volatile/asm fence here, by design,
+/// since the threat model does not justify a new dependency on a foundation
+/// crate), and sqlx has already copied the SQL into its own buffers and onto
+/// the socket. The real protections are elsewhere — the never-log discipline
+/// and the unguessable dollar-quote tag. This just marginally shortens how
+/// long our single copy lingers in process memory.
 fn scrub(mut s: String) -> String {
     // SAFETY: we replace every byte with 0, which is valid UTF-8 (the NUL
     // codepoint is a single 0 byte) — the resulting string is still

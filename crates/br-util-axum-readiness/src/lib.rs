@@ -75,10 +75,14 @@ impl ReadinessHandle {
     pub fn set_ready(&self) {
         // Decide and mutate under the lock; log *after* releasing it — never
         // hold the write lock across `tracing` I/O (it would serialize every
-        // `/readyz` reader behind it, and a panicking formatter would poison
-        // the lock permanently, crashing the very probe this gate exists for).
+        // `/readyz` reader behind it).
         let was_not_ready = {
-            let mut guard = self.state.write().expect("readiness lock poisoned");
+            // Recover from a poisoned lock rather than propagate the panic.
+            // See [`Self::snapshot`] for why this is safe and necessary: every
+            // mutation here is a single infallible assignment with no I/O, so a
+            // poisoned guard cannot expose a torn `Readiness`, and the readiness
+            // gate must keep answering even if some unrelated writer panicked.
+            let mut guard = self.state.write().unwrap_or_else(|e| e.into_inner());
             let was_not_ready = !guard.is_ready();
             *guard = Readiness::Ready;
             was_not_ready
@@ -92,9 +96,10 @@ impl ReadinessHandle {
     /// into not-ready or when the reason changes (so it never spams the log).
     pub fn set_not_ready(&self, reason: impl Into<String>) {
         let reason = reason.into();
-        // See `set_ready`: mutate under the lock, log outside it.
+        // See `set_ready`: mutate under the lock, log outside it, and recover
+        // a poisoned lock instead of propagating the panic.
         let changed = {
-            let mut guard = self.state.write().expect("readiness lock poisoned");
+            let mut guard = self.state.write().unwrap_or_else(|e| e.into_inner());
             let changed = match &*guard {
                 Readiness::Ready => true,
                 Readiness::NotReady { reason: prev } => prev != &reason,
@@ -110,8 +115,19 @@ impl ReadinessHandle {
     }
 
     /// A snapshot of the current readiness.
+    ///
+    /// **Poison recovery.** A poisoned lock (some thread panicked while holding
+    /// the write guard) is recovered into its inner value rather than
+    /// re-panicking. This is deliberate and is the safe choice *for this type*:
+    /// `Readiness` is a plain enum and every write here is a single infallible
+    /// assignment with no I/O, so a panic can never leave the state half-written
+    /// — there is no torn value to protect against. The opposite (propagating
+    /// the poison) would make a *reader*, the `/readyz` probe, panic and 500
+    /// because some unrelated writer once panicked; a readiness gate's own
+    /// failure mode must fail closed (report a real up/down state, taken out of
+    /// rotation if down), never abort the probe. So the gate keeps answering.
     pub fn snapshot(&self) -> Readiness {
-        self.state.read().expect("readiness lock poisoned").clone()
+        self.state.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Whether the service is currently ready.
@@ -228,6 +244,43 @@ mod tests {
     async fn readyz_returns_503_with_reason_when_not_ready() {
         let (status, body) =
             get_readyz(router(ReadinessHandle::not_ready("dependency unavailable"))).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, "dependency unavailable");
+    }
+
+    #[tokio::test]
+    async fn readyz_still_answers_after_the_lock_is_poisoned() {
+        // Poison the lock by panicking a thread while it holds the write guard,
+        // then assert the probe still answers (recovered, not 500/aborted) and
+        // reports the last-written state. A reader panicking because some
+        // unrelated writer panicked is exactly the failure this gate must avoid.
+        let handle = ReadinessHandle::not_ready("starting up");
+        handle.set_ready();
+
+        let poison_target = handle.clone();
+        let poisoned = std::thread::spawn(move || {
+            let _guard = poison_target.state.write().unwrap();
+            panic!("poison the readiness lock mid-mutation");
+        })
+        .join();
+        assert!(poisoned.is_err(), "the spawned thread must have panicked");
+        assert!(
+            handle.state.is_poisoned(),
+            "the lock must now be poisoned for this test to mean anything"
+        );
+
+        // Direct reads recover instead of panicking.
+        assert!(handle.is_ready());
+        assert_eq!(handle.snapshot(), Readiness::Ready);
+
+        // And the HTTP probe answers normally rather than 500-ing.
+        let (status, body) = get_readyz(router(handle.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "ready");
+
+        // A write path also recovers and keeps working.
+        handle.set_not_ready("dependency unavailable");
+        let (status, body) = get_readyz(router(handle)).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body, "dependency unavailable");
     }

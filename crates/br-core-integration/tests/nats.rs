@@ -83,16 +83,21 @@ async fn setup(
 }
 
 async fn teardown(stream: async_nats::jetstream::stream::Stream) {
-    // Best-effort: dropping the stream removes all stored messages so the
-    // next test (or rerun) starts clean. Failures (e.g., stream already
-    // gone) are ignored.
-    let _ = stream.delete_message(1).await; // no-op if message absent
+    // Best-effort: deleting the stream removes all stored messages so the next
+    // test (or rerun) starts clean. A failure here doesn't fail the test (the
+    // assertions already ran), but it must not be fully silent — a leaked
+    // stream can capture a later test's messages, so surface it loudly enough
+    // to diagnose a flaky run.
+    let name = stream.cached_info().config.name.clone();
     let url = nats_url().unwrap_or_default();
-    if let Ok(client) = async_nats::connect(&url).await {
-        let js = async_nats::jetstream::new(client);
-        let _ = js
-            .delete_stream(stream.cached_info().config.name.clone())
-            .await;
+    match async_nats::connect(&url).await {
+        Ok(client) => {
+            let js = async_nats::jetstream::new(client);
+            if let Err(e) = js.delete_stream(&name).await {
+                eprintln!("teardown: failed to delete stream {name}: {e}");
+            }
+        }
+        Err(e) => eprintln!("teardown: failed to reconnect to delete stream {name}: {e}"),
     }
 }
 
