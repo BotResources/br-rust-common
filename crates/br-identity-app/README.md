@@ -221,7 +221,7 @@ run_scope_declarations(
     // Corrupt store at rest (see "Corrupt store (operator remediation)"): drop
     // readiness / raise an alert. Idempotent — it may fire on every redelivery
     // while the store stays corrupt.
-    |err| readiness.set_down(format!("scope registry store corrupt: {err}")),
+    |err| readiness.set_not_ready(format!("scope registry store corrupt: {err}")),
 )
 .await?;
 ```
