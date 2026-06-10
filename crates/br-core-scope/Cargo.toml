@@ -1,0 +1,15 @@
+[package]
+name = "br-core-scope"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure contract types for the scope self-declaration handshake (ScopeKey, ServiceKey, ScopeDeclaration, and the declare/accepted/rejected payloads)"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

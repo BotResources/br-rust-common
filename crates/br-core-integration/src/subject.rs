@@ -31,12 +31,13 @@ pub enum SubjectError {
     /// A segment was empty.
     #[error("subject segment '{segment}' is empty")]
     Empty { segment: &'static str },
-    /// A segment contained a character outside the allowed set `[a-z0-9-]`.
+    /// A segment contained a character outside the allowed set `[a-z0-9_-]`.
     /// The whitelist keeps every NATS-significant character out: `.` (the
     /// segment separator), the `*`/`>` wildcards, spaces, and control bytes
     /// can neither break the subject structure nor collide with a
-    /// subscriber's wildcard semantics.
-    #[error("subject segment '{segment}' contains a character outside [a-z0-9-]: {value:?}")]
+    /// subscriber's wildcard semantics. Underscore is allowed: multi-word
+    /// aggregates are snake_case (e.g. `service_scope`).
+    #[error("subject segment '{segment}' contains a character outside [a-z0-9_-]: {value:?}")]
     InvalidChar {
         segment: &'static str,
         value: String,
@@ -49,7 +50,7 @@ fn validate(segment: &'static str, value: &str) -> Result<(), SubjectError> {
     }
     if value
         .chars()
-        .any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+        .any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'))
     {
         return Err(SubjectError::InvalidChar {
             segment,
@@ -63,9 +64,10 @@ fn validate(segment: &'static str, value: &str) -> Result<(), SubjectError> {
 /// `{bc}.{cmd|evt}.{aggregate}.{name}.v{version}`.
 ///
 /// Each of `bc`, `aggregate`, `name` must be non-empty and drawn from the
-/// charset `[a-z0-9-]` — anything else (uppercase, `.`, the NATS wildcards
+/// charset `[a-z0-9_-]` — anything else (uppercase, `.`, the NATS wildcards
 /// `*`/`>`, whitespace) returns a [`SubjectError`] rather than emitting a
-/// malformed or wildcard-colliding subject.
+/// malformed or wildcard-colliding subject. Multi-word segments are
+/// snake_case (e.g. `service_scope`).
 ///
 /// ```
 /// use br_core_integration::{integration_subject, MessageKind};
@@ -160,6 +162,15 @@ mod tests {
         let s = integration_subject("identity", MessageKind::Evt, "user-profile", "created2", 1)
             .unwrap();
         assert_eq!(s, "identity.evt.user-profile.created2.v1");
+    }
+
+    // Multi-word aggregates are snake_case in the shared contract
+    // (`identity.cmd.service_scope.declare.v1`) — the builder must produce them.
+    #[test]
+    fn accepts_snake_case_segments() {
+        let s = integration_subject("identity", MessageKind::Cmd, "service_scope", "declare", 1)
+            .unwrap();
+        assert_eq!(s, "identity.cmd.service_scope.declare.v1");
     }
 
     #[test]
