@@ -4,6 +4,54 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.6.2] — 2026-06-10
+
+**Fixed (Security)**
+- `validate_database_tls` now **rejects** a `DATABASE_URL` that overrides the
+  target host via a `host=` or `hostaddr=` query parameter. sqlx
+  (libpq-compatible) lets such a parameter override the authority host, while
+  the validator judges the authority — so
+  `postgres://localhost/db?host=remote` previously passed the TLS check as
+  loopback while sqlx actually dialed `remote` (plaintext under the default
+  `prefer`). The guard runs before the loopback short-circuit, percent-decodes
+  keys the way sqlx does, and fails closed with a `Config` error telling the
+  operator to put the host in the URL authority. New dependency on `url`
+  (already in the tree via sqlx).
+
+**Changed**
+- `sslmode` is now resolved by **sqlx itself** rather than a hand-rolled
+  parser. `validate_database_tls` calls `PgConnectOptions::from_str(url)
+  .get_ssl_mode()` instead of re-implementing the query-string parsing, so the
+  `sslmode`/`ssl-mode` aliasing, the case-insensitive value, the
+  last-occurrence-wins-on-duplicates rule and the `prefer` default can no
+  longer drift from what sqlx will actually negotiate on a sqlx bump — sqlx is
+  the single source of truth. A URL sqlx cannot parse (including an unknown
+  sslmode value such as `sslmode=bogus`, which sqlx rejects) is now a
+  `PostgresError::Config` — it fails **closed**, never silently passes. No
+  behavior change for the URLs services actually use.
+- **Host extraction stays deliberately independent of sqlx** and remains
+  hand-rolled, with a comment now stating why: `PgConnectOptions::get_host()`
+  defaults an absent or unparseable host to `"localhost"`, which would
+  loopback-short-circuit as trusted and skip the TLS requirement — a malformed
+  URL failing *open* to a plaintext "loopback" connection, exactly the
+  fail-open pattern this validator exists to prevent. Host extraction
+  therefore fails closed to `""` (on no trusted list ⇒ TLS required).
+
+**Docs**
+- `init_pool` / `init_migration_pool` doc-comments now state that an `Ok`
+  return does **not** prove the database is reachable: sqlx fills
+  `min_connections` lazily, so a wrong host / down server / bad credentials
+  surface on the first acquire, not at init. To honor the fail-loud invariant,
+  a caller must probe explicitly (a `SELECT 1`) before flipping readiness — the
+  README gained a short "Wiring readiness" recipe showing the
+  `br-util-axum-readiness` pattern.
+- Softened the `scrub()` comments in `role.rs` to stop overselling the
+  password overwrite: it is best-effort only (the optimizer may elide the
+  write, and sqlx has already copied the SQL into its own buffers), and the
+  real protections are the never-log discipline and the unguessable
+  dollar-quote tag. No `zeroize` dependency — the threat model does not justify
+  a new dependency on a foundation crate.
+
 ## [0.6.1] — 2026-06-10
 
 **Fixed**

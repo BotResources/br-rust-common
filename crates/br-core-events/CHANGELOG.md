@@ -31,10 +31,16 @@ still deserialize. Only the in-process Rust types changed.
   use the constructors. Fields stay `pub` for read access; cross-crate pattern
   matches must include a `..` rest pattern (a `#[non_exhaustive]` consequence).
 
+- `RawEvent`'s field and `RawEvent::new` argument order now lead with
+  `aggregate_id` then `aggregate_type`, matching the shared fields of
+  `DomainEvent` so the producer-side and persisted types read in parallel.
+  `RawEvent` is producer-side only and not `Serialize`/`Deserialize`, so there
+  is no wire impact; callers of `RawEvent::new` swap the first two arguments.
+
 **Added**
 - Constructors: `EventMetadata::new(actor, correlation_id)` (causation `None`)
   + builder-style `EventMetadata::with_causation(causation_id)`;
-  `RawEvent::new(aggregate_type, aggregate_id, event_type, payload)`;
+  `RawEvent::new(aggregate_id, aggregate_type, event_type, payload)`;
   `DomainEvent::new(id, aggregate_id, aggregate_type, event_type, payload, metadata, occurred_at)`.
 - `Actor`, `UserId`, `ServiceAccountId` re-exported at the crate root so
   consumers can construct metadata without adding a direct `br-core-kernel`

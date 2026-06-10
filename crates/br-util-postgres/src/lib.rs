@@ -1,7 +1,8 @@
 //! Postgres helpers shared across BotResources services.
 //!
 //! - [`init_pool`] / [`init_migration_pool`] — long-lived app pool + short-lived migration pool
-//! - [`validate_database_tls`] — mirrors sqlx sslmode parsing and enforces TLS for remote hosts
+//! - [`validate_database_tls`] — sslmode resolved by sqlx itself; independent fail-closed
+//!   host judgment (rejects `host=`/`hostaddr=` overrides); enforces TLS for remote hosts
 //! - [`ensure_app_role`] — idempotent CREATE ROLE + ALTER PASSWORD for the two-role model
 //! - [`set_rls_context`] — transaction-local `set_config(..., true)` for RLS identity
 //! - [`grant_app_access`] — post-migration GRANTs for the app role

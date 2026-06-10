@@ -14,24 +14,27 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RawEvent {
-    pub aggregate_type: String,
     pub aggregate_id: Uuid,
+    pub aggregate_type: String,
     pub event_type: String,
     pub payload: serde_json::Value,
 }
 
 impl RawEvent {
     /// A raw event for `aggregate_id` of `aggregate_type`, of kind
-    /// `event_type`, carrying `payload`.
+    /// `event_type`, carrying `payload`. Argument order mirrors the shared
+    /// fields of [`DomainEvent::new`] (`aggregate_id`, `aggregate_type`,
+    /// `event_type`, `payload`) so the producer-side and persisted types read
+    /// in parallel.
     pub fn new(
-        aggregate_type: impl Into<String>,
         aggregate_id: Uuid,
+        aggregate_type: impl Into<String>,
         event_type: impl Into<String>,
         payload: serde_json::Value,
     ) -> Self {
         Self {
-            aggregate_type: aggregate_type.into(),
             aggregate_id,
+            aggregate_type: aggregate_type.into(),
             event_type: event_type.into(),
             payload,
         }
@@ -89,8 +92,8 @@ mod tests {
     #[test]
     fn raw_event_new_sets_fields() {
         let evt = RawEvent::new(
-            "Organization",
             Uuid::nil(),
+            "Organization",
             "OrgCreated",
             serde_json::json!({"name": "Acme"}),
         );
@@ -102,8 +105,8 @@ mod tests {
     #[test]
     fn raw_event_clone() {
         let evt = RawEvent::new(
-            "User",
             Uuid::nil(),
+            "User",
             "UserCreated",
             serde_json::json!({"name": "test"}),
         );

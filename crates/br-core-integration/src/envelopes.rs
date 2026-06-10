@@ -24,6 +24,10 @@ pub use br_core_events::EventMetadata as MessageMetadata;
 pub struct IntegrationEvent<T> {
     pub event_id: Uuid,
     pub event_type: String,
+    /// Wire schema version of `payload` for this `event_type`. `u8` by design:
+    /// a published-contract version is bumped only on a breaking payload change
+    /// and never realistically exceeds 255 — a wider integer would just be
+    /// dead range on the wire.
     pub version: u8,
     pub occurred_at: DateTime<Utc>,
     pub metadata: MessageMetadata,
@@ -63,6 +67,8 @@ impl<T> IntegrationEvent<T> {
 pub struct IntegrationCommand<T> {
     pub command_id: Uuid,
     pub command_type: String,
+    /// Wire schema version of `payload` for this `command_type`. `u8` by
+    /// design — see [`IntegrationEvent::version`].
     pub version: u8,
     pub issued_at: DateTime<Utc>,
     pub metadata: MessageMetadata,

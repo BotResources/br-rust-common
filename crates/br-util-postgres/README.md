@@ -78,7 +78,7 @@ equals the host extracted from the URL, exactly:
 |---|---|
 | `init_pool(url, env, allow_insecure) -> PgPool` | Long-lived runtime pool (max 20, min 2 connections). Validates TLS before connecting. **Does not run migrations.** |
 | `init_migration_pool(env, allow_insecure) -> PgPool` | Short-lived owner pool (max 2). Reads `DATABASE_URL_OWNER` (falls back to `DATABASE_URL`). Use to run migrations, then drop before creating the app pool. |
-| `validate_database_tls(url, env, allow_insecure)` | Standalone TLS validator: mirrors sqlx's `sslmode` parsing (accepts `sslmode` and `ssl-mode`, case-insensitive, last value wins). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` unless `allow_insecure` is set in non-prod. Validation only — the rustls backend (since 0.6.1) is what lets such a connection actually complete. |
+| `validate_database_tls(url, env, allow_insecure)` | Standalone TLS validator. `sslmode` is resolved by sqlx itself (single source of truth: `sslmode`/`ssl-mode` alias, case-insensitive, last value wins); the host is judged from the URL **authority** by an independent, fail-closed extractor — deliberately *not* sqlx's, whose absent-host default is `localhost` — and a URL that overrides the target via a `host=`/`hostaddr=` query parameter is rejected outright (the validator cannot vouch for a host it does not judge). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` unless `allow_insecure` is set in non-prod. Validation only — the rustls backend (since 0.6.1) is what lets such a connection actually complete. |
 | `Environment` | Enum: `Local`, `Dev`, `Test`, `Prod`. Only `Prod` is load-bearing today (forbids the `allow_insecure` bypass). |
 
 ### Role provisioning
@@ -134,11 +134,28 @@ let rows = sqlx::query("SELECT id FROM orders").fetch_all(&mut *tx).await?;
 tx.commit().await?;
 ```
 
+### Wiring readiness (fail loud if the DB is unreachable)
+
+`init_pool` returning `Ok` does **not** prove the database is reachable: sqlx
+fills `min_connections` lazily, so the failure surfaces on the first query, not
+at init. To actually realize the fail-loud invariant, probe once after init and
+only then mark the service ready (with [`br-util-axum-readiness`](../br-util-axum-readiness)):
+
+```rust
+use br_util_axum_readiness::ReadinessHandle;
+
+let readiness = ReadinessHandle::not_ready("connecting to database");
+let pool = init_pool(&app_database_url, Environment::Prod, false).await?;
+// Force a real connection — this is what `Ok` from `init_pool` did NOT do.
+sqlx::query("SELECT 1").execute(&pool).await?; // error here ⇒ stay not-ready
+readiness.set_ready();
+```
+
 Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.6.1" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.6.2" }
 ```
 
 ## sqlx is part of the public contract
