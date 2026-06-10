@@ -16,8 +16,9 @@
 
 use br_core_integration::{
     IntegrationCommand, IntegrationError, IntegrationEvent, IntegrationPublisher,
-    IntegrationPublisherExt, MessageMetadata, NatsIntegrationPublisher,
+    IntegrationPublisherExt, MessageMetadata, NatsIntegrationPublisher, PublishErrorKind,
 };
+use br_core_kernel::{Actor, UserId};
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -38,17 +39,18 @@ fn nats_url() -> Option<String> {
 
 /// Unique per-test stream/subject prefix so parallel tests don't trip
 /// each other (e.g., one test's stream capturing another's messages).
+///
+/// Uses the FULL uuid: truncating a v7 to its first 16 hex chars keeps mostly
+/// the millisecond timestamp (~12 random bits left), and two tests starting
+/// in the same millisecond collided in practice — one stream captured the
+/// other's messages.
 fn unique_prefix() -> String {
-    let suffix = &Uuid::now_v7().simple().to_string()[..16];
+    let suffix = Uuid::now_v7().simple().to_string();
     format!("br_test_{suffix}")
 }
 
 fn sample_metadata() -> MessageMetadata {
-    MessageMetadata {
-        actor_id: Uuid::now_v7(),
-        correlation_id: Uuid::now_v7(),
-        causation_id: None,
-    }
+    MessageMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7())
 }
 
 /// Connect, create an ephemeral stream that captures `subject_pattern`,
@@ -102,17 +104,17 @@ async fn publish_event_roundtrips_through_jetstream() {
     let subject = format!("{prefix}.evt.user.created.v1");
     let (publisher, stream) = setup(format!("{prefix}.>"), format!("STREAM_{prefix}")).await;
 
-    let event = IntegrationEvent {
-        event_id: Uuid::now_v7(),
-        event_type: "user.created".to_string(),
-        version: 1,
-        occurred_at: DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
-        metadata: sample_metadata(),
-        payload: TestPayload {
+    let event = IntegrationEvent::new(
+        Uuid::now_v7(),
+        "user.created",
+        1,
+        DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
+        sample_metadata(),
+        TestPayload {
             name: "alice".to_string(),
             count: 7,
         },
-    };
+    );
 
     publisher
         .publish_event(&subject, &event)
@@ -157,17 +159,17 @@ async fn publish_command_roundtrips_through_jetstream() {
     let subject = format!("{prefix}.cmd.notification.send.v1");
     let (publisher, stream) = setup(format!("{prefix}.>"), format!("STREAM_{prefix}")).await;
 
-    let command = IntegrationCommand {
-        command_id: Uuid::now_v7(),
-        command_type: "notification.send".to_string(),
-        version: 1,
-        issued_at: DateTime::<Utc>::from_timestamp(1_700_000_001, 0).unwrap(),
-        metadata: sample_metadata(),
-        payload: TestPayload {
+    let command = IntegrationCommand::new(
+        Uuid::now_v7(),
+        "notification.send",
+        1,
+        DateTime::<Utc>::from_timestamp(1_700_000_001, 0).unwrap(),
+        sample_metadata(),
+        TestPayload {
             name: "bob".to_string(),
             count: 42,
         },
-    };
+    );
 
     publisher
         .publish_command(&subject, &command)
@@ -221,8 +223,14 @@ async fn publish_returns_err_when_no_stream_matches() {
         .await;
 
     assert!(
-        matches!(result, Err(IntegrationError::Publish(_))),
-        "expected Publish error for unmatched subject, got {result:?}"
+        matches!(
+            result,
+            Err(IntegrationError::Publish {
+                kind: PublishErrorKind::NoStream,
+                ..
+            })
+        ),
+        "expected Publish{{ kind: NoStream }} for unmatched subject, got {result:?}"
     );
 }
 

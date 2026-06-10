@@ -1,7 +1,9 @@
 //! Minimal kernel types shared across BotResources Rust services.
 //!
-//! Today this crate exposes typed ID wrappers. Keep it intentionally small:
-//! only add types that are genuinely universal across every service.
+//! Today this crate exposes typed ID wrappers ([`UserId`],
+//! [`ServiceAccountId`]) and the [`Actor`] that ties them together (a human or
+//! a machine identity). Keep it intentionally small: only add types that are
+//! genuinely universal across every service.
 //!
 //! The wrappers are deliberately *not* `Deref<Target = Uuid>`: deref coercion
 //! would silently coerce a [`UserId`] into a `&Uuid` anywhere a `&Uuid` is
@@ -26,6 +28,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+mod actor;
+
+pub use actor::Actor;
 
 /// Unique identifier of a human user.
 ///

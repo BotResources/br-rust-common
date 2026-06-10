@@ -4,6 +4,20 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.4.1] — 2026-06-10
+
+**Added**
+- `Actor` — a typed enum identifying who performed an action: `Human(UserId)`
+  or `Service(ServiceAccountId)`. Replaces the historical "actor is a bare
+  `Uuid`" shape, which could not tell a human from a machine identity.
+  Methods: `id() -> Uuid` (the inner uuid, either variant), `is_human()`,
+  `is_service()`. Derives `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`,
+  `Serialize`, `Deserialize`. Its standalone serde shape is internally tagged
+  (`{ "kind": "human", "id": "…" }`); envelopes that embed it
+  (`br_core_events::EventMetadata`) flatten it onto their own wire format and
+  own that contract. Purely additive — `UserId` and `ServiceAccountId` are
+  untouched.
+
 ## [0.4.0] — 2026-06-10
 
 **Changed (BREAKING)**
