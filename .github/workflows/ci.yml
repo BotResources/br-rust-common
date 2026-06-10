@@ -9,6 +9,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Least privilege: this workflow only reads the repo (checkout + checks). No
+# job pushes tags, comments, or releases, so the read-only default applies to
+# every job and no job-level override is needed.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -17,11 +23,14 @@ jobs:
     name: cargo fmt + clippy + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: with @stable the ref itself selects the toolchain, so when
+      # pinned to a SHA we must name the toolchain explicitly via `toolchain:`.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
       - name: cargo clippy
@@ -33,11 +42,15 @@ jobs:
     name: MSRV 1.88 build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # @master is the moving branch that doubles as the toolchain selector;
+      # pinned here for supply-chain safety. The job picks its toolchain
+      # explicitly via `toolchain:` below, so the SHA pin is purely the
+      # resolver and the MSRV intent is unchanged.
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: "1.88"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: msrv
       - run: cargo build --workspace --locked
@@ -48,9 +61,13 @@ jobs:
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: docs
       - run: cargo doc --workspace --no-deps --locked
@@ -59,8 +76,8 @@ jobs:
     name: cargo-deny check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
           command: check advisories bans licenses sources
 
@@ -68,8 +85,8 @@ jobs:
     name: cargo-machete (unused deps)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
         with:
           tool: cargo-machete
       - run: cargo machete
@@ -78,14 +95,18 @@ jobs:
     name: cargo semver-checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: semver
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
         with:
           tool: cargo-semver-checks
       - name: cargo semver-checks (per-crate)
@@ -121,7 +142,7 @@ jobs:
     # but forgot the changelog entry" mistake at PR time, before the
     # release-tags workflow would push an undocumented tag.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - name: check changelog entries
         run: bash .github/scripts/check-changelog.sh
 
@@ -129,10 +150,10 @@ jobs:
     name: trufflehog (secret scan)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-      - uses: trufflesecurity/trufflehog@main
+      - uses: trufflesecurity/trufflehog@d411fff7b8879a62509f3fa98c07f247ac089a51 # v3.95.5
         with:
           extra_args: --results=verified,unknown
 
@@ -162,9 +183,13 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: e2e-postgres
       - name: cargo test (live PG tests)
@@ -176,19 +201,88 @@ jobs:
         # single-service / single-database production shape.
         run: cargo test -p br-util-postgres --locked -- --ignored --test-threads=1
 
+  e2e-postgres-tls:
+    name: e2e (br-util-postgres TLS handshake)
+    runs-on: ubuntu-latest
+    # Proves the sqlx TLS backend works end-to-end against a TLS-enabled
+    # Postgres, not just that it is compiled in (the `backend_is_compiled_in`
+    # test in the e2e-postgres job covers the compiled-in half against a
+    # plaintext server). GHA `services:` cannot mount a generated cert or
+    # override the image command to pass `-c ssl=on`, so — like e2e-nats —
+    # the server is started via `docker run` in a step.
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: e2e-postgres-tls
+      - name: start TLS-enabled Postgres
+        run: |
+          set -euo pipefail
+          certdir="$(mktemp -d)"
+          # Self-signed cert. CN/SAN are irrelevant for trust because the test
+          # connects with sslmode=require (encrypt, do not verify the cert) —
+          # exactly the remote-host posture validate_database_tls enforces.
+          # BUT the cert must be X.509 **v3**: rustls/webpki rejects a v1 cert
+          # with UnsupportedCertVersion at parse time, before the
+          # accept-invalid-cert policy applies. `-addext` forces v3.
+          openssl req -new -x509 -days 1 -nodes \
+            -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost" \
+            -out "$certdir/server.crt" -keyout "$certdir/server.key"
+          # Postgres requires the key to be owned by the run-as user (uid 70
+          # in postgres:16-alpine) and mode 600, or it refuses to start.
+          chmod 600 "$certdir/server.key"
+          sudo chown 70:70 "$certdir/server.crt" "$certdir/server.key"
+          docker run -d --name pg-tls \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=postgres \
+            -p 5432:5432 \
+            -v "$certdir/server.crt:/etc/pg/server.crt:ro" \
+            -v "$certdir/server.key:/etc/pg/server.key:ro" \
+            postgres:16-alpine \
+            -c ssl=on -c ssl_cert_file=/etc/pg/server.crt \
+            -c ssl_key_file=/etc/pg/server.key
+          for i in $(seq 1 30); do
+            if docker exec pg-tls pg_isready -U postgres >/dev/null 2>&1; then
+              echo "Postgres (TLS) ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Postgres failed to become healthy within 30s" >&2
+          docker logs pg-tls >&2
+          exit 1
+      - name: cargo test (TLS handshake)
+        env:
+          # Drives only full_handshake_succeeds; the other live tests skip
+          # silently because TEST_DATABASE_URL is unset in this job.
+          TEST_TLS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: cargo test -p br-util-postgres --locked -- --ignored full_handshake_succeeds
+      - name: stop Postgres
+        if: always()
+        run: docker rm -f pg-tls || true
+
   e2e-nats:
     name: e2e (br-core-integration vs NATS JetStream)
     runs-on: ubuntu-latest
     # GHA `services:` cannot override an image's CMD, but NATS needs
     # `-js` (enable JetStream) and `-m 8222` (monitoring for healthcheck).
-    # We start the broker via `docker run` in a step — works on ARC
-    # because each runner pod ships with a dind sidecar.
+    # We start the broker via `docker run` in a step — the ubuntu-latest
+    # hosted runner ships a ready Docker daemon, so `docker run` just works.
     env:
       NATS_URL: nats://localhost:4222
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: e2e-nats
       - name: start NATS JetStream broker
@@ -246,14 +340,17 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       NATS_URL: nats://localhost:4222
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          toolchain: stable
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: coverage
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
         with:
           tool: cargo-llvm-cov
       - name: start NATS JetStream broker
@@ -302,7 +399,7 @@ jobs:
       - name: per-crate summary (UT vs UT+E2E)
         run: bash .github/scripts/coverage-summary.sh coverage-ut.json coverage-ut-e2e.json >> "$GITHUB_STEP_SUMMARY"
       - name: upload lcov artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-lcov
           path: coverage.lcov

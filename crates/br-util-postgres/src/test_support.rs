@@ -27,6 +27,15 @@ pub fn test_db_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL").ok()
 }
 
+/// Returns `Some(url)` only when a **TLS-enabled** Postgres is provisioned
+/// for the full-handshake proof test (a server started with `ssl=on` and a
+/// cert). `None` skips silently — TLS-server provisioning is heavier than a
+/// plain `postgres:16-alpine`, so the handshake test stays opt-in and the
+/// rest of the live suite runs against `TEST_DATABASE_URL` (plaintext).
+pub fn test_tls_db_url() -> Option<String> {
+    std::env::var("TEST_TLS_DATABASE_URL").ok()
+}
+
 /// Unique role name per test invocation so parallel runs do not collide,
 /// and so a stale role from a crashed run does not pollute the next.
 /// Matches the `^[a-z][a-z0-9_]*$` validator used by `ensure_app_role`.
