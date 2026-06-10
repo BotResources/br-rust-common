@@ -201,7 +201,7 @@ mod tests {
         assert!(is_valid_role_name("a"));
         assert!(is_valid_role_name("a1"));
         assert!(is_valid_role_name("a_1"));
-        assert!(is_valid_role_name("hanshow_app_v2"));
+        assert!(is_valid_role_name("acme_app_v2"));
     }
 
     #[test]

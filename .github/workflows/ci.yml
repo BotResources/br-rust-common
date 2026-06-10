@@ -145,6 +145,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - name: check changelog entries
         run: bash .github/scripts/check-changelog.sh
+      - name: check README tag pins are fresh
+        run: bash .github/scripts/check-readme-pins.sh
 
   trufflehog:
     name: trufflehog (secret scan)
