@@ -233,6 +233,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-core-scope"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "br-util-axum-auth"
 version = "0.4.2"
 dependencies = [
