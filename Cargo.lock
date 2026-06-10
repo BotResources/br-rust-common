@@ -242,6 +242,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-identity-app"
+version = "0.1.0"
+dependencies = [
+ "async-nats",
+ "br-core-integration",
+ "br-core-scope",
+ "br-identity-domain",
+ "br-util-postgres",
+ "chrono",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "br-identity-domain"
 version = "0.1.0"
 dependencies = [

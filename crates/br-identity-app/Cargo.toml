@@ -1,0 +1,38 @@
+[package]
+name = "br-identity-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Identity bounded context — application/adapter half. Scope-registration slice: Postgres persistence, durable NATS consumer, and the load → judge → save → dispatch pipeline"
+
+[dependencies]
+# async-nats: the durable consumer is bound on an `async_nats::jetstream::Context`
+# (the consumer-wiring's public signature takes it), so the JetStream type is in
+# this crate's public API, not just its tests.
+async-nats = { workspace = true }
+br-core-integration = { workspace = true }
+br-core-scope = { workspace = true }
+br-identity-domain = { workspace = true }
+chrono = { workspace = true }
+# serde: the confirmation publisher's typed-helper bound is `serde::Serialize`.
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+# The e2e suite (tests/) drives the pipeline against a real Postgres + NATS:
+# tokio runs the async tests; serde_json inspects the published confirmations
+# (already a normal dependency). br-util-postgres provides the production
+# role-bootstrap (ensure_app_role / grant_app_access) the e2e mirrors;
+# futures-util reads the confirmations stream (StreamExt::next).
+br-util-postgres = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true }
+# url: the e2e swaps the database path of the admin URL to a per-test database
+# for full isolation (the migration uses fixed table names).
+url = { workspace = true }

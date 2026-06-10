@@ -35,6 +35,7 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](crates/br-util-axum-readiness/CHANGELOG.md) |
 | `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | [README](crates/br-util-scope-declaration/README.md) | [CHANGELOG](crates/br-util-scope-declaration/CHANGELOG.md) |
 | `br-identity-domain` | bc | Identity bounded context, pure domain — scope-registration slice (`ScopeRegistry` aggregate, commands, events) | [README](crates/br-identity-domain/README.md) | [CHANGELOG](crates/br-identity-domain/CHANGELOG.md) |
+| `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | [README](crates/br-identity-app/README.md) | [CHANGELOG](crates/br-identity-app/CHANGELOG.md) |
 
 ## Architecture
 
