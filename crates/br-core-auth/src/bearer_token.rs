@@ -30,7 +30,12 @@ pub fn bearer_token_key(plaintext: &str) -> String {
 /// - `email` — the owning user (the issuer of the PAT)
 /// - `token_id` — the PAT's stable identifier, used for audit/revocation and
 ///   surfaced on `Passport::Human` via `AuthMethod::Pat { token_id }`
+///
+/// Deserialization is **strict** (`deny_unknown_fields`): an unknown field is
+/// rejected. This is a security contract shared by every service, so a shape
+/// mismatch must fail loud. The wire format of a valid entry is unchanged.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct BearerTokenEntry {
     pub email: String,
     pub token_id: Uuid,
@@ -132,6 +137,19 @@ mod tests {
     #[test]
     fn entry_rejects_missing_token_id() {
         let v = json!({"email": "x@y.z"});
+        assert!(serde_json::from_value::<BearerTokenEntry>(v).is_err());
+    }
+
+    // Given an entry carrying an unknown field
+    // When deserializing
+    // Then it is rejected — the contract is strict, a shape mismatch fails loud
+    #[test]
+    fn entry_rejects_unknown_field() {
+        let v = json!({
+            "email": "x@y.z",
+            "token_id": "00000000-0000-0000-0000-000000000001",
+            "evil": true,
+        });
         assert!(serde_json::from_value::<BearerTokenEntry>(v).is_err());
     }
 }
