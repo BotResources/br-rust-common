@@ -4,6 +4,15 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.1.1] — 2026-06-10
+
+**Docs**
+- The `README.md` is now the crate's root doc (`#![doc = include_str!(..)]`), so
+  its usage example is compiled and run as a doctest by `cargo test` — the README
+  can no longer drift from the code (a call to a method that does not exist now
+  fails CI). The `lib.rs` module docs keep only the rustdoc cross-links the README
+  leaves to the reference, no longer a hand-synced duplicate of the README prose.
+
 ## [0.1.0] — 2026-06-10
 
 **Added**

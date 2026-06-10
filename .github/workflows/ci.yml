@@ -37,6 +37,13 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: cargo test
         run: cargo test --workspace --all-targets --locked
+      - name: cargo test (doctests)
+        # `--all-targets` deliberately excludes doctests, so the README usage
+        # examples — included as the crate root doc via `#![doc =
+        # include_str!("../README.md")]` — would never run without this step.
+        # That is the mechanism that keeps a README example from drifting from
+        # the code (a call to a method that does not exist fails here).
+        run: cargo test --workspace --doc --locked
 
   conformance-feature:
     name: br-core-values --all-features (conformance)
@@ -362,6 +369,117 @@ jobs:
         # avoids racy create/delete ordering. Same reasoning as the
         # e2e-postgres job.
         run: cargo test -p br-core-integration --locked -- --ignored --test-threads=1
+      - name: stop NATS
+        if: always()
+        run: docker rm -f nats-jetstream || true
+
+  e2e-scope-declaration:
+    name: e2e (br-util-scope-declaration vs NATS JetStream)
+    runs-on: ubuntu-latest
+    # The boot-time handshake helper is exercised against a real JetStream by
+    # the `#[ignore]`-gated suite in crates/br-util-scope-declaration/tests/:
+    # a stub receiver subscribes to the declare subject and echoes the
+    # correlation_id, proving subscribe-first, re-publish-on-timeout, the
+    # readiness flips, and the disabled/scopeless paths. Same docker-run NATS
+    # pattern as e2e-nats (GHA services can't pass `-js`).
+    env:
+      NATS_URL: nats://localhost:4222
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: e2e-scope-declaration
+      - name: start NATS JetStream broker
+        run: |
+          docker run -d --name nats-jetstream \
+            -p 4222:4222 -p 8222:8222 \
+            nats:2-alpine -js -m 8222
+          # Wait for /healthz to flip to "ok" before letting tests fire.
+          # NATS starts in <1s normally; 30 retries × 1s is generous
+          # cover for cold-pulled image + slow runner.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
+              echo "NATS ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "NATS failed to become healthy within 30s" >&2
+          docker logs nats-jetstream >&2
+          exit 1
+      - name: cargo test (live handshake tests)
+        # --test-threads=1: tests share a single JetStream namespace and each
+        # one creates/deletes its own stream; sequential execution avoids racy
+        # create/delete ordering. Same reasoning as the e2e-nats job.
+        run: cargo test -p br-util-scope-declaration --locked -- --ignored --test-threads=1
+      - name: stop NATS
+        if: always()
+        run: docker rm -f nats-jetstream || true
+
+  e2e-identity-app:
+    name: e2e (br-identity-app vs PG 16 + NATS JetStream)
+    runs-on: ubuntu-latest
+    # The scope-registration slice's pipeline (load → judge → save → dispatch)
+    # is exercised against *both* real backends by the `#[ignore]`-gated suite
+    # in crates/br-identity-app/tests/: a real Postgres holds the registry and
+    # a real JetStream carries the declare command and the accepted/rejected
+    # confirmation. Postgres rides GHA `services:` (its CMD needs no override);
+    # NATS needs `-js`, so — like e2e-nats — it starts via docker run.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      NATS_URL: nats://localhost:4222
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # SHA-pinned: @stable doubles as the toolchain selector, so name it
+      # explicitly via `toolchain:` now that the ref is a SHA.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: e2e-identity-app
+      - name: start NATS JetStream broker
+        # Same docker-run pattern as e2e-nats: GHA services can't pass `-js`,
+        # so we start NATS by hand. Postgres is health-waited by the services
+        # block above; NATS is health-waited here before the tests fire.
+        run: |
+          docker run -d --name nats-jetstream \
+            -p 4222:4222 -p 8222:8222 \
+            nats:2-alpine -js -m 8222
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
+              echo "NATS ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "NATS failed to become healthy within 30s" >&2
+          docker logs nats-jetstream >&2
+          exit 1
+      - name: cargo test (live pipeline tests)
+        # --test-threads=1: the suite bootstraps a non-superuser app role and a
+        # per-test database against the shared PG, and shares a single
+        # JetStream namespace per the e2e-postgres / e2e-nats reasoning.
+        run: cargo test -p br-identity-app --locked -- --ignored --test-threads=1
       - name: stop NATS
         if: always()
         run: docker rm -f nats-jetstream || true

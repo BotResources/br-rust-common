@@ -4,6 +4,22 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.3.1] — 2026-06-10
+
+**Docs**
+- The `README.md` is now the crate's root doc (`#![doc = include_str!(..)]`), so
+  its `rust` usage examples (publishing, the durable receiver, the correlated
+  awaiter) are compiled and run as doctests by `cargo test` — the README can no
+  longer drift from the code. The `lib.rs` module docs keep only the rustdoc
+  cross-links the README leaves to the reference, no longer a hand-synced
+  duplicate of the README prose.
+- Fixed the publishing example so it compiles: it built ids with
+  `Uuid::new_v4()`, but the `uuid` dependency enables only `v5` / `v7` (not
+  `v4`), so that call resolved to nothing. It now uses `Uuid::now_v7()`, the
+  creator-generated UUIDv7 the codebase uses for ids. The example never compiled
+  before, so the broken call shipped unnoticed — exactly the drift this change
+  closes mechanically.
+
 ## [0.3.0] — 2026-06-10
 
 Additive minor bump: the crate gains the **consuming** side in two deliberately

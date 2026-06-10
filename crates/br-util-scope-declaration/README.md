@@ -8,11 +8,15 @@ drives `br-util-axum-readiness`; it enforces no domain policy.
 
 ## Usage — the three lines
 
-```rust
+```rust,no_run
 use br_core_scope::{ScopeDeclaration, ScopeKey, ScopeSpec, ServiceKey, ServiceManifest};
 use br_util_axum_readiness::ReadinessHandle;
 use br_util_scope_declaration::{declare_scopes, ScopeDeclarationConfig, ScopeDeclarationOutcome};
 
+# async fn boot(
+#     jetstream: async_nats::jetstream::Context,
+#     readiness: ReadinessHandle, // started not_ready
+# ) -> Result<(), Box<dyn std::error::Error>> {
 // 1. Build the validated declaration (from br-core-scope).
 let declaration = ScopeDeclaration::new(
     ServiceManifest::new(ServiceKey::new("notifier")?, "label.notifier", "desc.notifier"),
@@ -23,7 +27,7 @@ let declaration = ScopeDeclaration::new(
 match declare_scopes(
     &jetstream,
     declaration,
-    readiness,                                   // a ReadinessHandle, started not_ready
+    readiness,
     ScopeDeclarationConfig::enabled("IDENTITY"), // or ::disabled(..) to opt out
 )
 .await?
@@ -32,7 +36,11 @@ match declare_scopes(
     //    decides to stay alive out of rotation or exit.
     ScopeDeclarationOutcome::Accepted | ScopeDeclarationOutcome::Disabled => { /* serve */ }
     ScopeDeclarationOutcome::Rejected(reason) => { /* log/exit; gate is DOWN */ }
+    // `ScopeDeclarationOutcome` is `#[non_exhaustive]`: match additively.
+    _ => {}
 }
+# Ok(())
+# }
 ```
 
 ## The handshake protocol
@@ -107,7 +115,7 @@ check in the contract.
 
 ```toml
 [dependencies]
-br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration-v0.1.0" }
+br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration-v0.1.1" }
 ```
 
 ---

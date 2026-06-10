@@ -4,6 +4,21 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.1.1] — 2026-06-10
+
+**Docs**
+- The `README.md` is now the crate's root doc (`#![doc = include_str!(..)]`), so
+  its usage example is compiled and run as a doctest by `cargo test` — the README
+  can no longer drift from the code. The `lib.rs` module docs keep only the
+  rustdoc cross-links the README leaves to the reference, no longer a hand-synced
+  duplicate of the README example and prose.
+- Fixed the README usage example so it compiles: it now wraps the snippet in an
+  `async` boot function (the `?` operator and the `.await` need a fallible async
+  context) and matches the `#[non_exhaustive]` `ScopeDeclarationOutcome`
+  additively. The previous example referenced `jetstream` / `readiness` with no
+  binding and omitted the wildcard arm — it would not have compiled, but nothing
+  compiled it.
+
 ## [0.1.0] — 2026-06-10
 
 **Added**

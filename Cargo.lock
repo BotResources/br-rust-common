@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-integration"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-scope"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -252,12 +252,13 @@ dependencies = [
 
 [[package]]
 name = "br-identity-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-nats",
  "br-core-integration",
  "br-core-scope",
  "br-identity-domain",
+ "br-util-axum-readiness",
  "br-util-postgres",
  "chrono",
  "futures-util",
@@ -320,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-scope-declaration"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-nats",
  "br-core-integration",
