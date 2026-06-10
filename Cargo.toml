@@ -18,13 +18,13 @@ repository = "https://github.com/BotResources/br-rust-common"
 
 [workspace.dependencies]
 # Internal (this repo)
-br-core-auth = { path = "crates/br-core-auth", version = "0.6.1" }
-br-core-events = { path = "crates/br-core-events", version = "0.3.1" }
-br-core-integration = { path = "crates/br-core-integration", version = "0.1.0" }
-br-core-kernel = { path = "crates/br-core-kernel", version = "0.4.0" }
-br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.1" }
-br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.0" }
-br-util-postgres = { path = "crates/br-util-postgres", version = "0.6.1" }
+br-core-auth = { path = "crates/br-core-auth", version = "0.6.2" }
+br-core-events = { path = "crates/br-core-events", version = "0.4.0" }
+br-core-integration = { path = "crates/br-core-integration", version = "0.2.0" }
+br-core-kernel = { path = "crates/br-core-kernel", version = "0.4.1" }
+br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.2" }
+br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.1" }
+br-util-postgres = { path = "crates/br-util-postgres", version = "0.7.0" }
 
 # External
 async-nats = "0.48"
@@ -42,6 +42,7 @@ sha2 = "0.10"
 # `sslmode=require|verify-ca|verify-full` at connect time ("TLS upgrade
 # required … built without TLS support enabled"), making the crate's
 # remote-host TLS requirement unfulfillable at runtime.
+url = "2"
 sqlx = { version = "0.8", features = [
     "postgres",
     "runtime-tokio",

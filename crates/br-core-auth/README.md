@@ -40,6 +40,12 @@ pub enum Passport {
 }
 ```
 
+Deserialization is **strict**: an unknown top-level field is rejected, and
+`claims` must be a JSON object (an explicit `null` or a non-object value is
+rejected). `AuthMethod` and `BearerTokenEntry` reject unknown fields too. This
+is a security DTO shared by every service, so a contract mismatch fails loud;
+the wire format of a *valid* passport is unchanged.
+
 Accessors that work uniformly over both variants:
 
 | Method | Returns | Notes |
@@ -77,6 +83,10 @@ pub trait PassportHeader: Sized {
 
 `to_header` produces base64(JSON). `from_header` rejects invalid base64,
 invalid JSON, and JSON that doesn't match the `Passport` enum shape.
+
+`X-Passport` is trustworthy only because the gateway strips any client-supplied
+copy and re-injects the resolved one (and NetworkPolicy blocks direct access);
+`from_header` *decodes* the header, it does not authenticate its origin.
 
 ### `PassportError`
 
@@ -164,7 +174,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth-v0.5.1" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth-v0.6.2" }
 ```
 
 ---

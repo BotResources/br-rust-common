@@ -18,51 +18,61 @@ transport shapes.
 
 | Type | Role |
 |---|---|
-| `EventMetadata` | Identity + correlation context attached to each event. Fields: `actor_id: Uuid`, `correlation_id: Uuid`, `causation_id: Option<Uuid>` (skipped when `None` on the wire). |
+| `EventMetadata` | Identity + correlation context attached to each event. Fields: `actor: br_core_kernel::Actor` (human or machine), `correlation_id: Uuid`, `causation_id: Option<Uuid>` (skipped when `None` on the wire). |
 | `RawEvent` | What an aggregate emits **before** persistence — no ID, no timestamp, no metadata yet. Fields: `aggregate_type: String`, `aggregate_id: Uuid`, `event_type: String`, `payload: serde_json::Value`. |
 | `DomainEvent` | What the event store stores and replays. Fields: `id`, `aggregate_id`, `aggregate_type`, `event_type`, `payload`, `metadata: serde_json::Value`, `occurred_at: DateTime<Utc>`. |
 
 `EventMetadata` and `DomainEvent` are `Serialize + Deserialize`. `RawEvent`
 is not — it's an in-process producer-side type.
 
+All three are `#[non_exhaustive]`: construct them through their constructors
+(`EventMetadata::new` / `with_causation`, `RawEvent::new`, `DomainEvent::new`),
+not struct literals. Fields stay `pub` for read access.
+
+### Actor & wire compatibility
+
+`EventMetadata` carries a typed `Actor` (human or machine) rather than a bare
+`actor_id: Uuid`. The JSON **wire format is backward-compatible**: it serializes
+a flat `actor_id` + `actor_kind` (`"human"` | `"service"`), and a payload
+written before this field existed (no `actor_kind`) deserializes to a human
+actor. An unknown `actor_kind` value is a hard error — it fails closed, never
+defaults.
+
 ## Usage
 
 ```rust
 use br_core_events::{DomainEvent, EventMetadata, RawEvent};
+use br_core_events::{Actor, UserId};
 use chrono::Utc;
 use uuid::Uuid;
 
 // Aggregate emits a raw event.
-let raw = RawEvent {
-    aggregate_type: "Order".into(),
-    aggregate_id: order_id,
-    event_type: "OrderPlaced".into(),
-    payload: serde_json::json!({ "amount_cents": 1999 }),
-};
+let raw = RawEvent::new(
+    "Order",
+    order_id,
+    "OrderPlaced",
+    serde_json::json!({ "amount_cents": 1999 }),
+);
 
 // Outbox / event store wraps it with identity + persistence fields.
-let meta = EventMetadata {
-    actor_id: user_id,
-    correlation_id: req_id,
-    causation_id: None,
-};
+let meta = EventMetadata::new(Actor::Human(UserId::from(user_id)), req_id);
 
-let event = DomainEvent {
-    id: Uuid::new_v4(),
-    aggregate_id: raw.aggregate_id,
-    aggregate_type: raw.aggregate_type,
-    event_type: raw.event_type,
-    payload: raw.payload,
-    metadata: serde_json::to_value(&meta).unwrap(),
-    occurred_at: Utc::now(),
-};
+let event = DomainEvent::new(
+    Uuid::new_v4(),
+    raw.aggregate_id,
+    raw.aggregate_type,
+    raw.event_type,
+    raw.payload,
+    serde_json::to_value(&meta).unwrap(),
+    Utc::now(),
+);
 ```
 
 Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "br-core-events-v0.3.1" }
+br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "br-core-events-v0.4.0" }
 ```
 
 ---

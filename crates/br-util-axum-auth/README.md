@@ -25,14 +25,23 @@ Response semantics:
 
 | Condition | Response |
 |---|---|
-| `X-Passport` header missing | `401 Unauthorized` — `"missing X-Passport header"` |
-| Header present but empty / non-UTF8 | `401 Unauthorized` — `"missing or empty X-Passport"` |
-| Header present but malformed (bad base64 / bad JSON / wrong shape) | `401 Unauthorized` — `"malformed X-Passport header"` |
+| Header missing, empty, non-UTF8, or malformed (bad base64 / bad JSON / wrong shape) | `401 Unauthorized` — uniform opaque body `"unauthorized"` |
 | Header valid | Continues; `request.extensions().get::<Passport>()` returns `Some(...)`. |
+
+Every rejection returns the **same** opaque 401, so the response is not a
+validation oracle. The precise cause (which check failed) goes to
+`tracing::warn!` server-side; the header value is never logged (it may carry a
+forged passport payload).
 
 The middleware does **not** enforce any policy beyond presence and
 decodability — `is_active`, `is_super_admin`, RLS, scope checks, etc. are
 the handler's or a separate layer's responsibility.
+
+**Trust boundary.** `X-Passport` is trustworthy only because the gateway
+strips any client-supplied copy and re-injects the resolved one, and
+NetworkPolicy blocks direct external access. This middleware *decodes* the
+header — it does not authenticate its origin, so never expose a service
+mounting it except behind the gateway.
 
 ## Usage
 
@@ -57,7 +66,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth-v0.4.1" }
+br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth-v0.4.2" }
 ```
 
 ---

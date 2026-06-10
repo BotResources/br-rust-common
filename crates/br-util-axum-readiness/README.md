@@ -31,6 +31,12 @@ The `reason` is returned verbatim in the `503` body and emitted in logs, so it
 is **operator-facing copy only** — never put a secret, a credential, or a
 sensitive internal detail (DB URL, stack trace) in it.
 
+**The gate fails closed, never panics.** The internal lock is recovered if it is
+ever poisoned (a thread panicked while holding it), so the `/readyz` probe always
+answers with a real up/down state instead of 500-ing or aborting. This is safe
+because `Readiness` is a plain enum written under the lock with no I/O — a panic
+cannot leave it half-written.
+
 ## Usage
 
 ```rust
@@ -53,7 +59,7 @@ let app = Router::new()
 
 ```toml
 [dependencies]
-br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "br-util-axum-readiness-v0.1.0" }
+br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "br-util-axum-readiness-v0.1.1" }
 ```
 
 ---

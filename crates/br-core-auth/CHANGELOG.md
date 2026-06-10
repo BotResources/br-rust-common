@@ -4,6 +4,32 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.6.2] — 2026-06-10
+
+**Fixed (Security)**
+- `Passport` deserialization is now **strict**: an unknown top-level field on
+  either variant is rejected instead of being silently swallowed. `Passport`
+  is a security DTO shared by every service, so a contract mismatch must fail
+  loud. (`deny_unknown_fields` was verified empirically to reject extras on the
+  internally-tagged `kind` enum on the pinned serde version.)
+- `Passport`'s `claims` field now rejects a non-object value: an explicit
+  `null`, number, string, or array is a malformed passport, not an empty claims
+  set, and no longer deserializes. `claims` must be a JSON object. An absent
+  `claims` field is still rejected (required), unchanged from prior behavior.
+- `AuthMethod` deserialization now rejects unknown fields on **both** variants,
+  including the unit `Jwt` payload (`{"method":"jwt","…":…}` is rejected).
+  serde's `deny_unknown_fields` is a no-op on a unit variant, so this is
+  enforced via a private wire-mirror enum; the public `AuthMethod::Jwt` /
+  `AuthMethod::Pat { token_id }` API is unchanged.
+- `BearerTokenEntry` now rejects unknown fields (`deny_unknown_fields`).
+
+**Notes**
+- Behavioral tightening only: inputs previously (wrongly) accepted — unknown
+  top-level fields, `null`/non-object `claims`, unknown fields on `AuthMethod`
+  / `BearerTokenEntry` — are now rejected. No API or signature change; the wire
+  format of a **valid** passport, `AuthMethod`, or `BearerTokenEntry` is
+  byte-identical to 0.6.1.
+
 ## [0.6.1] — 2026-06-10
 
 **Fixed (Security)**

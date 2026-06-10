@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64",
  "serde",
@@ -196,8 +196,9 @@ dependencies = [
 
 [[package]]
 name = "br-core-events"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
+ "br-core-kernel",
  "chrono",
  "serde",
  "serde_json",
@@ -206,10 +207,12 @@ dependencies = [
 
 [[package]]
 name = "br-core-integration"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-nats",
  "async-trait",
+ "br-core-events",
+ "br-core-kernel",
  "chrono",
  "futures-util",
  "serde",
@@ -222,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-kernel"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -231,19 +234,20 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "axum",
  "br-core-auth",
  "serde_json",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "br-util-axum-readiness"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "tokio",
@@ -253,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "br-core-auth",
  "serde_json",
@@ -261,6 +265,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 

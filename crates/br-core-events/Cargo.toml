@@ -1,6 +1,6 @@
 [package]
 name = "br-core-events"
-version = "0.3.1"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Shared domain-event data structures for BotResources services"
 
 [dependencies]
+br-core-kernel = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

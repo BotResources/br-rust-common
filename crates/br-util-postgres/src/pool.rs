@@ -1,21 +1,10 @@
+use std::str::FromStr;
 use std::time::Duration;
 
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
 
 use crate::error::PostgresError;
 use crate::net::{is_loopback, is_on_trusted_network, resolve_trusted_network_hosts};
-
-/// Deployment environment flag used by TLS validation.
-///
-/// Only `Prod` is load-bearing today (it forbids the `allow_insecure` bypass).
-/// The other variants exist to preserve naming across services.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Environment {
-    Local,
-    Dev,
-    Test,
-    Prod,
-}
 
 // ---------------------------------------------------------------------------
 // TLS validation helpers
@@ -26,6 +15,16 @@ pub enum Environment {
 /// Handles `postgres://[user[:pass]@]host[:port]/db[?params]`.
 /// An unparseable host yields `""`, which is on no trusted list, so TLS
 /// validation **fails closed** (TLS required) rather than skipping the check.
+///
+/// Deliberately hand-rolled — **do not** replace this with
+/// `PgConnectOptions::from_str(url).get_host()`. sqlx defaults an absent or
+/// unparseable host to `"localhost"`, which loopback-short-circuits as
+/// trusted and skips the TLS requirement entirely: a malformed URL would then
+/// fail *open* to a plaintext "loopback" connection. That is exactly the
+/// fail-open pattern this validator exists to prevent, so host extraction
+/// stays independent of sqlx and fails closed to `""`. (sslmode parsing,
+/// where sqlx has no such permissive default, *is* delegated to sqlx — see
+/// [`parse_sslmode`].)
 fn extract_pg_host(url: &str) -> String {
     let without_scheme = url
         .strip_prefix("postgres://")
@@ -52,24 +51,27 @@ fn extract_pg_host(url: &str) -> String {
     host_port.split(':').next().unwrap_or_default().to_string()
 }
 
-/// Extract the `sslmode` query parameter value from a PostgreSQL URL.
+/// Resolve the effective `sslmode` of a PostgreSQL URL via sqlx itself.
 ///
-/// Matches sqlx behavior (sqlx-postgres 0.8.6):
-/// - Accepts both `sslmode` and `ssl-mode` as key names (parse.rs:52)
-/// - Lowercases the value (`PgSslMode::from_str` does `to_ascii_lowercase()`)
-/// - Returns the **last** occurrence if duplicated (parse.rs:50 reassigns each match)
-fn extract_sslmode(url: &str) -> Option<String> {
-    let query = url.split('?').nth(1)?;
-    let mut result = None;
-    for param in query.split('&') {
-        let Some((key, value)) = param.split_once('=') else {
-            continue;
-        };
-        if key == "sslmode" || key == "ssl-mode" {
-            result = Some(value.to_ascii_lowercase());
-        }
-    }
-    result
+/// Delegating to `PgConnectOptions::from_str(url).get_ssl_mode()` makes sqlx
+/// the single source of truth for sslmode resolution — the `sslmode`/`ssl-mode`
+/// aliasing, the case-insensitive value, the last-occurrence-wins on duplicates
+/// and the `prefer` default are all sqlx's own behavior, so this validator can
+/// never drift from what the build will actually negotiate on a sqlx bump.
+///
+/// A URL sqlx cannot parse (including an unknown sslmode value such as
+/// `sslmode=bogus`, which `PgSslMode::from_str` rejects) is a configuration
+/// error: it returns `Err`, which the caller turns into a rejection. Unlike
+/// host extraction, sqlx has no permissive default for an *invalid* sslmode,
+/// so deferring here is safe — it fails closed.
+fn parse_sslmode(url: &str) -> Result<PgSslMode, PostgresError> {
+    PgConnectOptions::from_str(url)
+        .map(|opts| opts.get_ssl_mode())
+        .map_err(|e| {
+            PostgresError::Config(format!(
+                "could not parse DATABASE_URL for TLS validation: {e}"
+            ))
+        })
 }
 
 /// Validate that a remote PostgreSQL connection uses TLS.
@@ -78,15 +80,32 @@ fn extract_sslmode(url: &str) -> Option<String> {
 ///   any host listed in `TRUSTED_NETWORK_HOSTS` (e.g. an intra-namespace
 ///   CloudNativePG database reached over plaintext behind a default-deny
 ///   `NetworkPolicy`). We trust the network segment, not the host.
-/// - Remote connections must include `sslmode=require`, `sslmode=verify-ca`,
-///   or `sslmode=verify-full` in the URL.
-/// - In non-production environments, `allow_insecure=true` bypasses this check.
-/// - In production, TLS is always required for remote connections.
-pub fn validate_database_tls(
-    url: &str,
-    environment: Environment,
-    allow_insecure: bool,
-) -> Result<(), PostgresError> {
+/// - Every other remote connection must include `sslmode=require`,
+///   `sslmode=verify-ca`, or `sslmode=verify-full` in the URL — unconditionally,
+///   with no environment-gated escape hatch. A remote, untrusted host without a
+///   TLS-enforcing sslmode always fails closed. The only way to reach such a
+///   host over plaintext is to declare it in `TRUSTED_NETWORK_HOSTS`.
+pub fn validate_database_tls(url: &str) -> Result<(), PostgresError> {
+    // sqlx (libpq-compatible) lets a `host=` / `hostaddr=` query parameter
+    // OVERRIDE the authority host. This validator judges the authority host,
+    // so an override would make it vouch for a host sqlx never connects to:
+    // `postgres://localhost/db?host=remote` would pass as loopback while
+    // actually dialing `remote` in plaintext. Fail closed BEFORE the loopback
+    // short-circuit: the real host must live in the URL authority.
+    // (`query_pairs()` percent-decodes keys, matching sqlx's own parsing.)
+    if let Ok(parsed) = url::Url::parse(url)
+        && parsed
+            .query_pairs()
+            .any(|(k, _)| k == "host" || k == "hostaddr")
+    {
+        return Err(PostgresError::Config(
+            "DATABASE_URL overrides the target host via a host=/hostaddr= query \
+             parameter; TLS validation cannot vouch for the real target — put \
+             the host in the URL authority"
+                .to_string(),
+        ));
+    }
+
     let host = extract_pg_host(url);
 
     // Loopback short-circuits before any env read, so a loopback host never
@@ -100,21 +119,20 @@ pub fn validate_database_tls(
         return Ok(());
     }
 
-    let has_tls = extract_sslmode(url)
-        .is_some_and(|m| matches!(m.as_str(), "require" | "verify-ca" | "verify-full"));
+    // For a genuinely remote, untrusted host the URL must parse and request a
+    // TLS-enforcing sslmode. A malformed URL is a hard config error (fail
+    // closed) rather than a silent pass.
+    let has_tls = matches!(
+        parse_sslmode(url)?,
+        PgSslMode::Require | PgSslMode::VerifyCa | PgSslMode::VerifyFull
+    );
 
     if !has_tls {
-        if allow_insecure && environment != Environment::Prod {
-            tracing::warn!(
-                host = %host,
-                "remote database connection without TLS — allowed by ALLOW_INSECURE"
-            );
-            return Ok(());
-        }
-
         return Err(PostgresError::Config(format!(
             "remote database connection to '{host}' requires TLS: \
-             add sslmode=require (or verify-ca/verify-full) to DATABASE_URL"
+             add sslmode=require (or verify-ca/verify-full) to DATABASE_URL, \
+             or declare the host in TRUSTED_NETWORK_HOSTS if it sits on a \
+             trusted network segment"
         )));
     }
 
@@ -129,12 +147,19 @@ pub fn validate_database_tls(
 ///
 /// Validates TLS requirements before connecting. Does NOT run migrations —
 /// each service owns its own migrations.
-pub async fn init_pool(
-    database_url: &str,
-    environment: Environment,
-    allow_insecure: bool,
-) -> Result<PgPool, PostgresError> {
-    validate_database_tls(database_url, environment, allow_insecure)?;
+///
+/// **`Ok` does not prove the database is reachable.** `min_connections` is
+/// filled *lazily* by sqlx, so this returns `Ok` as soon as the options are
+/// valid; a wrong host, down server, or bad credentials surface only on the
+/// **first acquire/query**, not here. To honor the fail-loud invariant
+/// ("declared infra is assumed to exist; if it doesn't, fail loud / readiness
+/// DOWN"), a caller must probe explicitly after init — run a `SELECT 1` and
+/// only then flip its [`br_util_axum_readiness`] handle to ready. See the
+/// "Wiring readiness" recipe in the crate README.
+///
+/// [`br_util_axum_readiness`]: https://github.com/BotResources/br-rust-common
+pub async fn init_pool(database_url: &str) -> Result<PgPool, PostgresError> {
+    validate_database_tls(database_url)?;
 
     PgPoolOptions::new()
         .max_connections(20)
@@ -149,10 +174,12 @@ pub async fn init_pool(
 ///
 /// Reads `DATABASE_URL_OWNER` (falls back to `DATABASE_URL`).
 /// Use this to run migrations, then drop it before creating the app pool.
-pub async fn init_migration_pool(
-    environment: Environment,
-    allow_insecure: bool,
-) -> Result<PgPool, PostgresError> {
+///
+/// Like [`init_pool`], `Ok` here does **not** prove the database is reachable —
+/// sqlx fills connections lazily. In practice the very next step
+/// (`ensure_app_role` / `sqlx::migrate!`) acquires a connection and so fails
+/// loud immediately, but do not treat the `Ok` itself as a connectivity check.
+pub async fn init_migration_pool() -> Result<PgPool, PostgresError> {
     let url = std::env::var("DATABASE_URL_OWNER")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .map_err(|_| {
@@ -160,7 +187,7 @@ pub async fn init_migration_pool(
                 "DATABASE_URL_OWNER or DATABASE_URL must be set for migrations".to_string(),
             )
         })?;
-    validate_database_tls(&url, environment, allow_insecure)?;
+    validate_database_tls(&url)?;
 
     PgPoolOptions::new()
         .max_connections(2)
@@ -218,179 +245,147 @@ mod tests {
     fn localhost_always_allowed() {
         // Loopback short-circuits before any env read, so this is Ok regardless
         // of TLS params and never emits the deprecation warning.
-        assert!(validate_database_tls("postgres://localhost/db", Environment::Prod, false).is_ok());
+        assert!(validate_database_tls("postgres://localhost/db").is_ok());
     }
 
     #[test]
     fn ipv6_loopback_always_allowed() {
-        assert!(
-            validate_database_tls("postgres://user@[::1]:5432/db", Environment::Prod, false)
-                .is_ok()
-        );
+        assert!(validate_database_tls("postgres://user@[::1]:5432/db").is_ok());
     }
 
     #[test]
     fn unparseable_host_fails_closed() {
         // A URL with no host parses to "" — on no trusted list, no loopback —
         // so TLS is required and the connection is rejected (fail closed).
-        assert!(validate_database_tls("postgres://", Environment::Prod, false).is_err());
+        assert!(validate_database_tls("postgres://").is_err());
         assert_eq!(extract_pg_host("postgres://"), "");
     }
 
     #[test]
-    fn remote_without_tls_rejected_in_prod() {
-        assert!(
-            validate_database_tls("postgres://db.example.com/db", Environment::Prod, false)
-                .is_err()
-        );
+    fn remote_without_tls_rejected() {
+        // A remote, untrusted host without a TLS sslmode is always rejected —
+        // there is no environment-gated bypass to relax this.
+        assert!(validate_database_tls("postgres://db.example.com/db").is_err());
     }
 
     #[test]
     fn remote_with_tls_accepted() {
+        assert!(validate_database_tls("postgres://db.example.com/db?sslmode=require").is_ok());
+    }
+
+    #[test]
+    fn remote_without_tls_rejected_regardless_of_sslmode_off() {
+        // `sslmode=disable` is an explicit plaintext request; with the blanket
+        // bypass gone, a remote untrusted host cannot opt out of TLS this way.
+        assert!(validate_database_tls("postgres://db.example.com/db?sslmode=disable").is_err());
+    }
+
+    // ─── parse_sslmode (delegates to sqlx) ───────────
+    //
+    // These assert the *resolution* — aliasing, case, last-wins, default,
+    // malformed — through `validate_database_tls`, which is what actually
+    // matters. Because resolution is now sqlx's `PgConnectOptions`, these
+    // prove agreement with sqlx by construction: if a sqlx bump changed any
+    // of these behaviors, the assertion (and the connection) would change in
+    // lockstep, with no separate copy to drift.
+
+    #[test]
+    fn require_sslmode_passes_tls_validation() {
+        assert!(validate_database_tls("postgres://db.example.com/db?sslmode=require").is_ok());
+    }
+
+    #[test]
+    fn sslmode_among_other_params_is_honored() {
         assert!(
             validate_database_tls(
-                "postgres://db.example.com/db?sslmode=require",
-                Environment::Prod,
-                false
+                "postgres://db.example.com/db?connect_timeout=10&sslmode=verify-full&application_name=test",
             )
             .is_ok()
         );
     }
 
     #[test]
-    fn remote_without_tls_allowed_by_insecure_in_dev() {
-        assert!(
-            validate_database_tls("postgres://db.example.com/db", Environment::Dev, true).is_ok()
-        );
+    fn absent_sslmode_defaults_to_prefer_and_rejects() {
+        // sqlx defaults a missing sslmode to `prefer` (not a TLS-enforcing
+        // mode), so a remote host without sslmode is rejected.
+        assert!(validate_database_tls("postgres://db.example.com/db?connect_timeout=10").is_err());
+        assert!(validate_database_tls("postgres://db.example.com/db").is_err());
     }
 
     #[test]
-    fn remote_without_tls_rejected_in_prod_even_with_insecure() {
-        assert!(
-            validate_database_tls("postgres://db.example.com/db", Environment::Prod, true).is_err()
-        );
+    fn malformed_url_fails_closed() {
+        // A remote-looking URL sqlx cannot parse is a hard config error, not
+        // a silent pass — fail closed.
+        assert!(matches!(
+            validate_database_tls("postgres://db.example.com/db?sslmode=not-a-mode"),
+            Err(PostgresError::Config(_))
+        ));
     }
 
-    // ─── extract_sslmode ─────────────────────────────
+    // ─── host=/hostaddr= query overrides (validator/connector divergence) ──
 
+    // sqlx lets `?host=` override the authority host. The validator judges
+    // the authority, so the override MUST be rejected — otherwise
+    // `postgres://localhost/db?host=remote` passes as loopback while sqlx
+    // dials `remote` in plaintext.
     #[test]
-    fn extracts_sslmode_require() {
-        assert_eq!(
-            extract_sslmode("postgres://host/db?sslmode=require"),
-            Some("require".to_string())
-        );
-    }
-
-    #[test]
-    fn extracts_sslmode_among_other_params() {
-        assert_eq!(
-            extract_sslmode("postgres://host/db?connect_timeout=10&sslmode=verify-full&app=test"),
-            Some("verify-full".to_string())
-        );
-    }
-
-    #[test]
-    fn returns_none_when_no_sslmode() {
-        assert_eq!(
-            extract_sslmode("postgres://host/db?connect_timeout=10"),
-            None
-        );
+    fn loopback_authority_with_host_override_is_rejected() {
+        assert!(matches!(
+            validate_database_tls("postgres://localhost/db?host=evil.example.com"),
+            Err(PostgresError::Config(_))
+        ));
     }
 
     #[test]
-    fn returns_none_when_no_query_string() {
-        assert_eq!(extract_sslmode("postgres://host/db"), None);
+    fn loopback_authority_with_hostaddr_override_is_rejected() {
+        assert!(matches!(
+            validate_database_tls("postgres://127.0.0.1/db?hostaddr=8.8.8.8"),
+            Err(PostgresError::Config(_))
+        ));
     }
 
+    // `query_pairs()` percent-decodes keys exactly like sqlx's URL parsing,
+    // so an encoded `%68ost=` cannot sneak past the guard.
     #[test]
-    fn sslmode_in_path_does_not_count_as_param() {
-        // A URL where "sslmode=require" appears in a non-query-param position
-        // must not be treated as having TLS enabled.
-        assert!(
-            validate_database_tls(
-                "postgres://db.example.com/app?foo=sslmode=require",
-                Environment::Prod,
-                false
-            )
-            .is_err()
-        );
+    fn percent_encoded_host_override_is_rejected() {
+        assert!(matches!(
+            validate_database_tls("postgres://localhost/db?%68ost=evil.example.com"),
+            Err(PostgresError::Config(_))
+        ));
     }
 
-    // ─── P1: last sslmode wins (matches sqlx behavior) ──
-
+    // Harmless query parameters do not trip the guard.
     #[test]
-    fn last_sslmode_wins_when_duplicated() {
-        // sqlx reassigns on each occurrence, so the last value wins.
-        assert_eq!(
-            extract_sslmode("postgres://host/db?sslmode=require&sslmode=disable"),
-            Some("disable".to_string())
-        );
+    fn other_query_params_do_not_trip_the_override_guard() {
+        assert!(validate_database_tls("postgres://localhost/db?application_name=svc").is_ok());
     }
+
+    // ─── P1: last sslmode wins (sqlx behavior) ──
 
     #[test]
     fn duplicate_sslmode_require_then_disable_rejects_tls() {
+        // sqlx reassigns on each occurrence, so the last value (disable) wins.
         assert!(
-            validate_database_tls(
-                "postgres://db.example.com/db?sslmode=require&sslmode=disable",
-                Environment::Prod,
-                false
-            )
-            .is_err()
+            validate_database_tls("postgres://db.example.com/db?sslmode=require&sslmode=disable")
+                .is_err()
         );
     }
 
-    // ─── P2: ssl-mode alias + case insensitive (matches sqlx) ──
-
-    #[test]
-    fn accepts_ssl_mode_hyphenated_key() {
-        assert_eq!(
-            extract_sslmode("postgres://host/db?ssl-mode=require"),
-            Some("require".to_string())
-        );
-    }
+    // ─── P2: ssl-mode alias + case insensitive (sqlx behavior) ──
 
     #[test]
     fn ssl_mode_hyphenated_passes_tls_validation() {
-        assert!(
-            validate_database_tls(
-                "postgres://db.example.com/db?ssl-mode=verify-full",
-                Environment::Prod,
-                false
-            )
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn sslmode_value_is_case_insensitive() {
-        assert_eq!(
-            extract_sslmode("postgres://host/db?sslmode=VERIFY-FULL"),
-            Some("verify-full".to_string())
-        );
+        assert!(validate_database_tls("postgres://db.example.com/db?ssl-mode=verify-full").is_ok());
     }
 
     #[test]
     fn uppercase_sslmode_passes_tls_validation() {
-        assert!(
-            validate_database_tls(
-                "postgres://db.example.com/db?sslmode=REQUIRE",
-                Environment::Prod,
-                false
-            )
-            .is_ok()
-        );
+        assert!(validate_database_tls("postgres://db.example.com/db?sslmode=REQUIRE").is_ok());
     }
 
     #[test]
     fn mixed_case_ssl_mode_passes_tls_validation() {
-        assert!(
-            validate_database_tls(
-                "postgres://db.example.com/db?ssl-mode=Verify-Ca",
-                Environment::Prod,
-                false
-            )
-            .is_ok()
-        );
+        assert!(validate_database_tls("postgres://db.example.com/db?ssl-mode=Verify-Ca").is_ok());
     }
 }
 
