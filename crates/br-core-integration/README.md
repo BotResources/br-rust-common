@@ -39,7 +39,8 @@ Subjects follow `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
 (e.g. `identity.evt.user.created.v1`, `notifier.cmd.notification.send.v1`).
 Build them with `integration_subject` rather than formatting strings by hand —
 it is the single source of the convention and validates that each segment is
-non-empty and drawn from `[a-z0-9-]` (no `.`, no NATS wildcards, no whitespace):
+non-empty and drawn from `[a-z0-9_-]` (no `.`, no NATS wildcards, no
+whitespace; multi-word segments are snake_case, e.g. `service_scope`):
 
 ```rust
 use br_core_integration::{integration_subject, MessageKind};

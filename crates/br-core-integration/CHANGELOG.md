@@ -65,6 +65,10 @@ existing public surface changes; `IntegrationError` (already
   string.
 
 **Changed**
+- `integration_subject` segment charset widened from `[a-z0-9-]` to
+  `[a-z0-9_-]`: multi-word segments are snake_case in the shared contract
+  (e.g. `identity.cmd.service_scope.declare.v1`), and the builder must be able
+  to produce them. Purely accepting — no previously valid input changes.
 - `futures-util` and `tokio` moved from `dev-dependencies` to `dependencies`
   (the consumer message stream and the awaiter's per-wait deadline use them).
 
