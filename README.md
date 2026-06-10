@@ -9,9 +9,10 @@
 >
 > **We do not accept external pull requests, issues, or support requests.**
 > Issues and Discussions are disabled. PRs from accounts that are not on the
-> internal contributor allowlist will be closed without review. The GitHub
-> fork button is disabled — you may still fork under MIT, but we provide no
-> support outside the BR commercial relationship.
+> internal contributor allowlist will be closed without review. Forks are
+> permitted by MIT and we do not (and cannot) prevent them; we simply do not
+> monitor, support, or accept contributions from forks outside the BR
+> commercial relationship.
 >
 > - Clients with a commercial relationship: contact your BR account manager.
 > - Security reports: see [SECURITY.md](SECURITY.md) (private email channel).
@@ -30,6 +31,7 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-core-integration` | core | Typed integration envelopes + `IntegrationPublisher` (NATS JetStream / noop) | [README](crates/br-core-integration/README.md) | [CHANGELOG](crates/br-core-integration/CHANGELOG.md) |
 | `br-util-postgres` | util | Postgres pools, TLS, RLS context, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
+| `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](crates/br-util-axum-readiness/CHANGELOG.md) |
 
 ## Architecture
 

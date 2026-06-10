@@ -24,8 +24,8 @@ use crate::role::validate_role_name;
 /// so calling this through the app pool would set defaults for objects the
 /// app role creates — which it can't, making the call a silent no-op.
 ///
-/// The `app_role` parameter is project-specific (e.g., "hanshow_app",
-/// "medisup_app"). It is validated against `^[a-z][a-z0-9_]*$` (≤63 bytes)
+/// The `app_role` parameter is project-specific (e.g., "acme_app",
+/// "demo_app"). It is validated against `^[a-z][a-z0-9_]*$` (≤63 bytes)
 /// before being interpolated into DDL; invalid names return
 /// [`PostgresError::InvalidRoleName`] without touching the database.
 pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), PostgresError> {

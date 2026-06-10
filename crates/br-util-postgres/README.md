@@ -141,6 +141,15 @@ Add to `Cargo.toml`:
 br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.6.1" }
 ```
 
+## sqlx is part of the public contract
+
+This crate's public API exposes sqlx 0.8 types directly: `init_pool` returns a
+`PgPool`, `set_rls_context` takes a `Transaction`, and `PostgresError::Db`
+wraps `sqlx::Error`. A sqlx **major** bump is therefore a **breaking release of
+this crate** and a coordinated migration across consumers — never a silent
+dependency bump. Let this crate's pin drive your sqlx version rather than
+pinning sqlx independently.
+
 ---
 
 Part of [`br-rust-common`](../../README.md) · [Changelog](CHANGELOG.md) · [botresources.ai](https://botresources.ai)

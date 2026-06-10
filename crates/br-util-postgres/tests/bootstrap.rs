@@ -2,8 +2,8 @@
 //! `svc-*` service runs on first boot of a fresh database. Per-module
 //! live tests in src/{role,grant,rls}.rs exercise each function in
 //! isolation; this test catches seam bugs between them — the kind of
-//! regression that broke dp-botresources.ai PR #37 on first boot of the
-//! BR 2-role data plane.
+//! seam regression that has shipped to a first boot before, where each
+//! function passed in isolation but the 2-role bootstrap sequence did not.
 //!
 //! Production sequence (mirrored here):
 //!   1. owner pool = LOGIN CREATEROLE NOSUPERUSER (CNPG's `<svc>_owner`)
