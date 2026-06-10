@@ -1,7 +1,27 @@
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use crate::auth_method::AuthMethod;
+
+/// Deserialize a `claims` value, rejecting anything that is not a JSON object.
+///
+/// `claims` is a free-form bag, but it must be a JSON *object* — an explicit
+/// `null`, number, string, or array is a malformed passport, not an empty
+/// claims set. The inner type stays `serde_json::Value` so the public API is
+/// unchanged; only the accepted wire shape is tightened. An absent `claims`
+/// field is handled by the field's own (required) presence rule, not here.
+fn deserialize_claims<'de, D>(deserializer: D) -> Result<serde_json::Value, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err(D::Error::custom("claims must be a JSON object"))
+    }
+}
 
 /// The authenticated caller's identity, built by svc-identity and consumed
 /// by all downstream services. Serialized to JSON, base64-encoded into the
@@ -20,10 +40,18 @@ use crate::auth_method::AuthMethod;
 ///   `user_id` so RLS applies the impersonated user's permissions naturally;
 ///   `impersonator` is the audit trail of who really triggered the request.
 ///
-/// Everything else goes in `claims` — a free-form JSON bag that each project
-/// fills with whatever it needs (email, role, tenant_id, etc.).
+/// Everything else goes in `claims` — a free-form JSON bag (always a JSON
+/// object) that each project fills with whatever it needs (email, role,
+/// tenant_id, etc.).
+///
+/// Deserialization is **strict**: an unknown top-level field is rejected
+/// (`deny_unknown_fields`), and `claims` must be a JSON object (an explicit
+/// `null` or a non-object value is rejected). This crate is a security DTO
+/// shared by every service, so a contract mismatch fails loud rather than
+/// silently swallowing extra fields. The wire format of a *valid* passport is
+/// unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Passport {
     Human {
         user_id: Uuid,
@@ -32,10 +60,12 @@ pub enum Passport {
         auth_method: AuthMethod,
         #[serde(default)]
         impersonator: Option<Uuid>,
+        #[serde(deserialize_with = "deserialize_claims")]
         claims: serde_json::Value,
     },
     Service {
         service_account_id: Uuid,
+        #[serde(deserialize_with = "deserialize_claims")]
         claims: serde_json::Value,
     },
 }
@@ -516,6 +546,150 @@ mod tests {
     #[test]
     fn deserialize_rejects_unknown_kind() {
         let json = r#"{"kind":"robot","id":"00000000-0000-0000-0000-000000000000","claims":{}}"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // ─── strict deserialization (unknown fields, claims shape) ─────────
+
+    // Given a valid Human passport carrying an extra top-level field
+    // When deserializing
+    // Then it is rejected — a contract mismatch must fail loud
+    // (Fixture deliberately omits `impersonator`: this also covers the
+    // unknown-field × absent-`serde(default)`-field interaction, the gray
+    // zone where a serde regression would bite. Keep it absent.)
+    #[test]
+    fn deserialize_rejects_unknown_top_level_field_on_human() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt"},
+            "claims": {},
+            "evil": true
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given a valid Service passport carrying an extra top-level field
+    // When deserializing
+    // Then it is rejected
+    #[test]
+    fn deserialize_rejects_unknown_top_level_field_on_service() {
+        let json = r#"{
+            "kind": "service",
+            "service_account_id": "00000000-0000-0000-0000-00000000002a",
+            "claims": {},
+            "evil": true
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given a Human passport with no `claims` key at all
+    // When deserializing
+    // Then it is rejected — `claims` is a required field. This property comes
+    // from the field's required presence, NOT from `deny_unknown_fields` or
+    // the object validator; a future `#[serde(default)]` on `claims` would
+    // silently break it, and this test is the guard.
+    #[test]
+    fn deserialize_rejects_absent_claims() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt"}
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given a Service passport with no `claims` key at all
+    // When deserializing
+    // Then it is rejected on the Service variant too
+    #[test]
+    fn deserialize_rejects_absent_claims_on_service() {
+        let json = r#"{
+            "kind": "service",
+            "service_account_id": "00000000-0000-0000-0000-00000000002a"
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given a Human passport with `claims` set to an explicit null
+    // When deserializing
+    // Then it is rejected — claims must be a JSON object, not null
+    #[test]
+    fn deserialize_rejects_null_claims() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt"},
+            "claims": null
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given a Human passport with `claims` set to a non-object value
+    // When deserializing
+    // Then it is rejected — claims must be a JSON object
+    #[test]
+    fn deserialize_rejects_non_object_claims() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt"},
+            "claims": 42
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given a Service passport with a non-object `claims`
+    // When deserializing
+    // Then it is rejected on the Service variant too
+    #[test]
+    fn deserialize_rejects_non_object_claims_on_service() {
+        let json = r#"{
+            "kind": "service",
+            "service_account_id": "00000000-0000-0000-0000-00000000002a",
+            "claims": []
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given an unknown field nested in the `auth_method` payload
+    // When deserializing the enclosing Human passport
+    // Then it is rejected — strictness reaches the AuthMethod payload
+    #[test]
+    fn deserialize_rejects_unknown_field_in_auth_method() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt", "evil": true},
+            "claims": {}
+        }"#;
+        assert!(serde_json::from_str::<Passport>(json).is_err());
+    }
+
+    // Given a Human passport carrying a duplicate top-level field
+    // When deserializing
+    // Then it is rejected — duplicate fields are ambiguous (regression guard)
+    #[test]
+    fn deserialize_rejects_duplicate_field() {
+        let json = r#"{
+            "kind": "human",
+            "user_id": "00000000-0000-0000-0000-000000000000",
+            "user_id": "00000000-0000-0000-0000-000000000001",
+            "is_super_admin": false,
+            "is_active": true,
+            "auth_method": {"method": "jwt"},
+            "claims": {}
+        }"#;
         assert!(serde_json::from_str::<Passport>(json).is_err());
     }
 

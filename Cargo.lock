@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64",
  "serde",
@@ -231,13 +231,14 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "axum",
  "br-core-auth",
  "serde_json",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 
