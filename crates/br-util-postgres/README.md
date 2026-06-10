@@ -14,8 +14,9 @@ BotResources wiring (two-role model, TLS validation, transaction-local RLS
 via `set_config(..., true)`, automatic GRANTs on future tables).
 
 **When not to use.** The service does not use Postgres, or needs a
-fundamentally different RLS strategy. Don't reach into this crate to
-"bypass" TLS — set `ALLOW_INSECURE=true` in non-prod environments instead.
+fundamentally different RLS strategy. There is no blanket TLS bypass: a host
+reached over plaintext because it sits on a trusted network segment is declared,
+per-host, in `TRUSTED_NETWORK_HOSTS` — every other remote host requires TLS.
 
 ## The deployment model, and what TLS actually buys here
 
@@ -41,9 +42,10 @@ exempt, and the crate stays secure-by-default for every other host.
 **The default for anything else.** Any non-loopback host that is **not**
 declared trusted must carry `sslmode=require` (or `verify-ca` /
 `verify-full`) in its URL, or `init_pool` / `init_migration_pool` refuse to
-connect (unconditionally in `Prod`; overridable by `ALLOW_INSECURE` only in
-non-prod). This is defense-in-depth for genuinely remote databases — a
-managed/off-cluster Postgres, a cross-segment link. As of 0.6.1 the crate
+connect — **unconditionally, with no environment-gated escape hatch**. The only
+way to reach a remote host over plaintext is to declare it in
+`TRUSTED_NETWORK_HOSTS`. This is defense-in-depth for genuinely remote
+databases — a managed/off-cluster Postgres, a cross-segment link. As of 0.6.1 the crate
 ships a **rustls TLS backend** (`tls-rustls-ring-webpki`: pure-Rust rustls +
 the `ring` provider + bundled webpki CA roots, no system trust store or
 OpenSSL), so that requirement is actually fulfillable at runtime. Before
@@ -76,10 +78,9 @@ equals the host extracted from the URL, exactly:
 
 | Item | Role |
 |---|---|
-| `init_pool(url, env, allow_insecure) -> PgPool` | Long-lived runtime pool (max 20, min 2 connections). Validates TLS before connecting. **Does not run migrations.** |
-| `init_migration_pool(env, allow_insecure) -> PgPool` | Short-lived owner pool (max 2). Reads `DATABASE_URL_OWNER` (falls back to `DATABASE_URL`). Use to run migrations, then drop before creating the app pool. |
-| `validate_database_tls(url, env, allow_insecure)` | Standalone TLS validator. `sslmode` is resolved by sqlx itself (single source of truth: `sslmode`/`ssl-mode` alias, case-insensitive, last value wins); the host is judged from the URL **authority** by an independent, fail-closed extractor — deliberately *not* sqlx's, whose absent-host default is `localhost` — and a URL that overrides the target via a `host=`/`hostaddr=` query parameter is rejected outright (the validator cannot vouch for a host it does not judge). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` unless `allow_insecure` is set in non-prod. Validation only — the rustls backend (since 0.6.1) is what lets such a connection actually complete. |
-| `Environment` | Enum: `Local`, `Dev`, `Test`, `Prod`. Only `Prod` is load-bearing today (forbids the `allow_insecure` bypass). |
+| `init_pool(url) -> PgPool` | Long-lived runtime pool (max 20, min 2 connections). Validates TLS before connecting. **Does not run migrations.** |
+| `init_migration_pool() -> PgPool` | Short-lived owner pool (max 2). Reads `DATABASE_URL_OWNER` (falls back to `DATABASE_URL`). Use to run migrations, then drop before creating the app pool. |
+| `validate_database_tls(url)` | Standalone TLS validator. `sslmode` is resolved by sqlx itself (single source of truth: `sslmode`/`ssl-mode` alias, case-insensitive, last value wins); the host is judged from the URL **authority** by an independent, fail-closed extractor — deliberately *not* sqlx's, whose absent-host default is `localhost` — and a URL that overrides the target via a `host=`/`hostaddr=` query parameter is rejected outright (the validator cannot vouch for a host it does not judge). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` — unconditionally, with no escape hatch. Validation only — the rustls backend (since 0.6.1) is what lets such a connection actually complete. |
 
 ### Role provisioning
 
@@ -105,8 +106,7 @@ equals the host extracted from the URL, exactly:
 |---|---|
 | `DATABASE_URL` | App runtime pool URL. |
 | `DATABASE_URL_OWNER` | Migration pool URL (falls back to `DATABASE_URL`). |
-| `ALLOW_INSECURE` | When `true`, lets non-prod environments connect over plaintext. Ignored in `Prod`. |
-| `TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass. |
+| `TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass — and the **only** way to reach a remote host without TLS. |
 | `TRUSTED_HOSTS` | **Deprecated** (since 0.6.0; removal targeted for 1.0.0). Former name of `TRUSTED_NETWORK_HOSTS`; still honored as a fallback when the new name is unset, and warns on use. Rename it. |
 
 ## Two-role startup recipe
@@ -114,18 +114,18 @@ equals the host extracted from the URL, exactly:
 ```rust
 use br_util_postgres::{
     ensure_app_role, grant_app_access, init_pool, init_migration_pool,
-    Environment, set_rls_context,
+    set_rls_context,
 };
 
 // 1. Owner pool — provisions the runtime role and runs migrations.
-let owner = init_migration_pool(Environment::Prod, false).await?;
+let owner = init_migration_pool().await?;
 ensure_app_role(&owner, "myservice_app", &app_password).await?;
 sqlx::migrate!().run(&owner).await?;
 grant_app_access(&owner, "myservice_app").await?;
 drop(owner);
 
 // 2. App pool — used for the rest of the process lifetime.
-let pool = init_pool(&app_database_url, Environment::Prod, false).await?;
+let pool = init_pool(&app_database_url).await?;
 
 // 3. Per-request: open a transaction, inject identity, query.
 let mut tx = pool.begin().await?;
@@ -145,7 +145,7 @@ only then mark the service ready (with [`br-util-axum-readiness`](../br-util-axu
 use br_util_axum_readiness::ReadinessHandle;
 
 let readiness = ReadinessHandle::not_ready("connecting to database");
-let pool = init_pool(&app_database_url, Environment::Prod, false).await?;
+let pool = init_pool(&app_database_url).await?;
 // Force a real connection — this is what `Ok` from `init_pool` did NOT do.
 sqlx::query("SELECT 1").execute(&pool).await?; // error here ⇒ stay not-ready
 readiness.set_ready();
@@ -155,7 +155,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.6.2" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.7.0" }
 ```
 
 ## sqlx is part of the public contract

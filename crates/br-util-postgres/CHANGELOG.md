@@ -4,7 +4,30 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
-## [0.6.2] — 2026-06-10
+## [0.7.0] — 2026-06-10
+
+**Changed (BREAKING)**
+- Removed the `Environment` enum and the `allow_insecure` parameter from
+  `validate_database_tls`, `init_pool`, and `init_migration_pool`. Their
+  signatures are now `validate_database_tls(url)`, `init_pool(url)`, and
+  `init_migration_pool()`. `allow_insecure` was a **blanket** TLS bypass — when
+  set, it whitelisted *every* remote host at once, the opposite of the
+  per-host opt-out doctrine — and `Environment` existed only to gate it
+  (`Prod` forbade the bypass). A remote, untrusted host without a TLS-enforcing
+  `sslmode` now fails closed **unconditionally**, with no environment-gated
+  escape hatch. This makes "the caller mis-declares the environment and
+  re-enables the bypass" structurally impossible. The `ALLOW_INSECURE_DATABASE`
+  environment variable is no longer read.
+- The legitimate intra-namespace-plaintext case (a CloudNativePG database on a
+  trusted, network-isolated segment) is unchanged and still served by
+  `TRUSTED_NETWORK_HOSTS` — a deliberate, per-host opt-out, now the **only** way
+  to reach a remote host over plaintext.
+
+  *Migration for consumers:* drop the two extra arguments from every
+  `validate_database_tls` / `init_pool` / `init_migration_pool` call; delete any
+  `From<YourEnv> for br_util_postgres::Environment` impl and any `Environment`
+  import; stop setting `ALLOW_INSECURE_DATABASE` — declare any plaintext host in
+  `TRUSTED_NETWORK_HOSTS` instead.
 
 **Fixed (Security)**
 - `validate_database_tls` now **rejects** a `DATABASE_URL` that overrides the
