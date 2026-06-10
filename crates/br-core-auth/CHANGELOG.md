@@ -4,6 +4,28 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.6.1] — 2026-06-10
+
+**Fixed (Security)**
+- `extract_session_id` now matches the session-cookie name **exactly and
+  case-sensitively**. Previously the name was compared case-insensitively, so
+  a forged variant-case cookie (e.g. `SESSION_ID=evil`) was accepted. This was
+  especially dangerous for the `__Host-` prefix: the browser's
+  `Secure; Path=/; no Domain` guarantees apply only to the exact-case prefix,
+  so accepting `__HOST-session_id` honored a cookie the browser never
+  constrained.
+- `extract_session_id` now **rejects duplicate cookie names** (returns `None`).
+  Previously, on a header carrying the name twice (e.g.
+  `session_id=evil; session_id=real`), the first occurrence won — exploitable
+  by cookie-tossing / prefix injection. There is no safe pick on a duplicate;
+  ambiguity on an identity-bearing cookie now fails closed.
+
+**Notes**
+- Behavioral tightening only: inputs that were previously (wrongly) accepted —
+  variant-case names and duplicate names — are now rejected. Legitimate
+  exact-name, single-occurrence headers are unaffected. No API, signature, or
+  wire-format change.
+
 ## [0.6.0] — 2026-05-25
 
 **Added**
