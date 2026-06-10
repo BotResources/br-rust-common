@@ -1,6 +1,6 @@
 [package]
 name = "br-core-integration"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,16 +12,19 @@ br-core-events = { workspace = true }
 async-nats = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+# futures-util: StreamExt::next() on the JetStream pull-consumer message stream
+# (the durable wrapper and the correlated awaiter).
+futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# tokio: time (the awaiter's per-wait deadline via select! + sleep).
+tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-# Used by tests/nats.rs (e2e roundtrip against a real JetStream broker).
-# futures-util gives us StreamExt::next() on the JetStream pull consumer;
-# br-core-kernel supplies Actor for the envelope metadata.
+# br-core-kernel supplies `Actor` / `UserId` to build the envelope metadata in
+# tests: the e2e suites (tests/nats.rs, tests/common/mod.rs) and the awaiter's
+# in-crate unit tests.
 br-core-kernel = { workspace = true }
-futures-util = { workspace = true }
-tokio = { workspace = true }

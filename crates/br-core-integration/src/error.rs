@@ -66,7 +66,75 @@ impl From<async_nats::jetstream::context::PublishErrorKind> for PublishErrorKind
     }
 }
 
-/// Errors returned by [`IntegrationPublisher::publish`] and the typed helpers.
+/// Why binding or running a consumer failed, classified so a caller can fail
+/// loud on a missing declared object (the lib never auto-provisions) versus
+/// retry a transient transport fault.
+///
+/// `#[non_exhaustive]`: new kinds may be added as the transport surfaces new
+/// failure modes, so always include a wildcard arm when matching.
+///
+/// `NoStream` / `NoConsumer` are the production-meaningful cases at bind time: a
+/// declared JetStream object is missing, which is a misconfiguration (fail loud,
+/// do not auto-create) rather than a transient fault. [`ConsumerGone`](Self::ConsumerGone)
+/// is the production-meaningful case while *pulling*: the consumer the wrapper or
+/// awaiter was reading vanished mid-run (deleted server-side, or missed
+/// heartbeats), so the message stream ended and the shape fails loud rather than
+/// silently spinning. Everything the transport cannot place with confidence
+/// becomes [`Other`](Self::Other) rather than being guessed into a more specific
+/// kind.
+///
+/// ## Classification fidelity (the pull message stream)
+///
+/// async-nats 0.48's pull `messages()` stream yields `Result<_, MessagesError>`;
+/// when it ends or errors mid-run, `classify_messages_error` maps its
+/// `MessagesErrorKind` honestly:
+///
+/// | `async_nats::jetstream::consumer::pull::MessagesErrorKind` | maps to |
+/// |---|---|
+/// | `ConsumerDeleted`, `MissingHeartbeat`, `NoResponders` | [`ConsumerGone`](Self::ConsumerGone) |
+/// | everything else (`Pull`, `PushBasedConsumer`, `Other`) | [`Other`](Self::Other) |
+///
+/// `NoResponders` is the `503` a pull request gets when no consumer answers it —
+/// for an ephemeral awaiter reaped past its `inactive_threshold`, the kind
+/// actually observed on the next pull — so it belongs with the consumer-gone
+/// cluster (async-nats' own ordered-consumer recovery groups these three as
+/// "recreate the consumer").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConsumeErrorKind {
+    /// The named JetStream stream does not exist. A declared stream is missing
+    /// — a misconfiguration, not a transient fault. The lib never creates it.
+    NoStream,
+    /// The named durable consumer does not exist on the stream. A declared
+    /// consumer is missing — a misconfiguration, not a transient fault. The
+    /// durable wrapper never creates it.
+    NoConsumer,
+    /// The consumer being pulled vanished mid-run: deleted server-side or its
+    /// heartbeats stopped, so the message stream ended. For the ephemeral
+    /// awaiter this is typically the server reaping it past its
+    /// `inactive_threshold` between waits; for the durable wrapper it is the
+    /// bound consumer being deleted while running. Fail loud — never silently
+    /// spin on a dead stream.
+    ConsumerGone,
+    /// Any other or ambiguous transport / request failure while binding or
+    /// pulling messages (broker unreachable, request timeout, …).
+    Other,
+}
+
+impl std::fmt::Display for ConsumeErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::NoStream => "no such stream",
+            Self::NoConsumer => "no such consumer",
+            Self::ConsumerGone => "consumer gone",
+            Self::Other => "consume failed",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Errors returned by [`IntegrationPublisher::publish`], the typed helpers, and
+/// the consumer shapes (the durable wrapper and the correlated awaiter).
 ///
 /// `#[non_exhaustive]`: match with a wildcard arm so a future variant is an
 /// additive change.
@@ -82,6 +150,21 @@ pub enum IntegrationError {
         kind: PublishErrorKind,
         detail: String,
     },
+    /// Binding to a stream/consumer or pulling a message failed. `kind`
+    /// classifies it (`NoStream` / `NoConsumer` are fail-loud
+    /// misconfigurations); `detail` carries the underlying error text for logs.
+    #[error("consume failed ({kind}): {detail}")]
+    Consume {
+        kind: ConsumeErrorKind,
+        detail: String,
+    },
+    /// A delivered message could not be deserialized into the expected typed
+    /// envelope — a poison message. `subject` is where it arrived, `detail`
+    /// the serde error. The consumer shapes surface this rather than silently
+    /// dropping the message; the durable wrapper additionally `term`s it so it
+    /// is not redelivered forever.
+    #[error("payload on '{subject}' failed to deserialize: {detail}")]
+    Decode { subject: String, detail: String },
     /// Encoding the message to JSON failed before any transport attempt.
     #[error("serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
@@ -93,6 +176,23 @@ impl IntegrationError {
     pub(crate) fn from_publish(err: &async_nats::jetstream::context::PublishError) -> Self {
         Self::Publish {
             kind: err.kind().into(),
+            detail: err.to_string(),
+        }
+    }
+
+    /// Build a [`Consume`](IntegrationError::Consume) with an explicit `kind`,
+    /// capturing `detail` for logs.
+    pub(crate) fn consume(kind: ConsumeErrorKind, detail: impl Into<String>) -> Self {
+        Self::Consume {
+            kind,
+            detail: detail.into(),
+        }
+    }
+
+    /// Build a [`Decode`](IntegrationError::Decode) poison-message error.
+    pub(crate) fn decode(subject: impl Into<String>, err: &serde_json::Error) -> Self {
+        Self::Decode {
+            subject: subject.into(),
             detail: err.to_string(),
         }
     }
@@ -161,5 +261,29 @@ mod tests {
         let bad: Result<serde_json::Value, _> = serde_json::from_str("{ not json");
         let err: IntegrationError = bad.unwrap_err().into();
         assert!(matches!(err, IntegrationError::Serialization(_)));
+    }
+
+    #[test]
+    fn consume_error_display_carries_kind_and_detail() {
+        let err = IntegrationError::consume(ConsumeErrorKind::NoStream, "stream IDENTITY missing");
+        let msg = err.to_string();
+        assert!(msg.contains("no such stream"));
+        assert!(msg.contains("stream IDENTITY missing"));
+    }
+
+    #[test]
+    fn decode_error_names_subject() {
+        let bad: Result<serde_json::Value, _> = serde_json::from_str("{ not json");
+        let err = IntegrationError::decode("identity.evt.user.created.v1", &bad.unwrap_err());
+        let msg = err.to_string();
+        assert!(msg.contains("identity.evt.user.created.v1"));
+    }
+
+    #[test]
+    fn consume_error_kinds_display_distinctly() {
+        assert_eq!(ConsumeErrorKind::NoStream.to_string(), "no such stream");
+        assert_eq!(ConsumeErrorKind::NoConsumer.to_string(), "no such consumer");
+        assert_eq!(ConsumeErrorKind::ConsumerGone.to_string(), "consumer gone");
+        assert_eq!(ConsumeErrorKind::Other.to_string(), "consume failed");
     }
 }

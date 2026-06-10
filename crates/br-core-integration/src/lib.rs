@@ -35,6 +35,35 @@
 //!   on [`publish_if_connected`](IntegrationPublisher::publish_if_connected).
 //! - [`NoopIntegrationPublisher`] — for tests.
 //!
+//! ## Consuming — two shapes
+//!
+//! Receiving is split into two deliberately different shapes; pick by role:
+//!
+//! - [`DurableConsumer`] — the **receiver** shape. Binds a *pre-declared*
+//!   durable consumer by name on a *pre-declared* stream and runs a typed
+//!   handler over `consumer.messages()` (parks at zero CPU — never a `fetch()`
+//!   loop). Multiple workers binding the same durable name **share** delivery
+//!   (JetStream pull work-sharing — not a core-NATS queue group). At-least-once;
+//!   the handler returns an explicit [`MessageOutcome`] (`Ack`/`Nak`/`Term`),
+//!   and an undeserializable payload is `term`ed and surfaced as a poison
+//!   message, never silently dropped. Use it to consume commands/events
+//!   addressed to your context.
+//! - [`CorrelatedAwaiter`] — the **awaiter** shape. A per-replica, per-boot
+//!   *ephemeral* consumer over event subject(s) that resolves when a message's
+//!   `correlation_id` matches the awaited value, ignoring everything else. No
+//!   durable name, no queue group (every replica must see all confirmations to
+//!   filter its own). It stays armed across waits up to its configured
+//!   `inactive_threshold` ([`AwaiterConfig`], default 300s) of inactivity;
+//!   beyond that the server reaps the ephemeral consumer and the next wait fails
+//!   loud with [`ConsumeErrorKind::ConsumerGone`]. Use it to await a correlated
+//!   reply to a command you published (subscribe-first; see its module docs for
+//!   the missed-message contract).
+//!
+//! Both bind by name and **fail loud** if the stream (or, for the durable
+//! consumer, the named consumer) is missing — the lib never auto-provisions.
+//! The awaiter may create its *ephemeral* consumer (a read cursor, not
+//! infrastructure), but never the stream.
+//!
 //! ## Subject naming convention
 //!
 //! Subjects follow `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
@@ -46,19 +75,28 @@
 //!
 //! [`br-core-events`]: https://github.com/BotResources/br-rust-common/tree/main/crates/br-core-events
 
+pub mod awaiter;
+mod awaiter_config;
+pub mod consumer;
 mod envelopes;
 mod error;
 mod nats;
+mod nats_classify;
 mod noop;
+mod outcome;
 mod publisher;
 mod subject;
 
 // Re-exported so consumers can construct `MessageMetadata` (whose `new` takes
 // an `Actor`) from this crate alone, without adding a kernel dependency.
+pub use awaiter::{CorrelatedAwaiter, CorrelatedMatch};
+pub use awaiter_config::AwaiterConfig;
 pub use br_core_events::{Actor, ServiceAccountId, UserId};
+pub use consumer::{Delivery, DurableConsumer};
 pub use envelopes::{IntegrationCommand, IntegrationEvent, MessageMetadata};
-pub use error::{IntegrationError, PublishErrorKind};
+pub use error::{ConsumeErrorKind, IntegrationError, PublishErrorKind};
 pub use nats::NatsIntegrationPublisher;
 pub use noop::NoopIntegrationPublisher;
+pub use outcome::MessageOutcome;
 pub use publisher::{IntegrationPublisher, IntegrationPublisherExt};
 pub use subject::{MessageKind, SubjectError, integration_subject};

@@ -4,6 +4,82 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.3.0] — 2026-06-10
+
+Additive minor bump: the crate gains the **consuming** side in two deliberately
+different shapes (a durable receiver and an ephemeral correlated awaiter). No
+existing public surface changes; `IntegrationError` (already
+`#[non_exhaustive]`) gains two variants. Match it with a wildcard arm.
+
+**Added**
+- `DurableConsumer` — the **receiver** shape. Binds a *pre-declared* durable
+  consumer by name on a *pre-declared* stream (`DurableConsumer::bind`) and runs
+  a typed handler over `consumer.messages()`, which **parks at zero CPU** — never
+  a `fetch()` loop (proven by an idle-CPU e2e test). `run_commands` /
+  `run_events` decode each message into `IntegrationCommand<T>` /
+  `IntegrationEvent<T>`; the handler returns an explicit `MessageOutcome`
+  (`Ack` / `Nak(delay)` / `Term`). Delivery is **at-least-once** with explicit
+  ack (no exactly-once); a handler that needs once-only must be idempotent.
+  Multiple workers binding the **same durable name** *share* delivery (JetStream
+  pull work-sharing — documented honestly as *not* a core-NATS queue group).
+- `Delivery<E>` — a decoded delivery handed to the handler (`subject` +
+  `envelope`); `MessageOutcome` (`#[non_exhaustive]`) — the handler's ack
+  decision, mapped to the JetStream ack wire.
+- Poison-message handling: a payload that fails to deserialize into the typed
+  envelope is **termed** (so it is not redelivered forever) and surfaced through
+  the `on_poison` hook as `IntegrationError::Decode` — fail-closed, never a
+  silent drop, never an infinite redelivery loop. Documented as a deliberate
+  choice.
+- `CorrelatedAwaiter` — the **awaiter** shape. A per-replica, per-boot
+  *ephemeral* consumer (`CorrelatedAwaiter::create` / `::create_with`) over one or
+  more filter subjects on a *pre-declared* stream that resolves when a delivered
+  message's `metadata.correlation_id` matches the awaited value, ignoring
+  everything else. `await_correlation(correlation_id, deadline)` returns
+  `Ok(Some(match))` on a correlated match, `Ok(None)` on deadline (the awaiter
+  stays **armed** — it can be re-awaited after a re-publish with no gap, **up to
+  the configured `inactive_threshold` of inactivity**; beyond that the server
+  reaps the ephemeral consumer and the next wait fails loud with
+  `ConsumeErrorKind::ConsumerGone`). `CorrelatedMatch` reports the matched
+  `subject` (so the caller picks the right payload type across e.g.
+  `accepted` / `rejected`), the `metadata`, and the raw `payload` bytes. Deliver
+  policy is `New`: confirmations emitted before the awaiter exists are missed by
+  design — the subscribe-first + re-publish-on-timeout protocol makes that safe
+  (documented).
+- `AwaiterConfig` (`#[non_exhaustive]`) — tunes the awaiter's ephemeral consumer.
+  `inactive_threshold` (default `AwaiterConfig::DEFAULT_INACTIVE_THRESHOLD`, 300s)
+  is set **explicitly** at creation: leaving it `Duration::ZERO` (the
+  `..Default::default()` value) makes serde skip it, so the broker applies its own
+  short ephemeral default (~5s) and reaps the consumer between waits — the
+  no-missed-reply property would then hold only briefly. The explicit threshold
+  keeps the awaiter armed across the re-publish gap; `create_with` overrides it.
+- `ConsumeErrorKind` enum (`#[non_exhaustive]`): `NoStream`, `NoConsumer`,
+  `ConsumerGone`, `Other`. `IntegrationError::Consume { kind, detail }` and
+  `IntegrationError::Decode { subject, detail }` variants. Both consumer shapes
+  **fail loud** on a missing declared object — the lib never auto-provisions a
+  stream or a durable consumer; the awaiter may create its *ephemeral* consumer
+  (a read cursor, not infrastructure) but never the stream. A consumer that
+  vanishes *mid-run* (deleted server-side, or — for the awaiter — reaped past its
+  `inactive_threshold`) surfaces as `ConsumerGone`, classified honestly from
+  async-nats' `MessagesErrorKind` (`ConsumerDeleted` / `MissingHeartbeat`); the
+  underlying error text is preserved in `detail`, never discarded behind a fixed
+  string.
+
+**Changed**
+- `futures-util` and `tokio` moved from `dev-dependencies` to `dependencies`
+  (the consumer message stream and the awaiter's per-wait deadline use them).
+
+**Notes**
+- **No graceful drain on `DurableConsumer::run_*` (API limitation).** Stopping a
+  consumer means aborting its task; a message in flight at abort is neither acked
+  nor naked, so it is redelivered after `AckWait` (at-least-once covers
+  correctness — expect redelivery latency on rollouts). A `CancellationToken`
+  drain is a planned additive addition.
+- `MessageOutcome::Nak(None)` redelivers at the consumer's server-configured
+  `AckWait` (not immediately); repeated naks redeliver at that cadence. Prefer
+  `Nak(Some(delay))` for explicit backoff.
+- Migrating `svc-notifier`'s hand-rolled durable consumer onto `DurableConsumer`
+  is future work, not part of this release.
+
 ## [0.2.0] — 2026-06-10
 
 Breaks the **Rust API**; the **JSON wire format stays backward-compatible** —
