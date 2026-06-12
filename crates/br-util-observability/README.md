@@ -16,7 +16,7 @@ JSON logging plus an always-200 `/livez` liveness route. Thin technical wrapper
 Each line is a self-contained JSON object:
 
 ```json
-{"ts":"2026-06-12T10:00:00+00:00","level":"INFO","component":"composer","msg":"started","port":8080}
+{"ts":"2026-06-12T10:00:00.123456+00:00","level":"INFO","component":"composer","msg":"started","port":8080}
 ```
 
 - **`component`** is the only thing that varies between processes, so it is the
