@@ -1,0 +1,20 @@
+[package]
+name = "br-core-values"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Universal, constructor-validated value objects shared across BotResources services: the Localized<F, L> rich-text family (generic over locale) and the ISO value objects (Money, Currency, CountryCode)"
+
+[features]
+# Test-support conformance helpers (e.g. `assert_lowercase_roundtrip`). Off by
+# default so the prod surface stays lean; consumers enable it for their tests.
+conformance = []
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

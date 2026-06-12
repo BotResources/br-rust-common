@@ -30,6 +30,7 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-core-events` | core | Shared event envelopes (`EventMetadata`, `RawEvent`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](crates/br-core-events/CHANGELOG.md) |
 | `br-core-integration` | core | Typed integration envelopes + `IntegrationPublisher` (NATS JetStream / noop) | [README](crates/br-core-integration/README.md) | [CHANGELOG](crates/br-core-integration/CHANGELOG.md) |
 | `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | [README](crates/br-core-scope/README.md) | [CHANGELOG](crates/br-core-scope/CHANGELOG.md) |
+| `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | [README](crates/br-core-values/README.md) | [CHANGELOG](crates/br-core-values/CHANGELOG.md) |
 | `br-util-postgres` | util | Postgres pools, TLS, RLS context, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
 | `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](crates/br-util-axum-readiness/CHANGELOG.md) |
