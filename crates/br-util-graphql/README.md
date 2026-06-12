@@ -122,7 +122,10 @@ Output (`From<&Money>`) is therefore **infallible**: every `i64` round-trips
 exactly, never truncated, no range bound below `i64`. The `MONEY_OUT_OF_RANGE`
 code now fires **only on input**, when an inbound `MoneyAmount` string is
 non-numeric or overflows `i64` — the parse/overflow boundary, not an `Int` ceiling
-(it carries the offending raw string as its `amount` param).
+(it carries the offending raw string as its `amount` param). An input of the wrong
+GraphQL *type* (e.g. a JSON number instead of a string) is rejected by the scalar
+as a type error *before* it reaches `MONEY_OUT_OF_RANGE` — the wire contract is a
+decimal string, fail-closed.
 
 Where this code surfaces depends on the layer. When `MoneyAmount` is deserialized
 by async-graphql itself (the nominal case — a `MoneyAmount!` argument),
