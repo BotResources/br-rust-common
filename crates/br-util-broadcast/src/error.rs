@@ -21,8 +21,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum BroadcastError {
-    /// The events were broadcast but **no receiver was subscribed** — the
-    /// fan-out reached nobody. Carries how many events went unheard.
+    /// The fan-out found **no receiver subscribed** — nobody was on the channel
+    /// to hear the events. `unheard` carries the count of events not yet
+    /// broadcast when the channel was found empty.
     ///
     /// Not a failure of the write: the events are already committed and
     /// durable. Stable code: `no_subscribers`.
