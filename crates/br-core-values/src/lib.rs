@@ -17,7 +17,18 @@
 //! Three invariants (≥1 entry, primary present, no duplicate locale) are
 //! enforced at construction **and** re-validated on every deserialization — so
 //! serde (the main constructor path in an event-logged system) cannot smuggle in
-//! an illegal value. See the [`localized`] module for the format/locale model.
+//! an illegal value. See the `localized` module for the format/locale model.
+//!
+//! ### Locale casing norm (required)
+//!
+//! A **language locale** — the `L` in `Localized<F, L>` — is the
+//! ASCII-**lowercase** ISO 639-1 / BCP 47 language subtag (`en`, `fr`, `ja`).
+//! This is a *different* ISO standard, with a *different* casing, from the
+//! uppercase code value objects below ([`CountryCode`] is ISO 3166-1 UPPERCASE,
+//! [`Currency`] is ISO 4217 UPPERCASE) — do not conflate them. The lib owns no
+//! locale list, but it owns this norm; with the `conformance` feature a product
+//! proves its own `Locale` enum conforms via
+//! `conformance::assert_lowercase_roundtrip`.
 //!
 //! ## ISO-backed value objects
 //!
@@ -34,6 +45,8 @@
 //! structured params, **never UI prose** (codes-not-language: the human text and
 //! its i18n live at the edge). It is `#[non_exhaustive]`; match with a wildcard.
 
+#[cfg(feature = "conformance")]
+pub mod conformance;
 mod error;
 mod iso;
 mod localized;

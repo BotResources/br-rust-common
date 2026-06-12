@@ -27,12 +27,13 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    // The list must be sorted: `Currency::new` relies on `binary_search`. This
+    // guards the precondition so it cannot silently regress on an edit.
     #[test]
-    fn array_has_exactly_169_entries() {
-        assert_eq!(
-            CURRENCY_CODES.len(),
-            169,
-            "CURRENCY_CODES must contain exactly 169 ISO 4217 active currency entries"
+    fn codes_are_sorted() {
+        assert!(
+            CURRENCY_CODES.is_sorted(),
+            "CURRENCY_CODES must stay sorted — Currency::new binary-searches it"
         );
     }
 
@@ -54,6 +55,33 @@ mod tests {
             assert!(
                 code.chars().all(|c| c.is_ascii_uppercase()),
                 "{code} is not all-uppercase ASCII"
+            );
+        }
+    }
+
+    // Content vectors prove "the list is current", not "the list has the length
+    // I typed". PRESENCE of recent additions:
+    // - SLE (new Sierra Leone leone, 2022), ZWG (Zimbabwe Gold, 2024),
+    //   VED (redenominated Venezuelan bolívar, 2021).
+    #[test]
+    fn contains_recently_added_codes() {
+        for code in &["SLE", "ZWG", "VED"] {
+            assert!(
+                CURRENCY_CODES.binary_search(code).is_ok(),
+                "{code} (a recent ISO 4217 addition) is missing"
+            );
+        }
+    }
+
+    // ABSENCE of recently-retired codes:
+    // - HRK (Croatian kuna, replaced by EUR 2023), SLL (old SL leone, redenominated
+    //   to SLE 2022), ZWL (old Zimbabwe dollar, demonetized 2024 for ZWG).
+    #[test]
+    fn excludes_recently_retired_codes() {
+        for code in &["HRK", "SLL", "ZWL"] {
+            assert!(
+                CURRENCY_CODES.binary_search(code).is_err(),
+                "{code} is retired and must not be in the active list"
             );
         }
     }

@@ -13,7 +13,7 @@ use crate::localized::entry::LocalizedEntry;
 /// primary.
 ///
 /// Generic over a type-level format marker `F` (plain / markdown / html — see
-/// [`format`](crate::localized::format)) and the locale type `L`. The lib owns
+/// the `format` submodule) and the locale type `L`. The lib owns
 /// no locale list: each product instantiates with its own closed `Locale` enum
 /// (`En`/`Fr`/`Ja` here, `En`/`Zh` there). Prefer the
 /// [`LocalizedString`](crate::LocalizedString) /

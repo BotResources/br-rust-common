@@ -13,8 +13,14 @@
 /// chooses among the provided formats but cannot invent a fourth.
 pub trait TextFormat: private::Sealed {
     /// The stable wire discriminator for this format (`"plain"`, `"md"`,
-    /// `"html"`), used by the [`LocalizedContent`](crate::LocalizedContent)
-    /// tagged union and by projection/lint code that needs it as a string.
+    /// `"html"`).
+    ///
+    /// `"md"` / `"html"` are the live discriminators the
+    /// [`LocalizedContent`](crate::LocalizedContent) tagged union reads and
+    /// writes. [`PlainText::WIRE_TAG`] (`"plain"`) is **reserved**: `PlainText`
+    /// never enters `LocalizedContent` (that union is md-or-html only), so the
+    /// tag is not used on the wire by this crate — it is provided for consumer
+    /// projection/lint code that wants a uniform format-string per marker.
     const WIRE_TAG: &'static str;
 }
 

@@ -15,14 +15,18 @@
 //! [`Localized`] for the rationale (serde is the main constructor path in an
 //! event-logged system).
 //!
-//! ## Locale wire form is the product's responsibility
+//! ## Locale wire form: lowercase, by norm
 //!
 //! The family serializes the locale via `L`'s **own** serde representation; the
-//! lib imposes none. A product must give its `Locale` enum a single, stable wire
-//! form — the recommendation is lowercase (`"en"`/`"fr"`) matching the BCP-47
-//! convention, with `#[serde(alias = …)]` read-compat for any earlier form
-//! already persisted in events. Owning that here would mean owning the locale
-//! list, which the family deliberately does not.
+//! lib owns no locale *list*, but it does own the casing **norm**: a language
+//! locale is the ASCII-**lowercase** ISO 639-1 / BCP 47 language subtag
+//! (`"en"`/`"fr"`/`"ja"`) — distinct from the UPPERCASE
+//! [`CountryCode`](crate::CountryCode) (ISO 3166-1) and
+//! [`Currency`](crate::Currency) (ISO 4217). A product must give its `Locale`
+//! enum that single, stable lowercase wire form, with `#[serde(alias = …)]`
+//! read-compat for any earlier (capitalized) form already persisted in events.
+//! With the `conformance` feature, `assert_lowercase_roundtrip` proves the
+//! product's enum obeys the norm from the product's own tests.
 
 mod content;
 mod entry;

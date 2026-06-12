@@ -12,16 +12,32 @@
 //! travel on the wire — e.g. nested in a domain error or an affordance reason —
 //! without re-stringifying.
 //!
-//! `#[non_exhaustive]`: match with a wildcard arm so a future rule is additive.
+//! ## Forward-compat on the wire
+//!
+//! `ValueError` travels nested in other envelopes (domain errors, affordance
+//! reasons). A newer producer crate may emit a `code` this (older) crate does
+//! not know yet. Rather than fail the deserialization of the **whole** enclosing
+//! envelope, an unrecognized `code` degrades to [`ValueError::Unknown`] carrying
+//! the raw `code` string — the envelope still parses. Every code this version
+//! knows stays strongly typed. `#[non_exhaustive]`: match with a wildcard arm so
+//! a future rule is additive.
+//!
+//! The hand-rolled serde for this enum (internally tagged on `code`, with the
+//! forward-compat degrade) lives in [`wire`].
 
-use serde::{Deserialize, Serialize};
+mod wire;
 
 /// Why a value-object constructor rejected its input.
 ///
 /// Stable codes, structured params — never a rendered sentence. See the module
-/// docs for the rationale.
-#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "code", rename_all = "snake_case")]
+/// docs for the rationale and the forward-compat contract.
+///
+/// `Serialize`/`Deserialize` are hand-rolled in the `wire` submodule (not
+/// derived) because the forward-compat [`Unknown`](Self::Unknown) variant carries
+/// the `code` string itself — which collides with the internal `code` tag the
+/// derive would write. The wire shape is unchanged: every variant is an object
+/// tagged on `code`.
+#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ValueError {
     /// A currency/country code was not exactly the required number of ASCII
@@ -56,6 +72,16 @@ pub enum ValueError {
     /// The same locale appeared more than once in a localized value's `entries`.
     #[error("localized_duplicate_locale")]
     LocalizedDuplicateLocale,
+    /// Forward-compat catch-all: a `code` emitted by a newer crate version that
+    /// this version does not know. It is produced **only on deserialization**
+    /// (never constructed by a rejecting constructor here) so an unknown future
+    /// code degrades gracefully instead of failing the enclosing envelope. The
+    /// raw `code` is preserved verbatim for logging / pass-through.
+    #[error("{code}")]
+    Unknown {
+        /// The unrecognized `code` string, verbatim from the wire.
+        code: String,
+    },
 }
 
 #[cfg(test)]
@@ -128,5 +154,73 @@ mod tests {
             let back: ValueError = serde_json::from_str(&json).unwrap();
             assert_eq!(v, back);
         }
+    }
+
+    // ── Forward-compat: unknown future code degrades to Unknown ──────────────
+
+    // Given a `code` from a newer crate version, When deserialized, Then it maps
+    // to Unknown { code } — NOT a deserialization error (the envelope survives).
+    #[test]
+    fn unknown_future_code_degrades_to_unknown_not_an_error() {
+        let wire = r#"{"code":"some_future_rule","value":"x","extra":42}"#;
+        let back: ValueError = serde_json::from_str(wire).unwrap();
+        assert_eq!(
+            back,
+            ValueError::Unknown {
+                code: "some_future_rule".into()
+            }
+        );
+    }
+
+    // A bare unknown code (no params) also degrades, ignoring absent fields.
+    #[test]
+    fn unknown_future_code_without_params_degrades() {
+        let wire = r#"{"code":"future_bare"}"#;
+        let back: ValueError = serde_json::from_str(wire).unwrap();
+        assert_eq!(
+            back,
+            ValueError::Unknown {
+                code: "future_bare".into()
+            }
+        );
+    }
+
+    // A known code still deserializes to its strongly-typed variant.
+    #[test]
+    fn known_code_still_deserializes_to_typed_variant() {
+        let wire = r#"{"code":"unknown_currency","value":"RMB"}"#;
+        let back: ValueError = serde_json::from_str(wire).unwrap();
+        assert_eq!(
+            back,
+            ValueError::UnknownCurrency {
+                value: "RMB".into()
+            }
+        );
+    }
+
+    // Field order is irrelevant: `code` after the params still dispatches right.
+    #[test]
+    fn known_code_deserializes_with_fields_in_any_order() {
+        let wire = r#"{"expected_len":3,"value":"EU","code":"malformed_code"}"#;
+        let back: ValueError = serde_json::from_str(wire).unwrap();
+        assert_eq!(
+            back,
+            ValueError::MalformedCode {
+                value: "EU".into(),
+                expected_len: 3,
+            }
+        );
+    }
+
+    // Round-tripping a known code is unchanged by the forward-compat path.
+    #[test]
+    fn known_code_roundtrip_is_unchanged() {
+        let original = ValueError::MalformedCode {
+            value: "EU".into(),
+            expected_len: 3,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let back: ValueError = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, back);
     }
 }

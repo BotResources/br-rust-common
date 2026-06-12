@@ -30,12 +30,13 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    // The list must be sorted: `CountryCode::new` relies on `binary_search`. This
+    // guards the precondition so it cannot silently regress on an edit.
     #[test]
-    fn array_has_exactly_249_entries() {
-        assert_eq!(
-            COUNTRY_CODES.len(),
-            249,
-            "COUNTRY_CODES must contain exactly 249 ISO 3166-1 alpha-2 entries"
+    fn codes_are_sorted() {
+        assert!(
+            COUNTRY_CODES.is_sorted(),
+            "COUNTRY_CODES must stay sorted — CountryCode::new binary-searches it"
         );
     }
 
@@ -57,6 +58,34 @@ mod tests {
             assert!(
                 code.chars().all(|c| c.is_ascii_uppercase()),
                 "{code} is not all-uppercase ASCII"
+            );
+        }
+    }
+
+    // Content vectors prove "the list is current", not "the list has the length
+    // I typed". PRESENCE of recent additions:
+    // - SS (South Sudan, 2011); BQ/CW/SX (successors of the 2010 dissolution of
+    //   the Netherlands Antilles).
+    #[test]
+    fn contains_recently_added_codes() {
+        for code in &["SS", "BQ", "CW", "SX"] {
+            assert!(
+                COUNTRY_CODES.binary_search(code).is_ok(),
+                "{code} (a recent ISO 3166-1 addition) is missing"
+            );
+        }
+    }
+
+    // ABSENCE of retired / non-official codes:
+    // - AN (Netherlands Antilles, retired 2010), CS (Serbia and Montenegro,
+    //   retired 2006), XK (Kosovo — a user-assigned code, NOT an official ISO
+    //   3166-1 element; it must never leak into the active list).
+    #[test]
+    fn excludes_retired_and_unofficial_codes() {
+        for code in &["AN", "CS", "XK"] {
+            assert!(
+                COUNTRY_CODES.binary_search(code).is_err(),
+                "{code} is retired/unofficial and must not be in the active list"
             );
         }
     }

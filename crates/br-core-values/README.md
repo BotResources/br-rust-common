@@ -24,12 +24,18 @@ holds only the *universal* values.
 Text available in one or more locales, with one designated **primary**. Generic
 over a type-level **format** marker `F` and the **locale** type `L`.
 
-| Alias | Format | Use |
-|---|---|---|
-| `LocalizedString<L>` | plain | titles, names, labels |
-| `LocalizedMd<L>` | markdown | descriptions, summaries, prompt outputs |
-| `LocalizedHtml<L>` | raw html | interactive reports |
-| `LocalizedContent<L>` | md **or** html (runtime tag) | a body that may be either |
+| Alias | Format | Wire tag | Use |
+|---|---|---|---|
+| `LocalizedString<L>` | plain | `plain` (reserved) | titles, names, labels |
+| `LocalizedMd<L>` | markdown | `md` | descriptions, summaries, prompt outputs |
+| `LocalizedHtml<L>` | raw html | `html` | interactive reports |
+| `LocalizedContent<L>` | md **or** html (runtime tag) | `md` / `html` | a body that may be either |
+
+The `md` / `html` wire tags are the live discriminators `LocalizedContent` reads
+and writes. `PlainText::WIRE_TAG` (`plain`) is **reserved**: `PlainText` never
+enters `LocalizedContent` (that union is md-or-html only), so the tag is not used
+on the wire by this crate — it is provided for consumer projection/lint code that
+wants a uniform format string per marker.
 
 - **Generic over the locale; the lib owns no locale list.** Each product
   supplies its own closed `Locale` enum (`En`/`Fr`/`Ja` here, `En`/`Zh` there)
@@ -55,13 +61,54 @@ over a type-level **format** marker `F` and the **locale** type `L`.
 
 `Localized<F, L>` serializes as `{ "primary": L, "entries": [ { "locale": L,
 "content": String } ] }` — the format marker `F` is **not** on the wire. The
-locale's string form is `L`'s **own** serde representation; the lib imposes none.
+locale's string form is `L`'s **own** serde representation; the lib imposes the
+*list* on no one, but it does impose the **casing norm** below.
 
-A product must give its `Locale` enum a single, stable wire form — the
-recommendation is lowercase (`"en"`/`"fr"`, BCP-47 convention), with
-`#[serde(alias = …)]` read-compat for any earlier form already in stored events.
-Owning that here would mean owning the locale list, which the family
-deliberately does not.
+### Locale & code casing — different ISO standards, different casing (required)
+
+These are **distinct ISO standards** with **distinct casing**; do not conflate a
+lowercase language locale with the uppercase code value objects.
+
+| Concept | Standard | Casing | Wire form | Where |
+|---|---|---|---|---|
+| Language locale (`L` in `Localized<F, L>`) | ISO 639-1 / BCP 47 language subtag | **lowercase** | `en`, `fr`, `ja` | product's `Locale` enum |
+| `CountryCode` | ISO 3166-1 alpha-2 | **UPPERCASE** | `FR`, `JP` | this crate |
+| `Currency` | ISO 4217 | **UPPERCASE** | `EUR`, `JPY` | this crate |
+| Full locale tag (if ever combined) | BCP 47 | language **lowercase** + region **UPPERCASE**, hyphen | `en-US` | — (see note) |
+
+- **Language locales are lowercase.** A product **must** give its `Locale` enum a
+  single, stable, ASCII-lowercase wire form (`"en"`/`"fr"`/`"ja"`), with
+  `#[serde(alias = …)]` read-compat for any earlier (e.g. capitalized) form
+  already persisted in stored events — old writes still parse, new writes are
+  lowercase. Owning the list here would mean owning the locale set, which the
+  family deliberately does not; owning the *norm* it does.
+- **`Localized` is language-only today** — it carries the language subtag, not a
+  full BCP 47 `en-US` region tag. The combined-tag casing is noted for
+  completeness only; if a product ever needs region, that is its own value object.
+
+#### Proving conformance (feature `conformance`)
+
+The lib ships the *mechanism* to prove a product's `Locale` enum obeys the
+lowercase norm, without owning the *list*. Enable the `conformance` feature in
+your dev build and plug your enum into `assert_lowercase_roundtrip` from your own
+tests — it asserts each locale serializes to an ASCII-lowercase string **and**
+deserializes back from that lowercase form (round-trip):
+
+```toml
+[dev-dependencies]
+br-core-values = { version = "0.1", features = ["conformance"] }
+```
+
+```rust,ignore
+#[test]
+fn locale_is_lowercase_conformant() {
+    br_core_values::conformance::assert_lowercase_roundtrip(&[
+        Locale::En, Locale::Fr, Locale::Ja,
+    ]);
+}
+```
+
+The feature is **off by default** so the helper never bloats the prod surface.
 
 `LocalizedContent<L>` wraps the inner body and adds a `format` discriminator:
 
@@ -103,6 +150,16 @@ codes-not-language rule its `Display` strings are **stable codes**
 params — **never UI prose**. The human text and its i18n live at the edge.
 `ValueError` is `#[non_exhaustive]` (match with a wildcard) and (de)serializes
 (internally tagged on `code`) so a rejection reason can travel on the wire.
+
+**Forward-compat on the wire.** `ValueError` travels nested in other envelopes
+(domain errors, affordance reasons). A newer producer crate may emit a `code`
+this (older) crate does not know yet. Rather than fail the deserialization of the
+**whole** enclosing envelope, an unrecognized `code` degrades to
+`ValueError::Unknown { code }` carrying the raw `code` string — the envelope
+still parses, and the original code is preserved verbatim for logging /
+pass-through. Every code this version knows stays strongly typed; only a genuinely
+unknown future code degrades. (`Unknown` is produced **only** on deserialization,
+never by a rejecting constructor here.)
 
 ## Tier & dependencies
 

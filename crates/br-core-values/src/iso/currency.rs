@@ -30,7 +30,8 @@ impl Currency {
     /// - [`ValueError::UnknownCurrency`] if it is well-formed but not an ISO code.
     pub fn new(raw: &str) -> Result<Self, ValueError> {
         let upper = normalize_alpha_code(raw, 3)?;
-        if CURRENCY_CODES.contains(&upper.as_str()) {
+        // O(log n) — `CURRENCY_CODES` is sorted (proven by `codes_are_sorted`).
+        if CURRENCY_CODES.binary_search(&upper.as_str()).is_ok() {
             Ok(Self(upper))
         } else {
             Err(ValueError::UnknownCurrency { value: upper })
