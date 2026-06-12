@@ -82,9 +82,15 @@ fn render_line(component: &str, level: &str, visitor: JsonVisitor) -> Value {
     Value::Object(map)
 }
 
-/// The current instant as an RFC 3339 UTC string.
+/// The current instant as an RFC 3339 UTC string with **fixed** microsecond
+/// precision and an explicit `+00:00` offset (`….123456+00:00` — the shape the
+/// README documents). Pinning the fraction to micros keeps `ts` a uniform width
+/// on every line — the bare `to_rfc3339()` emits *variable* precision (no
+/// fraction at all when the sub-second part is zero), which breaks a consumer
+/// parsing `ts` with a fixed-width regex. `use_z = false` keeps the documented
+/// numeric `+00:00` offset rather than the `Z` short form.
 fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339()
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
 }
 
 /// Map a `tracing` level to its stable upper-case code.
@@ -171,6 +177,31 @@ mod tests {
         assert!(obj.contains_key("ts"), "ts is always present");
         // ts must be a non-empty string (RFC 3339).
         assert!(obj["ts"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    /// `ts` is RFC 3339 UTC with **fixed** microsecond precision — the shape the
+    /// README documents (`….123456+00:00`) and a consumer's fixed-width parser
+    /// relies on. The bare `to_rfc3339()` would emit a *variable*-width fraction
+    /// (none at all on a zero sub-second), so this pins the format, not just
+    /// non-emptiness.
+    #[test]
+    fn ts_is_fixed_width_microsecond_utc() {
+        let line = render_line("composer", "INFO", visitor_with("hello", &[]));
+        let ts = line["ts"].as_str().expect("ts is a string");
+        // …THH:MM:SS.ffffff+00:00 — exactly 6 fractional digits, UTC offset.
+        assert!(ts.ends_with("+00:00"), "UTC offset, got {ts:?}");
+        let frac = ts
+            .rsplit_once('.')
+            .map(|(_, rest)| rest.trim_end_matches("+00:00"))
+            .expect("a fractional part");
+        assert_eq!(
+            frac.len(),
+            6,
+            "exactly 6 (micro) fractional digits, got {ts:?}"
+        );
+        assert!(frac.chars().all(|c| c.is_ascii_digit()), "digits only");
+        // It round-trips as a real timestamp.
+        chrono::DateTime::parse_from_rfc3339(ts).expect("valid rfc3339");
     }
 
     #[test]

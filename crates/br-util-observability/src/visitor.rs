@@ -12,6 +12,16 @@ use tracing::field::{Field, Visit};
 /// Non-message fields are kept sorted (`BTreeMap`) so the rendered line is
 /// deterministic — two identical events serialize byte-for-byte, which keeps
 /// log diffs and snapshot tests stable.
+///
+/// ## `message` collision (the format-string message wins)
+///
+/// `tracing` records the format-string message under a field literally named
+/// `message`. A caller can *also* pass an explicit `message = …` field, so an
+/// event can carry the name twice. To keep the line's `msg` honest, the **first**
+/// `message` seen is lifted to [`message`](Self::message) (the format-string
+/// message is recorded first); any **later** `message`-named field is kept as an
+/// ordinary `message` entry in [`fields`](Self::fields) instead of silently
+/// overwriting the lifted one — nothing is lost, and `msg` is never clobbered.
 #[derive(Default)]
 pub(crate) struct JsonVisitor {
     /// The event's `message` field, if any (rendered as the line's `msg`).
@@ -20,10 +30,23 @@ pub(crate) struct JsonVisitor {
     pub(crate) fields: BTreeMap<String, Value>,
 }
 
+impl JsonVisitor {
+    /// Route a `message`-named field: lift the first into `msg`; keep a later one
+    /// as a plain `message` field (it cannot clobber the already-lifted `msg`).
+    fn record_message(&mut self, value: String) {
+        if self.message.is_none() {
+            self.message = Some(value);
+        } else {
+            self.fields
+                .insert("message".to_string(), Value::String(value));
+        }
+    }
+}
+
 impl Visit for JsonVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         if field.name() == "message" {
-            self.message = Some(value.to_string());
+            self.record_message(value.to_string());
         } else {
             self.fields
                 .insert(field.name().to_string(), Value::String(value.to_string()));
@@ -62,7 +85,7 @@ impl Visit for JsonVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         let s = format!("{value:?}");
         if field.name() == "message" {
-            self.message = Some(s);
+            self.record_message(s);
         } else {
             self.fields
                 .insert(field.name().to_string(), Value::String(s));
@@ -143,5 +166,26 @@ mod tests {
             tracing::info!(ratio = 1.5_f64, "m");
         });
         assert_eq!(v.fields["ratio"].as_f64(), Some(1.5));
+    }
+
+    /// An explicit `message = …` field alongside a format-string message must not
+    /// silently clobber the real message: the format-string message (recorded
+    /// first by `tracing`) wins as `msg`, and the stray `message` field is kept
+    /// as an ordinary field — nothing is lost.
+    #[test]
+    fn an_explicit_message_field_does_not_clobber_the_real_message() {
+        let v = captured_visitor(|| {
+            tracing::info!(message = "stray", "the real message");
+        });
+        assert_eq!(
+            v.message.as_deref(),
+            Some("the real message"),
+            "the format-string message wins as msg"
+        );
+        assert_eq!(
+            v.fields.get("message"),
+            Some(&Value::String("stray".to_string())),
+            "the stray message field is preserved, not dropped"
+        );
     }
 }
