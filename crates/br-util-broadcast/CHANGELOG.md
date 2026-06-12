@@ -39,6 +39,11 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
   is self-documenting. The type system does *not* prove the commit ran first —
   that stays a caller convention (encoding it would couple this domain-free crate
   to `sqlx`); closing #66 end-to-end needs a consumer-side rollback test.
+- The package **`description`** (the one text surfaced by `cargo`/aggregation
+  with no neighbouring context) says publishing before commit is *"hard to write
+  by accident (notify-after-commit by construction), not compiler-enforced"* —
+  matching the honest body above, not the earlier overclaim that the API
+  *"forbids"* it (no false guarantees).
 - **Generic over the payload** (`T: Clone`) instead of the seed's hardcoded
   `DomainEvent`, keeping the crate tier-`util` and domain-free.
 - **The no-listener case is surfaced**, not silently swallowed: the seed's
