@@ -32,6 +32,8 @@ needs to agree with peers on the wire shape and metadata fields.
 | `DurableConsumer` / `Delivery` / `MessageOutcome` | The **receiver** consumer shape: binds a durable consumer and runs a typed handler over a parked message stream (see [Consuming](#consuming)). |
 | `CorrelatedAwaiter` / `CorrelatedMatch` / `AwaiterConfig` | The **awaiter** consumer shape: an ephemeral consumer that resolves on a matching `correlation_id`; `AwaiterConfig` tunes its `inactive_threshold` (how long it stays armed across waits — default 300s). See [Consuming](#consuming). |
 | `integration_subject` / `MessageKind` / `SubjectError` | Builds and validates the subject convention (see below). |
+| `OutboxStatus` / `OutboxRecord` / `next_after_attempt` | The **pure** outbox core (no feature, no `sqlx`): the staged-message value and the retry state machine. See [Transactional outbox](#transactional-outbox). |
+| `OutboxStore` / `OutboxRelay` / `RelayPolicy` / `verify_consumer` | The outbox's Postgres store + post-commit relay. Behind the **`outbox`** feature (pulls `sqlx`). |
 
 ## Subject naming convention
 
@@ -204,11 +206,97 @@ if let Some(m) = awaiter.await_correlation(correlation_id, Duration::from_secs(5
 # Ok(()) }
 ```
 
+## Transactional outbox
+
+A critical integration event published best-effort *after* a commit can be lost
+in the window between the domain commit and the bus publish (a crash, a broker
+blip) — and a lost event in a choreography is the hardest bug to diagnose,
+because nothing errors: the producer succeeded, the consumer simply never heard.
+The **outbox** closes that window: the message becomes durable *atomically* with
+the state it announces, and a relay guarantees it is eventually published.
+
+Two phases:
+
+1. **Stage** (in the caller's transaction): `stage` inserts an `OutboxRecord`
+   row through the caller's executor (`&mut *tx`), so it commits *with* the
+   domain write — atomic. Idempotent on the row id (`ON CONFLICT (id) DO
+   NOTHING`); the id is a creator-supplied UUIDv7.
+2. **Relay** (post-commit, and the crash-recovery sweep): `OutboxRelay::run_once`
+   reads `Pending` rows (`FOR UPDATE SKIP LOCKED`, so replicas drain disjoint
+   batches), publishes each through the shared `IntegrationPublisher`, and
+   persists the transition. The *same* code that publishes right after a commit
+   re-publishes a row a crash left `Pending` — there is no separate recovery path
+   to forget.
+
+**Feature-gated.** The pure core (`OutboxStatus`, `OutboxRecord`,
+`next_after_attempt`) is always available and DB-free. The Postgres store + relay
+are behind the **`outbox`** feature, which pulls `sqlx` — enable it only in a
+service that stages outbox rows in its own Postgres transaction.
+
+**Semantics — at-least-once, post-commit.** Publish happens after the staging
+transaction commits, so a consumer never dirty-reads an uncommitted producer
+write. A crash after the broker ack but before the status update leaves the row
+`Pending`, and the next pass re-publishes it — so **subscribers must de-dupe on
+the envelope id** (the same idempotency rule the consumer shapes document). There
+is no exactly-once.
+
+**The table is a declared object — the lib never auto-provisions.** The store
+assumes the table already exists; the consuming service's migrations own it. The
+canonical DDL the store binds to:
+
+```sql
+CREATE TABLE integration_outbox (
+    id           UUID        PRIMARY KEY,            -- UUIDv7, creator-supplied
+    subject      TEXT        NOT NULL,
+    payload      JSONB       NOT NULL,
+    status       TEXT        NOT NULL DEFAULT 'PENDING',
+    attempts     BIGINT      NOT NULL DEFAULT 0,
+    last_error   TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    published_at TIMESTAMPTZ
+);
+CREATE INDEX integration_outbox_pending_idx
+    ON integration_outbox (id) WHERE status = 'PENDING';
+```
+
+```rust,ignore
+use std::sync::Arc;
+use br_core_integration::outbox::stage;
+use br_core_integration::{
+    integration_subject, IntegrationEvent, IntegrationPublisher, MessageKind,
+    NatsIntegrationPublisher, OutboxRecord, OutboxRelay,
+};
+use uuid::Uuid;
+
+// 1) Stage in the SAME transaction as the domain write.
+let subject = integration_subject("identity", MessageKind::Evt, "user", "created", 1)?;
+let record = OutboxRecord::stage_event(Uuid::now_v7(), &subject, &event)?;
+let mut tx = pool.begin().await?;
+// … the domain write on `&mut *tx` …
+stage(&mut *tx, &record).await?;
+tx.commit().await?;
+
+// 2) Run the relay on a schedule (and once at startup, for recovery).
+let publisher: Arc<dyn IntegrationPublisher> = Arc::new(NatsIntegrationPublisher::new(jetstream));
+let relay = OutboxRelay::new(pool.clone(), publisher);
+let report = relay.run_once().await?; // { picked, published, failed, retried }
+```
+
+For a command whose receiver must be online before issuing it, `verify_consumer`
+is an opt-in fail-fast precheck (`ConsumeErrorKind::NoConsumer` when no durable
+consumer is bound) — separate from the relay, and it never auto-provisions.
+
+## Install
+
 Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration-v0.3.1" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration-v0.4.0" }
+
+# The transactional outbox (the `OutboxStore` + `OutboxRelay`) is behind an
+# opt-in feature that pulls `sqlx`; the base crate stays DB-free without it:
+# br-core-integration = { git = "...", package = "br-core-integration", tag = "br-core-integration-v0.4.0", features = ["outbox"] }
 ```
 
 ---

@@ -26,6 +26,12 @@
 //! - **Subjects:** [`integration_subject`] (+ [`MessageKind`], [`SubjectError`])
 //!   is the single source of the `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
 //!   convention.
+//! - **Outbox:** [`outbox`] is the transactional outbox — stage a message in the
+//!   caller's transaction ([`OutboxRecord`], [`stage`](outbox::stage)) and
+//!   publish it post-commit with the crash-recovery [`OutboxRelay`](outbox::OutboxRelay)
+//!   (both behind the `outbox` feature; the [`OutboxStatus`] state machine is
+//!   always available). See the [module docs](outbox) for the at-least-once,
+//!   post-commit semantics and the declared-table contract.
 
 pub mod awaiter;
 mod awaiter_config;
@@ -35,6 +41,7 @@ mod error;
 mod nats;
 mod nats_classify;
 mod noop;
+pub mod outbox;
 mod outcome;
 mod publisher;
 mod subject;
@@ -49,6 +56,11 @@ pub use envelopes::{IntegrationCommand, IntegrationEvent, MessageMetadata};
 pub use error::{ConsumeErrorKind, IntegrationError, PublishErrorKind};
 pub use nats::NatsIntegrationPublisher;
 pub use noop::NoopIntegrationPublisher;
+pub use outbox::{OutboxRecord, OutboxStatus, Transition, UnknownOutboxStatus, next_after_attempt};
+#[cfg(feature = "outbox")]
+pub use outbox::{
+    OutboxRelay, OutboxStore, OutboxStoreError, RelayPolicy, RelayReport, stage, verify_consumer,
+};
 pub use outcome::MessageOutcome;
 pub use publisher::{IntegrationPublisher, IntegrationPublisherExt};
 pub use subject::{MessageKind, SubjectError, integration_subject};
