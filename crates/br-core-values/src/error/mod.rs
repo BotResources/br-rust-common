@@ -27,6 +27,9 @@
 
 mod wire;
 
+#[cfg(test)]
+mod golden;
+
 /// Why a value-object constructor rejected its input.
 ///
 /// Stable codes, structured params — never a rendered sentence. See the module

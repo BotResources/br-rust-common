@@ -160,8 +160,10 @@ impl Serializer for StringCapture {
     fn serialize_f64(self, _: f64) -> Result<String, StringOnlyError> {
         Err(not_a_string("a float"))
     }
-    fn serialize_char(self, v: char) -> Result<String, StringOnlyError> {
-        Ok(v.to_string())
+    // A unit-variant `Locale` never serializes to a char; reject it so the
+    // serializer matches its documented single-string / str-shaped-enum contract.
+    fn serialize_char(self, _: char) -> Result<String, StringOnlyError> {
+        Err(not_a_string("a char"))
     }
     fn serialize_bytes(self, _: &[u8]) -> Result<String, StringOnlyError> {
         Err(not_a_string("bytes"))
@@ -265,5 +267,13 @@ mod tests {
     #[should_panic(expected = "not ASCII-lowercase")]
     fn pascalcase_locale_is_rejected() {
         assert_lowercase_roundtrip(&[BadLocale::En]);
+    }
+
+    // The serializer is contractually single-string / str-shaped enum only: a
+    // `char` is not a valid locale wire form and must error, not capture.
+    #[test]
+    fn char_is_rejected_by_the_serializer() {
+        let err = serialize_to_string(&'a').unwrap_err();
+        assert_eq!(err.to_string(), "expected a single string, got a char");
     }
 }
