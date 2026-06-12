@@ -79,8 +79,10 @@ async fn stage_then_relay_publishes_and_marks_published() {
     let _ = js.delete_stream(&stream_name).await;
 }
 
-/// A relay pass over an empty (or already-drained) outbox is a no-op — the relay
-/// is safe to run on a schedule, and idles without spinning.
+/// A `run_once` drain pass over an empty (or already-drained) outbox is a no-op:
+/// it finds no `Pending` row and returns immediately, without spinning. (The
+/// blessed entry point is the subscribe-driven `run` loop; this proves the drain
+/// itself idles cleanly when there is nothing to do.)
 #[tokio::test]
 #[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
 async fn relay_is_a_noop_on_an_empty_outbox() {

@@ -27,9 +27,12 @@
 //!   is the single source of the `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
 //!   convention.
 //! - **Outbox:** [`outbox`] is the transactional outbox — stage a message in the
-//!   caller's transaction ([`OutboxRecord`], `stage`) and publish it post-commit
-//!   with the crash-recovery `OutboxRelay` (both behind the `outbox` feature; the
-//!   [`OutboxStatus`] state machine is always available). See the
+//!   caller's transaction ([`OutboxRecord`], `stage`, which fires `pg_notify` at
+//!   commit) and publish it with the subscribe-driven, crash-recovery
+//!   `OutboxRelay` (`run` parks on `LISTEN`/`NOTIFY` — never a timer; both behind
+//!   the `outbox` feature; the [`OutboxStatus`] state machine is always
+//!   available). A structural publish failure (undeclared stream) surfaces on the
+//!   relay's `RelayHealth` watch for the consumer's readiness gate. See the
 //!   [module docs](outbox) for the at-least-once, post-commit semantics and the
 //!   declared-table contract.
 
@@ -58,12 +61,12 @@ pub use nats::NatsIntegrationPublisher;
 pub use noop::NoopIntegrationPublisher;
 #[cfg(feature = "outbox")]
 pub use outbox::{
-    DEFAULT_TABLE, OutboxRelay, OutboxStore, OutboxStoreError, RelayPolicy, RelayReport, stage,
-    stage_into,
+    DEFAULT_TABLE, OutboxRelay, OutboxStore, OutboxStoreError, REASON_NO_STREAM, RelayHealth,
+    RelayHealthReceiver, RelayPolicy, RelayReport, RelayRunError, stage, stage_into,
 };
 pub use outbox::{
-    OutboxRecord, OutboxStatus, Transition, UnknownOutboxStatus, next_after_attempt,
-    verify_consumer,
+    FailureClass, OutboxRecord, OutboxStatus, Transition, UnknownOutboxStatus, classify_failure,
+    next_after_attempt, retry_backoff, verify_consumer,
 };
 pub use outcome::MessageOutcome;
 pub use publisher::{IntegrationPublisher, IntegrationPublisherExt};

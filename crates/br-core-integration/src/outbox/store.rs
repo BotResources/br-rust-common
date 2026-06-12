@@ -1,6 +1,8 @@
-//! The Postgres outbox store: the same-transaction `stage` insert and the
-//! relay's read/transition queries. Feature-gated behind `outbox` (the only
-//! sqlx-touching surface of this crate).
+//! The Postgres outbox store: the relay's read/transition queries over a named
+//! table, plus the table-name → notify-channel derivation. The same-transaction
+//! `stage` insert lives in the sibling `stage` module ([`stage`](crate::stage)).
+//! Feature-gated behind `outbox` (with `stage`, the only sqlx-touching surface
+//! of this crate).
 //!
 //! The store never auto-provisions: the `integration_outbox` table is a
 //! **declared object** the consuming service's migrations own (the canonical
@@ -9,56 +11,20 @@
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
+use crate::outbox::OutboxRecord;
 use crate::outbox::status::Transition;
-use crate::outbox::table_name::validate_table;
-use crate::outbox::{OutboxRecord, OutboxStatus};
+use crate::outbox::{OutboxStatus, table_name::validate_table};
 
-/// The default outbox table name. Override with [`stage_into`] /
-/// [`OutboxStore::new`] for a service that names it differently.
+/// The default outbox table name. Override with [`stage_into`](crate::stage_into)
+/// / [`OutboxStore::new`] for a service that names it differently.
 pub const DEFAULT_TABLE: &str = "integration_outbox";
 
-/// Stage `record` into the default `integration_outbox` table using the caller's
-/// executor — pass `&mut *tx` so the insert lands in the **same transaction** as
-/// the domain write. Idempotent on the row id (`ON CONFLICT (id) DO NOTHING`):
-/// a retried request that re-stages the same UUIDv7 does not duplicate the row.
-///
-/// This is the only write the caller makes against the outbox; the relay owns
-/// every subsequent transition.
-pub async fn stage<'e, E>(executor: E, record: &OutboxRecord) -> Result<(), OutboxStoreError>
-where
-    E: Executor<'e, Database = Postgres>,
-{
-    stage_into(executor, DEFAULT_TABLE, record).await
-}
-
-/// Stage `record` into an explicitly named table. See [`stage`]. The table name
-/// is interpolated into the SQL (PG cannot bind an identifier), so it is
-/// validated structurally first and rejected as a typed
-/// [`OutboxStoreError::InvalidTable`] if it is not a plain `^[a-z_][a-z0-9_]*$`
-/// identifier — never a place to pass user input.
-pub async fn stage_into<'e, E>(
-    executor: E,
-    table: &str,
-    record: &OutboxRecord,
-) -> Result<(), OutboxStoreError>
-where
-    E: Executor<'e, Database = Postgres>,
-{
-    validate_table(table)?;
-    let sql = format!(
-        "INSERT INTO {table} (id, subject, payload, status, attempts) \
-         VALUES ($1, $2, $3, $4, $5) \
-         ON CONFLICT (id) DO NOTHING"
-    );
-    sqlx::query(&sql)
-        .bind(record.id)
-        .bind(&record.subject)
-        .bind(&record.payload)
-        .bind(record.status.as_db_str())
-        .bind(i64::from(record.attempts))
-        .execute(executor)
-        .await?;
-    Ok(())
+/// The `NOTIFY` channel name for `table`: the table name itself. The table is
+/// already a validated `^[a-z_][a-z0-9_]*$` identifier, so it is a valid,
+/// injection-free channel; using it verbatim keeps the relay's listener and the
+/// staging notify trivially in agreement. Passed to `pg_notify` as a bound value.
+pub(super) fn notify_channel_for(table: &str) -> String {
+    table.to_string()
 }
 
 /// A handle over a named outbox table that the [`OutboxRelay`](crate::OutboxRelay)
@@ -90,6 +56,17 @@ impl OutboxStore {
     /// The table this store reads and writes.
     pub fn table(&self) -> &str {
         &self.table
+    }
+
+    /// The Postgres `LISTEN`/`NOTIFY` channel for this table — the same name
+    /// [`stage`](crate::stage) / [`stage_into`](crate::stage_into) fire
+    /// `pg_notify` on at commit, and the name the relay's
+    /// [`run`](crate::OutboxRelay::run) loop listens on. Deriving it from the
+    /// (already validated) table name keeps the staging notify and the relay's
+    /// listener in agreement without a second configuration knob. For the default
+    /// table this is `integration_outbox`.
+    pub fn notify_channel(&self) -> String {
+        notify_channel_for(&self.table)
     }
 
     /// Fetch and lock the single oldest `Pending` row with `id > after`
@@ -177,7 +154,7 @@ impl OutboxStore {
         id: Uuid,
         transition: Transition,
         last_error: Option<&str>,
-    ) -> Result<(), sqlx::Error>
+    ) -> Result<(), OutboxStoreError>
     where
         E: Executor<'e, Database = Postgres>,
     {
@@ -284,5 +261,18 @@ mod tests {
     #[test]
     fn default_store_uses_the_canonical_table() {
         assert_eq!(OutboxStore::default().table(), DEFAULT_TABLE);
+    }
+
+    // GIVEN a store WHEN its notify channel is read THEN it is the table name —
+    // the listener and the staging notify agree on it without a second knob.
+    #[test]
+    fn notify_channel_is_the_table_name() {
+        assert_eq!(OutboxStore::default().notify_channel(), DEFAULT_TABLE);
+        assert_eq!(
+            OutboxStore::new("svc_chat_outbox")
+                .unwrap()
+                .notify_channel(),
+            "svc_chat_outbox"
+        );
     }
 }

@@ -8,10 +8,10 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 
 Additive minor bump: the crate gains the **transactional outbox** — stage a
 critical integration message in the *same transaction* as the domain write it
-announces, then publish it post-commit with a relay that doubles as the
-crash-recovery sweep. No existing public surface changes. The Postgres-touching
-half is behind a new opt-in `outbox` feature, so the base crate stays free of a
-`sqlx` dependency.
+announces, then publish it with a **subscribe-driven** relay (woken by Postgres
+`LISTEN`/`NOTIFY`, never a timer) that doubles as the crash-recovery sweep. No
+existing public surface changes. The Postgres-touching half is behind a new
+opt-in `outbox` feature, so the base crate stays free of a `sqlx` dependency.
 
 **Added**
 - `outbox` module — the transactional outbox. Closes the window where a critical
@@ -28,6 +28,14 @@ half is behind a new opt-in `outbox` feature, so the base crate stays free of a
     — the retry policy as a pure function (success → `Published`; failure at the
     cap → `Failed`; failure with retries left → stays `Pending`). Unit-tested as
     a spec.
+  - `FailureClass` + `classify_failure(&IntegrationError)` — the pure
+    structural-vs-transient classifier: a `NoStream` publish failure is
+    `Structural` (an undeclared stream — an infra fault that must *not* burn the
+    row's attempt budget); a timeout, an ambiguous transport fault, or a
+    serialization error is `Transient` (retried against the budget). Spec-tested.
+  - `retry_backoff(attempts)` + `RETRY_BACKOFF_BASE` / `RETRY_BACKOFF_MAX` — the
+    chained-retry backoff as a pure function (exponential `base * 2^(attempts-1)`,
+    saturating, capped). Drives the relay's retry deadline; spec-tested.
   - `OutboxRecord` + `OutboxRecord::stage` / `stage_event` / `stage_command` —
     the staged message as a typed value; the id is a creator-supplied **UUIDv7**
     so a re-stage after a retried request is idempotent.
@@ -43,22 +51,58 @@ half is behind a new opt-in `outbox` feature, so the base crate stays free of a
     name is validated against `^[a-z_][a-z0-9_]*$` (typed
     `OutboxStoreError::InvalidTable`) before it is interpolated into SQL — PG
     cannot bind an identifier, so the name is structurally guarded, not trusted.
+    **In the same transaction it fires `pg_notify` on the table's channel** — the
+    wake that drives the relay. Postgres delivers that `NOTIFY` only at COMMIT and
+    never on rollback (the same notify-after-commit guarantee `br-util-broadcast`
+    relies on), so a rolled-back write never wakes the relay. No new column is
+    needed; the channel is `OutboxStore::notify_channel()`, derived from the
+    table name and passed to `pg_notify` as a bound value (no injection surface).
   - `OutboxStore` — the relay's read/transition queries; `new` validates the
     table name (typed `InvalidTable`). `fetch_one_pending` / `fetch_pending` use
     `FOR UPDATE SKIP LOCKED` so concurrent relay replicas drain disjoint rows;
     each row re-validates its status on hydration (an unknown value is a
-    fail-loud `OutboxStoreError::UnknownStatus`).
-  - `OutboxRelay` + `RelayPolicy` + `RelayReport` — the post-commit /
-    crash-recovery publisher. `run_once` processes `Pending` rows **one per
-    short transaction** (`BEGIN; SELECT … WHERE id > cursor FOR UPDATE SKIP
-    LOCKED LIMIT 1; publish; apply_transition; COMMIT`), looping until none
-    remain or `RelayPolicy::max_messages` is reached. The publish IO is never
-    held inside a batch-locking transaction: a slow broker pins only the one row
-    being published, and a DB error on one row's transition rolls back that row
-    only — never dozens of already-acked siblings. A per-pass `id` cursor makes
-    each row attempted at most once per pass (a failed row retries next pass —
-    the caller's interval is the backoff). Idle (no spin) when empty; the caller
-    owns the schedule and runs one pass at startup as the recovery sweep.
+    fail-loud `OutboxStoreError::UnknownStatus`). `notify_channel()` exposes the
+    `LISTEN`/`NOTIFY` channel (the table name) so the relay's listener and the
+    staging notify agree. `apply_transition` now returns the crate's typed
+    `OutboxStoreError` (it previously leaked a bare `sqlx::Error` across the
+    public surface).
+  - `OutboxRelay` — the **subscribe-driven** + crash-recovery publisher.
+    - `run(&self, shutdown)` is the entry point: a `watch::Receiver<bool>` for
+      graceful stop. On entry it does **one** startup recovery drain (rows a
+      crash left `Pending`), then parks on a `tokio::select!` that wakes only on
+      a real event — a `NOTIFY` (a row was committed), a `LISTEN` **reconnect**
+      (`PgListener::try_recv` → `Ok(None)`, covering a `NOTIFY` that could be
+      missed while the socket was down), or a chained **retry deadline** (present
+      only when a transient failure owes a retry) — and **never on a blind
+      timer**. When the outbox is clean and no retry is owed it is parked at zero
+      CPU with zero DB traffic until the next `NOTIFY` (BR's never-poll rule).
+      Returns `RelayRunError` on a fatal listener/store fault; a transient
+      publish failure is handled inside the loop as a retry, not surfaced.
+    - `run_once` stays `pub` — the single drain-until-empty building block (for a
+      test or a manual operator recovery sweep), no longer "call on a schedule".
+      It processes `Pending` rows **one per short transaction** (`BEGIN; SELECT …
+      WHERE id > cursor FOR UPDATE SKIP LOCKED LIMIT 1; publish; apply_transition;
+      COMMIT`) until none remain or `RelayPolicy::max_messages`. The publish IO is
+      never held inside a batch-locking transaction; a per-pass `id` cursor makes
+      each row attempted at most once per pass.
+    - **Structural vs transient.** A `NoStream` publish (undeclared stream) is a
+      structural fault: the row stays `Pending` with its attempt **not consumed**
+      (a misconfiguration never marches a row to `Failed`), and the relay flips
+      its health to `Degraded`. A transient failure counts an attempt, stays
+      `Pending` to the cap (`Failed`), and arms the chained retry deadline (the
+      `retry_backoff` of the soonest-due row). `RelayReport` gains `structural`
+      and `min_retry_attempts` to drive these.
+  - `RelayHealth` (`#[non_exhaustive]`: `Healthy` / `Degraded { reason }`) +
+    `RelayHealthReceiver` + `REASON_NO_STREAM`, and `OutboxRelay::health()` →
+    `watch::Receiver<RelayHealth>`. A structural failure degrades the signal; a
+    later structural-free pass restores `Healthy`. `reason` is a stable,
+    language-free **code** (codes-not-language). Because `br-core-integration` is
+    a `core` crate it must not depend on `br-util-axum-readiness` (a `util`
+    crate); it exposes the raw watch and the **consuming service bridges it into
+    its readiness gate** (`Degraded` → 503) — the wiring is shown as a seam in
+    the README, not implemented here.
+  - `RelayRunError` (`#[non_exhaustive]`: `Listener` / `Store`) — why `run`
+    returned a fatal error.
 
 **Semantics (documented honestly)**
 - **At-least-once, post-commit.** Publish happens after the staging transaction
@@ -85,15 +129,19 @@ half is behind a new opt-in `outbox` feature, so the base crate stays free of a
 - The base crate (publishers, the durable consumer, the awaiter, and the pure
   outbox state machine) carries **no** `sqlx` dependency — only enabling the
   `outbox` feature links it.
-- The `outbox` e2e (`tests/outbox_e2e.rs` + `tests/outbox_concurrency_e2e.rs`,
-  sharing `tests/outbox_common`) runs against **real** Postgres + NATS (no infra
-  mocks), compiled only with `--features outbox` and `#[ignore]` by default. It
-  covers the nominal stage→relay→publish flow, the empty no-op, the
-  **crash-recovery** path (a `Pending` row the publish never reached recovers via
-  the same relay code), the **multi-replica disjoint drain** (`FOR UPDATE SKIP
-  LOCKED` — two concurrent relays never process a row twice), and the `last_error`
-  reset. Opt in with `DATABASE_URL` + `NATS_URL` set and
-  `cargo test -p br-core-integration --features outbox -- --ignored`.
+- The `outbox` e2e (`tests/outbox_e2e.rs` + `tests/outbox_concurrency_e2e.rs` +
+  `tests/outbox_driver_e2e.rs`, sharing `tests/outbox_common`) runs against
+  **real** Postgres + NATS (no infra mocks), compiled only with `--features
+  outbox` and `#[ignore]` by default. It covers the nominal stage→relay→publish
+  flow, the empty no-op, the **crash-recovery** path (a `Pending` row the publish
+  never reached recovers via the same relay code), the **multi-replica disjoint
+  drain** (`FOR UPDATE SKIP LOCKED` — two concurrent relays never process a row
+  twice), the `last_error` reset, and — for the subscribe-driven loop — the
+  **NOTIFY wake** (staging wakes a parked `run()` relay with no polling), the
+  **structural failure** (a publish to an undeclared stream leaves the row
+  `Pending` with its attempt not consumed and degrades health), and the
+  **startup recovery** through `run()`. Opt in with `DATABASE_URL` + `NATS_URL`
+  set and `cargo test -p br-core-integration --features outbox -- --ignored`.
 
 ## [0.3.1] — 2026-06-10
 

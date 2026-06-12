@@ -138,6 +138,59 @@ pub async fn read_row(
     (row.0, row.1, row.2)
 }
 
+/// Poll a row's status until it equals `want` or the deadline elapses, returning
+/// whether it reached `want`. Used by the subscribe-driven (`run()`) e2e, where
+/// the relay publishes on its own task: the test waits for the *effect*, not on a
+/// fixed sleep. A short poll interval here is a test-harness affordance (observing
+/// async progress), not the relay polling the bus — the relay itself is woken by
+/// `NOTIFY`, never on a timer.
+pub async fn await_status(
+    pool: &sqlx::PgPool,
+    table: &str,
+    id: Uuid,
+    want: &str,
+    deadline: std::time::Duration,
+) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        let (status, _, _) = read_row(pool, table, id).await;
+        if status == want {
+            return true;
+        }
+        if start.elapsed() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// Wait until a `watch` receiver observes a value satisfying `pred`, or the
+/// deadline elapses. Returns whether the predicate was satisfied.
+pub async fn await_health<F>(
+    rx: &mut tokio::sync::watch::Receiver<br_core_integration::RelayHealth>,
+    deadline: std::time::Duration,
+    mut pred: F,
+) -> bool
+where
+    F: FnMut(&br_core_integration::RelayHealth) -> bool,
+{
+    if pred(&rx.borrow_and_update()) {
+        return true;
+    }
+    tokio::time::timeout(deadline, async {
+        loop {
+            if rx.changed().await.is_err() {
+                return false;
+            }
+            if pred(&rx.borrow_and_update()) {
+                return true;
+            }
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
 pub fn sample_event(thing_id: Uuid) -> IntegrationEvent<ThingHappenedV1> {
     IntegrationEvent::new(
         Uuid::now_v7(),
@@ -155,6 +208,14 @@ pub async fn jetstream() -> async_nats::jetstream::Context {
         .await
         .expect("connect to NATS");
     async_nats::jetstream::new(client)
+}
+
+/// A real `NatsIntegrationPublisher` over `js`, bound to **no** particular
+/// stream — publishing on a subject no declared stream captures fails with
+/// `NoStream` (the structural case). Used to exercise the relay's structural
+/// handling without standing up a decoy stream.
+pub fn nats_publisher(js: &async_nats::jetstream::Context) -> Arc<dyn IntegrationPublisher> {
+    Arc::new(NatsIntegrationPublisher::new(js.clone()))
 }
 
 /// Set up a JetStream stream capturing `{prefix}.>` with a durable reader, and

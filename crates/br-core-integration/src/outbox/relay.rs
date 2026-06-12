@@ -1,5 +1,5 @@
-//! The outbox **relay**: the post-commit / crash-recovery sweep that publishes
-//! `Pending` rows and persists their transition. Feature-gated behind `outbox`.
+//! The outbox **relay**: the subscribe-driven publisher that drains `Pending`
+//! rows and persists each transition. Feature-gated behind `outbox`.
 //!
 //! The relay is the half of the outbox that makes "losing a critical
 //! integration event is impossible" true. `stage` only guarantees the row is
@@ -8,6 +8,19 @@
 //! exact same code that publishes right after a commit also re-publishes a row a
 //! crash left behind (it was committed `Pending`, never published). There is no
 //! separate recovery path to forget to run.
+//!
+//! ## Entry point: [`run`](OutboxRelay::run), not a timer
+//!
+//! [`run`](OutboxRelay::run) owns the loop: it does **one** startup recovery
+//! drain, then parks on a `tokio::select!` that wakes on a Postgres
+//! `LISTEN`/`NOTIFY` (fired by `stage` at commit), on a listener reconnect, or on
+//! a chained retry deadline — never on a blind clock. When the outbox is clean
+//! and no retry is owed it is genuinely parked at zero CPU and issues zero DB
+//! traffic. The loop lives in [`driver`](super::driver); this file is the drain
+//! itself. [`run_once`](OutboxRelay::run_once) is the building block it calls — a
+//! single drain-until-empty pass (it processes **known** work and stops the
+//! moment `fetch_one_pending` returns `None`, which is draining, not polling). It
+//! stays `pub` for tests and manual operator recovery.
 //!
 //! ## One short transaction per message (not a batch)
 //!
@@ -25,6 +38,18 @@
 //!
 //! `FOR UPDATE SKIP LOCKED` is kept, so concurrent relay replicas still drain
 //! disjoint rows — each picks a row no other has locked.
+//!
+//! ## Structural vs transient failures
+//!
+//! A publish that fails because the target JetStream stream is **not declared**
+//! ([`FailureClass::Structural`](super::retry::FailureClass::Structural)) is an
+//! infra fault, not a delivery attempt: the row stays `Pending` and **does not
+//! consume an attempt** against [`RelayPolicy::max_attempts`], so a
+//! misconfiguration never marches a row to `Failed`. The relay flips its health
+//! to [`Degraded`](super::RelayHealth::Degraded) for the consuming service's
+//! readiness gate. A **transient** failure (timeout, broker blip) counts an
+//! attempt and stays `Pending` until the cap (`Failed`), and drives the chained
+//! retry deadline (see [`driver`](super::driver)).
 //!
 //! ## Semantics — at-least-once, post-commit
 //!
@@ -50,56 +75,11 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::IntegrationPublisher;
-use crate::outbox::status::next_after_attempt;
+use crate::outbox::health::{RelayHealthChannel, RelayHealthReceiver};
+use crate::outbox::report::{RelayPolicy, RelayReport, classify_pass};
+use crate::outbox::retry::{FailureClass, classify_failure};
+use crate::outbox::status::{OutboxStatus, Transition, next_after_attempt};
 use crate::outbox::store::{OutboxStore, OutboxStoreError};
-
-/// How many publish attempts the relay makes across passes before marking a row
-/// `Failed`. Counts attempts recorded on the row, not retries within one pass.
-pub const DEFAULT_MAX_ATTEMPTS: u32 = 5;
-
-/// How many `Pending` rows one [`OutboxRelay::run_once`] pass processes before
-/// returning — a per-invocation cap that bounds a single pass even if rows keep
-/// arriving. Each row is its own short transaction.
-pub const DEFAULT_MAX_MESSAGES: usize = 256;
-
-/// Tuning for an [`OutboxRelay`] pass.
-///
-/// `#[non_exhaustive]`: start from [`RelayPolicy::default`] and override fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct RelayPolicy {
-    /// Attempts (across passes) before a row is marked `Failed`. Clamped to ≥1.
-    pub max_attempts: u32,
-    /// Max rows one [`OutboxRelay::run_once`] pass processes — each in its own
-    /// short transaction — before it returns. Bounds a single invocation.
-    /// Clamped to ≥1.
-    pub max_messages: usize,
-}
-
-impl Default for RelayPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: DEFAULT_MAX_ATTEMPTS,
-            max_messages: DEFAULT_MAX_MESSAGES,
-        }
-    }
-}
-
-/// Outcome of one [`OutboxRelay::run_once`] pass — what the caller logs / meters.
-///
-/// One pass processes rows one at a time (each its own short transaction), so
-/// the counts sum the per-row outcomes: `picked == published + failed + retried`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RelayReport {
-    /// Rows picked up and processed this pass (each in its own transaction).
-    pub picked: usize,
-    /// Rows that reached `Published` this pass.
-    pub published: usize,
-    /// Rows that reached the terminal `Failed` state this pass.
-    pub failed: usize,
-    /// Rows whose publish failed but stay `Pending` for a later pass.
-    pub retried: usize,
-}
 
 /// Drains the outbox: reads `Pending` rows, publishes each through the shared
 /// [`IntegrationPublisher`], and persists the transition the pure state machine
@@ -110,10 +90,11 @@ pub struct RelayReport {
 /// IntegrationPublisher>` (the same publisher the rest of the service uses, so a
 /// `Noop` publisher makes the relay a no-op in tests).
 pub struct OutboxRelay {
-    pool: sqlx::PgPool,
-    store: OutboxStore,
+    pub(super) pool: sqlx::PgPool,
+    pub(super) store: OutboxStore,
     publisher: Arc<dyn IntegrationPublisher>,
-    policy: RelayPolicy,
+    pub(super) policy: RelayPolicy,
+    pub(super) health: RelayHealthChannel,
 }
 
 impl OutboxRelay {
@@ -139,14 +120,35 @@ impl OutboxRelay {
             store,
             publisher,
             policy,
+            health: RelayHealthChannel::new(),
         }
     }
 
-    /// Run one pass: process `Pending` rows **one at a time**, each in its own
-    /// short transaction (`BEGIN; SELECT … WHERE id > cursor FOR UPDATE SKIP
+    /// A read handle on the relay's health, for the consuming service to bridge
+    /// into its readiness gate. Starts [`Healthy`](crate::outbox::RelayHealth::Healthy);
+    /// a structural publish failure (the target stream is not declared) flips it
+    /// to [`Degraded`](crate::outbox::RelayHealth::Degraded) and a later
+    /// structural-free pass restores it. Read it **before** spawning
+    /// [`run`](Self::run) so the readiness wiring is in place from the start.
+    ///
+    /// `br-core-integration` is a `core` crate and must not depend on
+    /// `br-util-axum-readiness` (a `util` crate); it exposes the raw signal and
+    /// the service maps `Degraded` to a 503 — the wiring is shown as a seam in
+    /// the crate README.
+    pub fn health(&self) -> RelayHealthReceiver {
+        self.health.receiver()
+    }
+
+    /// Run one drain pass: process `Pending` rows **one at a time**, each in its
+    /// own short transaction (`BEGIN; SELECT … WHERE id > cursor FOR UPDATE SKIP
     /// LOCKED LIMIT 1; publish; apply_transition; COMMIT`), looping until no
     /// `Pending` row remains or [`RelayPolicy::max_messages`] rows have been
     /// processed. Returns a [`RelayReport`].
+    ///
+    /// This is a **single drain pass**, not a poll: it processes known work and
+    /// returns the moment `fetch_one_pending` finds no more rows. The scheduling
+    /// — *when* to drain — belongs to [`run`](Self::run); call `run_once`
+    /// directly only for a test or a manual operator recovery sweep.
     ///
     /// The publish IO is never held inside a batch-locking transaction: a slow
     /// broker pins only the one row being published (and its connection), and a
@@ -156,12 +158,10 @@ impl OutboxRelay {
     ///
     /// The pass advances an `id` cursor so each row is attempted **at most once
     /// per pass**: a row whose publish fails stays `Pending` but is not re-picked
-    /// until the next pass (the caller's interval is the retry backoff), rather
-    /// than the pass spinning on a persistently-failing row.
-    ///
-    /// Call this on a schedule (a timer task) *and* once at startup: the startup
-    /// pass is the crash-recovery sweep. Idle when the outbox is empty — it does
-    /// not spin; the caller owns the interval.
+    /// until the next wake, rather than the pass spinning on a persistently
+    /// failing row. A **structural** failure (undeclared stream) leaves the row
+    /// `Pending` without consuming an attempt and is reported in
+    /// [`RelayReport::structural`].
     pub async fn run_once(&self) -> Result<RelayReport, OutboxStoreError> {
         let mut report = RelayReport::default();
         let cap = self.policy.max_messages.max(1);
@@ -198,8 +198,28 @@ impl OutboxRelay {
             .publisher
             .publish(&record.subject, record.payload.clone())
             .await;
-        let succeeded = publish_result.is_ok();
-        let transition = next_after_attempt(record.attempts, self.policy.max_attempts, succeeded);
+
+        // A structural failure (undeclared stream) is NOT a delivery attempt:
+        // keep the row `Pending` with its attempt count unchanged, record the
+        // error, and report it so the loop flips health to `Degraded`. Anything
+        // else (success or a transient failure) runs the normal attempt machine.
+        let structural =
+            publish_result.as_ref().err().map(classify_failure) == Some(FailureClass::Structural);
+
+        let transition = if structural {
+            // A structural fault is not an attempt: re-assert `Pending` with the
+            // row's existing attempt count untouched, so the budget is preserved.
+            Transition {
+                status: OutboxStatus::Pending,
+                attempts: record.attempts,
+            }
+        } else {
+            next_after_attempt(
+                record.attempts,
+                self.policy.max_attempts,
+                publish_result.is_ok(),
+            )
+        };
         let last_error = publish_result.as_ref().err().map(|e| e.to_string());
 
         self.store
@@ -208,72 +228,17 @@ impl OutboxRelay {
         tx.commit().await?;
 
         report.picked += 1;
-        classify_pass(report, succeeded, transition.status);
+        classify_pass(report, &publish_result, transition, structural);
         if let Err(err) = publish_result {
             tracing::warn!(
                 outbox_id = %record.id,
                 subject = %record.subject,
                 attempts = transition.attempts,
+                structural,
                 error = %err,
                 "outbox publish attempt failed",
             );
         }
         Ok(Some(record.id))
-    }
-}
-
-/// Update the running [`RelayReport`] for one row's outcome.
-fn classify_pass(report: &mut RelayReport, succeeded: bool, status: crate::outbox::OutboxStatus) {
-    use crate::outbox::OutboxStatus::{Failed, Published};
-    if succeeded {
-        report.published += 1;
-    } else if status == Failed {
-        report.failed += 1;
-    } else {
-        report.retried += 1;
-    }
-    // `Published` only ever appears on success; the explicit import keeps the
-    // match exhaustive-by-name without a wildcard that could hide a new state.
-    let _ = Published;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // GIVEN the default policy WHEN inspected THEN it carries the documented caps
-    #[test]
-    fn default_policy_has_documented_caps() {
-        let p = RelayPolicy::default();
-        assert_eq!(p.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(p.max_messages, DEFAULT_MAX_MESSAGES);
-    }
-
-    // GIVEN a successful publish WHEN the pass is classified THEN it counts as published
-    #[test]
-    fn classify_counts_a_success_as_published() {
-        let mut report = RelayReport::default();
-        classify_pass(&mut report, true, crate::outbox::OutboxStatus::Published);
-        assert_eq!(report.published, 1);
-        assert_eq!(report.failed, 0);
-        assert_eq!(report.retried, 0);
-    }
-
-    // GIVEN a failure with retries left WHEN classified THEN it counts as retried
-    #[test]
-    fn classify_counts_a_retry() {
-        let mut report = RelayReport::default();
-        classify_pass(&mut report, false, crate::outbox::OutboxStatus::Pending);
-        assert_eq!(report.retried, 1);
-        assert_eq!(report.failed, 0);
-    }
-
-    // GIVEN a failure at the cap WHEN classified THEN it counts as failed
-    #[test]
-    fn classify_counts_a_terminal_failure() {
-        let mut report = RelayReport::default();
-        classify_pass(&mut report, false, crate::outbox::OutboxStatus::Failed);
-        assert_eq!(report.failed, 1);
-        assert_eq!(report.retried, 0);
     }
 }
