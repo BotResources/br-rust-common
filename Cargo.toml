@@ -6,6 +6,7 @@ members = [
     "crates/br-core-integration",
     "crates/br-core-kernel",
     "crates/br-core-scope",
+    "crates/br-core-values",
     "crates/br-identity-app",
     "crates/br-identity-domain",
     "crates/br-util-axum-auth",
@@ -27,6 +28,7 @@ br-core-events = { path = "crates/br-core-events", version = "0.4.0" }
 br-core-integration = { path = "crates/br-core-integration", version = "0.3.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.4.1" }
 br-core-scope = { path = "crates/br-core-scope", version = "0.1.0" }
+br-core-values = { path = "crates/br-core-values", version = "0.1.0" }
 br-identity-app = { path = "crates/br-identity-app", version = "0.1.0" }
 br-identity-domain = { path = "crates/br-identity-domain", version = "0.1.0" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.2" }
