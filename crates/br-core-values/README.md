@@ -165,3 +165,14 @@ never by a rejecting constructor here.)
 
 Tier `core`: depends only on `serde` (+ `thiserror` for the error type). No I/O,
 no `async`, no `br-util-*`. Per-crate semver, distributed by git tag.
+
+## Install
+
+```toml
+[dependencies]
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "br-core-values-v0.1.0" }
+```
+
+---
+
+Part of [`br-rust-common`](../../README.md) · [Changelog](CHANGELOG.md) · [botresources.ai](https://botresources.ai)
