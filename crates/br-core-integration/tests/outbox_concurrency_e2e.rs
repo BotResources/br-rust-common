@@ -27,7 +27,7 @@ use outbox_common::{
 /// every row is `PUBLISHED` exactly once and the two relays' `picked` counts
 /// partition N (disjoint, no overlap, none missed).
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn two_relays_drain_disjoint_rows() {
     let table = unique_table();
     let pool = connect_pool(8).await;
@@ -98,7 +98,7 @@ async fn two_relays_drain_disjoint_rows() {
 /// publishes must have `last_error` cleared back to NULL. The column reflects the
 /// *latest* attempt, never a stale earlier failure.
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn last_error_resets_to_null_on_eventual_publish() {
     let table = unique_table();
     let pool = connect_pool(5).await;

@@ -39,7 +39,7 @@ use outbox_common::{
 /// the only thing that can wake the relay, so the row reaching the stream proves
 /// the subscribe path.
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn staging_a_row_wakes_the_running_relay_and_publishes() {
     let table = unique_table();
     let pool = connect_pool(5).await;
@@ -104,7 +104,7 @@ async fn staging_a_row_wakes_the_running_relay_and_publishes() {
 /// the relay's health must flip to `Degraded`. We start the relay, stage a row on
 /// an undeclared subject, and assert both effects.
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn a_structural_publish_failure_keeps_the_row_pending_and_degrades_health() {
     let table = unique_table();
     let pool = connect_pool(5).await;
@@ -182,7 +182,7 @@ async fn a_structural_publish_failure_keeps_the_row_pending_and_degrades_health(
 /// the crash-recovery path through the `run()` entry point (the bare-`run_once`
 /// recovery is covered in `outbox_e2e.rs`).
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn run_drains_a_preexisting_pending_row_on_startup() {
     let table = unique_table();
     let pool = connect_pool(5).await;

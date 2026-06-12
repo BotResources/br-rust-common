@@ -21,7 +21,7 @@ use outbox_common::{
 /// The happy path: stage in a transaction with the domain write, run the relay,
 /// and the event reaches the stream and the row is `Published`.
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn stage_then_relay_publishes_and_marks_published() {
     let table = unique_table();
     let pool = connect_pool(5).await;
@@ -84,7 +84,7 @@ async fn stage_then_relay_publishes_and_marks_published() {
 /// blessed entry point is the subscribe-driven `run` loop; this proves the drain
 /// itself idles cleanly when there is nothing to do.)
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn relay_is_a_noop_on_an_empty_outbox() {
     let table = unique_table();
     let pool = connect_pool(5).await;
@@ -114,7 +114,7 @@ async fn relay_is_a_noop_on_an_empty_outbox() {
 /// leaves behind. A fresh relay (the startup recovery sweep) must publish it via
 /// the **same** code path as the nominal post-commit run.
 #[tokio::test]
-#[ignore = "requires DATABASE_URL + NATS_URL (real infra)"]
+#[ignore = "requires TEST_DATABASE_URL + NATS_URL (real infra)"]
 async fn crash_before_publish_recovers_on_next_relay_run() {
     let table = unique_table();
     let pool = connect_pool(5).await;

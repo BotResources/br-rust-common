@@ -140,8 +140,9 @@ opt-in `outbox` feature, so the base crate stays free of a `sqlx` dependency.
   **NOTIFY wake** (staging wakes a parked `run()` relay with no polling), the
   **structural failure** (a publish to an undeclared stream leaves the row
   `Pending` with its attempt not consumed and degrades health), and the
-  **startup recovery** through `run()`. Opt in with `DATABASE_URL` + `NATS_URL`
-  set and `cargo test -p br-core-integration --features outbox -- --ignored`.
+  **startup recovery** through `run()`. Opt in with `TEST_DATABASE_URL` +
+  `NATS_URL` set and `cargo test -p br-core-integration --features outbox --
+  --ignored`.
 
 ## [0.3.1] — 2026-06-10
 

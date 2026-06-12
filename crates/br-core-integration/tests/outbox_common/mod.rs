@@ -5,12 +5,12 @@
 //!   - compiled only with `--features outbox` (the suites set `#![cfg(...)]`);
 //!   - the tests are `#[ignore]` by default, opted into with `--ignored`;
 //!   - both env vars must be set, else a loud panic (never a silent fake-pass):
-//!     `DATABASE_URL` (a Postgres the test may create a temp table in) and
+//!     `TEST_DATABASE_URL` (a Postgres the test may create a temp table in) and
 //!     `NATS_URL` (a JetStream-enabled broker).
 //!
 //!   docker run -d --rm -p 4222:4222 nats:2-alpine -js
 //!   docker run -d --rm -p 5432:5432 -e POSTGRES_PASSWORD=pg postgres:16
-//!   DATABASE_URL=postgres://postgres:pg@localhost:5432/postgres \
+//!   TEST_DATABASE_URL=postgres://postgres:pg@localhost:5432/postgres \
 //!   NATS_URL=nats://localhost:4222 \
 //!   cargo test -p br-core-integration --features outbox -- --ignored
 //!
@@ -84,12 +84,12 @@ pub fn unique_table() -> String {
     format!("outbox_e2e_{}", Uuid::now_v7().simple())
 }
 
-/// Connect a Postgres pool to `DATABASE_URL` with `max_connections` (the
+/// Connect a Postgres pool to `TEST_DATABASE_URL` with `max_connections` (the
 /// concurrency suite needs several; the nominal one is fine with the default).
 pub async fn connect_pool(max_connections: u32) -> sqlx::PgPool {
     sqlx::postgres::PgPoolOptions::new()
         .max_connections(max_connections)
-        .connect(&env("DATABASE_URL"))
+        .connect(&env("TEST_DATABASE_URL"))
         .await
         .expect("connect to Postgres")
 }
