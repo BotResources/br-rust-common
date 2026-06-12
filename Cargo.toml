@@ -28,7 +28,7 @@ repository = "https://github.com/BotResources/br-rust-common"
 # Internal (this repo)
 br-core-auth = { path = "crates/br-core-auth", version = "0.6.2" }
 br-core-events = { path = "crates/br-core-events", version = "0.4.0" }
-br-core-integration = { path = "crates/br-core-integration", version = "0.3.1" }
+br-core-integration = { path = "crates/br-core-integration", version = "0.4.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.4.1" }
 br-core-scope = { path = "crates/br-core-scope", version = "0.1.1" }
 br-core-values = { path = "crates/br-core-values", version = "0.1.0" }

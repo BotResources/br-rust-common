@@ -4,6 +4,97 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-06-12
+
+Additive minor bump: the crate gains the **transactional outbox** — stage a
+critical integration message in the *same transaction* as the domain write it
+announces, then publish it post-commit with a relay that doubles as the
+crash-recovery sweep. No existing public surface changes. The Postgres-touching
+half is behind a new opt-in `outbox` feature, so the base crate stays free of a
+`sqlx` dependency.
+
+**Added**
+- `outbox` module — the transactional outbox. Closes the window where a critical
+  integration event is lost between the domain commit and the bus publish (a
+  crash, a broker blip): a lost event in a choreography is the hardest bug to
+  diagnose because nothing errors — the producer succeeded, the consumer simply
+  never heard.
+- **Pure state machine (always available, no feature):**
+  - `OutboxStatus` (`#[non_exhaustive]`): `Pending` → `Published` (terminal) or
+    `Failed` (terminal). Total `&str` ↔ enum mapping (`as_db_str` / `from_db_str`)
+    — an unknown stored value is a typed `UnknownOutboxStatus`, never coerced
+    into a default.
+  - `Transition` + `next_after_attempt(prior_attempts, max_attempts, succeeded)`
+    — the retry policy as a pure function (success → `Published`; failure at the
+    cap → `Failed`; failure with retries left → stays `Pending`). Unit-tested as
+    a spec.
+  - `OutboxRecord` + `OutboxRecord::stage` / `stage_event` / `stage_command` —
+    the staged message as a typed value; the id is a creator-supplied **UUIDv7**
+    so a re-stage after a retried request is idempotent.
+  - `verify_consumer(jetstream, stream, consumer)` — the honest, opt-in form of
+    the medisup seed's `check_consumer`: a fail-fast (`ConsumeErrorKind::NoConsumer`)
+    for a command whose receiver must be online. **Ungated** (it touches only
+    `async_nats`, no `sqlx`): callable without the `outbox` feature. Separate
+    from the relay; never auto-provisions.
+- **`outbox` feature (pulls `sqlx`, with `sqlx/uuid` + `sqlx/json`):**
+  - `stage` / `stage_into` — the same-transaction insert. Takes the caller's
+    executor (`&mut *tx`) so the row lands atomically with the domain write;
+    `ON CONFLICT (id) DO NOTHING` keeps a retried stage idempotent. The table
+    name is validated against `^[a-z_][a-z0-9_]*$` (typed
+    `OutboxStoreError::InvalidTable`) before it is interpolated into SQL — PG
+    cannot bind an identifier, so the name is structurally guarded, not trusted.
+  - `OutboxStore` — the relay's read/transition queries; `new` validates the
+    table name (typed `InvalidTable`). `fetch_one_pending` / `fetch_pending` use
+    `FOR UPDATE SKIP LOCKED` so concurrent relay replicas drain disjoint rows;
+    each row re-validates its status on hydration (an unknown value is a
+    fail-loud `OutboxStoreError::UnknownStatus`).
+  - `OutboxRelay` + `RelayPolicy` + `RelayReport` — the post-commit /
+    crash-recovery publisher. `run_once` processes `Pending` rows **one per
+    short transaction** (`BEGIN; SELECT … WHERE id > cursor FOR UPDATE SKIP
+    LOCKED LIMIT 1; publish; apply_transition; COMMIT`), looping until none
+    remain or `RelayPolicy::max_messages` is reached. The publish IO is never
+    held inside a batch-locking transaction: a slow broker pins only the one row
+    being published, and a DB error on one row's transition rolls back that row
+    only — never dozens of already-acked siblings. A per-pass `id` cursor makes
+    each row attempted at most once per pass (a failed row retries next pass —
+    the caller's interval is the backoff). Idle (no spin) when empty; the caller
+    owns the schedule and runs one pass at startup as the recovery sweep.
+
+**Semantics (documented honestly)**
+- **At-least-once, post-commit.** Publish happens after the staging transaction
+  commits (no dirty-read of an uncommitted producer write). A crash after the
+  broker ack but before the status update leaves the row `Pending`, and the next
+  relay pass re-publishes it — subscribers must de-dupe on the envelope id (the
+  same idempotency rule the consumer shapes already document). No exactly-once.
+- **Short transaction per message, not a batch lock-hold.** Each row commits in
+  its own transaction, so network IO never pins a multi-row lock or its
+  connection, and one row's DB error never rolls back already-published siblings.
+- **`last_error` reflects the latest attempt.** A row that fails records
+  `last_error`; when it finally publishes, `last_error` is reset to `NULL`
+  (never a stale earlier failure).
+- **Publisher timeout** belongs on the `IntegrationPublisher`
+  (`NatsIntegrationPublisher`), so every publish path inherits it; under per-row
+  commit a hung publish otherwise holds one row's lock + a connection until it
+  returns. A timed-out publish surfaces as a normal failed attempt.
+- **The table is a declared object.** The store assumes `integration_outbox`
+  (or a service-named table) already exists — the consuming service's migrations
+  own it (canonical DDL in the README and the `outbox` module docs). A missing
+  table is a fail-loud sqlx error; the lib never runs `CREATE TABLE`.
+
+**Notes**
+- The base crate (publishers, the durable consumer, the awaiter, and the pure
+  outbox state machine) carries **no** `sqlx` dependency — only enabling the
+  `outbox` feature links it.
+- The `outbox` e2e (`tests/outbox_e2e.rs` + `tests/outbox_concurrency_e2e.rs`,
+  sharing `tests/outbox_common`) runs against **real** Postgres + NATS (no infra
+  mocks), compiled only with `--features outbox` and `#[ignore]` by default. It
+  covers the nominal stage→relay→publish flow, the empty no-op, the
+  **crash-recovery** path (a `Pending` row the publish never reached recovers via
+  the same relay code), the **multi-replica disjoint drain** (`FOR UPDATE SKIP
+  LOCKED` — two concurrent relays never process a row twice), and the `last_error`
+  reset. Opt in with `DATABASE_URL` + `NATS_URL` set and
+  `cargo test -p br-core-integration --features outbox -- --ignored`.
+
 ## [0.3.1] — 2026-06-10
 
 **Docs**
