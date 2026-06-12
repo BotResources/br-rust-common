@@ -19,11 +19,15 @@ use crate::{BroadcastError, PendingBroadcast};
 /// out by itself. The only publish entry point is
 /// [`publish_after_commit`](Self::publish_after_commit), which consumes a
 /// [`PendingBroadcast`] you built while the command ran and is named so the
-/// ordering is impossible to miss. This is deliberate: publishing inside the DB
+/// ordering is self-documenting. This is deliberate: publishing inside the DB
 /// transaction is the be-botresources.ai#66 bug (a later rollback leaves
 /// subscribers having seen state that never persisted). The buffer-vs-channel
-/// split makes the correct order — *commit, then notify* — the only order the
-/// API expresses.
+/// split makes the wrong order — *notify before commit* — **hard to write by
+/// accident**, because the buffer carries no channel and the one fan-out method
+/// names the commit. It does **not** prove the commit happened first: that stays
+/// a caller convention the type system cannot verify without coupling this util
+/// crate to `sqlx`. The pipeline still owns the ordering; the API makes the
+/// right order the obvious one.
 ///
 /// ```ignore
 /// let bus: EventBus<DomainEvent> = EventBus::new(1024);
@@ -82,22 +86,31 @@ impl<T: Clone> EventBus<T> {
     /// Consumes the buffer and broadcasts each staged event in order. Returns
     /// `Ok(())` when at least one subscriber was listening (or the buffer was
     /// empty — a no-op fan-out is legal); returns
-    /// [`BroadcastError::NoSubscribers`] when there were events but no listener.
-    /// That signal is informational, **not** a write failure: the events are
-    /// already committed and durable, so a caller may log/meter it or ignore it
+    /// [`BroadcastError::NoSubscribers`] when the channel was found empty before
+    /// every staged event had been broadcast, carrying the count of events
+    /// **not yet broadcast** at that point. That signal is informational,
+    /// **not** a write failure: the events are already committed and durable, so
+    /// a caller may log/meter it or ignore it
     /// (`let _ = bus.publish_after_commit(pending);`).
     ///
     /// Naming the method and consuming a buffer that carries no channel of its
-    /// own is what makes publish-before-commit hard: there is simply no API to
-    /// push a lone event mid-transaction.
+    /// own is what makes publish-before-commit *hard to write by accident and
+    /// self-documenting*. It does **not** verify that the transaction committed
+    /// first: that ordering is a caller convention the type system does not
+    /// prove (the crate stays domain-free, with no `sqlx` dependency). There is
+    /// simply no API to push a lone event mid-transaction.
     pub fn publish_after_commit(&self, pending: PendingBroadcast<T>) -> Result<(), BroadcastError> {
-        let unheard = pending.events.len();
-        for event in pending.events {
+        let total = pending.events.len();
+        for (sent, event) in pending.events.into_iter().enumerate() {
             // `send` errors only when there are zero receivers; the events are
             // already durable, so a no-listener fan-out is a benign signal, not
-            // a failure. Best-effort by design.
+            // a failure. `unheard` is the tail that had not yet been broadcast
+            // when the channel was found empty (best-effort, accurate even if
+            // receivers drop mid-fan-out).
             if self.sender.send(event).is_err() {
-                return Err(BroadcastError::NoSubscribers { unheard });
+                return Err(BroadcastError::NoSubscribers {
+                    unheard: total - sent,
+                });
             }
         }
         Ok(())

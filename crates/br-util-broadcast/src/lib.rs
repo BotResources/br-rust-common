@@ -15,17 +15,20 @@
 //! event stream diverges from the durable truth.
 //!
 //! Rather than rely on a comment asking callers to "publish last", the API shape
-//! makes the correct order the only order it can express:
+//! makes publishing before commit **hard to write by accident** and the right
+//! order self-documenting:
 //!
 //! - [`PendingBroadcast`] is the buffer a command fills while it runs. It
 //!   **carries no channel** — there is no way to reach a subscriber from it.
 //! - [`EventBus`] has **no method that takes a bare event**. The single publish
 //!   path is [`EventBus::publish_after_commit`], which consumes a
-//!   `PendingBroadcast` and is named so the ordering is impossible to miss.
+//!   `PendingBroadcast` and is named for the commit it must follow.
 //!
-//! So the buffer (built during the command) and the channel (reachable only
-//! after commit) are structurally distinct; you must carry the buffer across the
-//! commit boundary to fan it out.
+//! So the buffer (built during the command) and the channel are structurally
+//! distinct; you must carry the buffer to the one named fan-out method to emit.
+//! The type system does **not** prove the commit ran first — that stays a caller
+//! convention (the crate stays domain-free, no `sqlx` dependency); what the API
+//! removes is the trivial footgun of a bare `send` callable mid-transaction.
 //!
 //! ```ignore
 //! use br_util_broadcast::{EventBus, PendingBroadcast};

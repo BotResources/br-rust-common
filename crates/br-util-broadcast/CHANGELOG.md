@@ -21,7 +21,7 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
     It **carries no channel**: there is no way for a staged event to reach a
     subscriber except by handing the buffer to `publish_after_commit`.
     `new()` / `from_events(Vec<T>)` / `push` / `extend` / `len` / `is_empty`,
-    plus `Default`, `Extend`, and `FromIterator`.
+    plus `Default` and `FromIterator`.
   - `BroadcastError` — the crate's own error type. Per codes-not-language its
     `#[error(...)]` string is a **stable code** (`no_subscribers unheard=N`),
     never UI prose. `#[non_exhaustive]`. The single `NoSubscribers { unheard }`
@@ -34,8 +34,11 @@ by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
   which is the #66 bug (a later rollback leaves subscribers having observed state
   that never persisted). This crate removes that footgun: the buffer
   (`PendingBroadcast`, built during the command) and the channel (reachable only
-  via the named `publish_after_commit`) are **structurally distinct**, so the
-  correct order — *commit, then notify* — is the only order the API can express.
+  via the named `publish_after_commit`) are **structurally distinct**, so
+  publishing before commit is **hard to write by accident** and the right order
+  is self-documenting. The type system does *not* prove the commit ran first —
+  that stays a caller convention (encoding it would couple this domain-free crate
+  to `sqlx`); closing #66 end-to-end needs a consumer-side rollback test.
 - **Generic over the payload** (`T: Clone`) instead of the seed's hardcoded
   `DomainEvent`, keeping the crate tier-`util` and domain-free.
 - **The no-listener case is surfaced**, not silently swallowed: the seed's

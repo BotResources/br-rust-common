@@ -18,18 +18,29 @@ already observed state that never persisted, and a client folding the event
 stream diverges from the durable truth.
 
 Rather than rely on a comment asking callers to "publish last", **the API shape
-makes the correct order the only order it can express**:
+makes publishing before commit hard to write by accident** and the right order
+self-documenting:
 
 - **`PendingBroadcast<T>`** is the buffer a command fills while it runs. It
   **carries no channel** — there is no `send`, no reference to the bus, no way to
   reach a subscriber from it.
 - **`EventBus<T>`** has **no method that takes a bare event**. The single publish
   path is **`EventBus::publish_after_commit`**, which *consumes* a
-  `PendingBroadcast` and is named so the ordering is impossible to miss.
+  `PendingBroadcast` and is named for the commit it must follow.
 
-So the buffer (built during the command) and the channel (reachable only after
-commit) are structurally distinct. You must carry the buffer across the commit
-boundary to fan it out — there is no API to push a lone event mid-transaction.
+So the buffer (built during the command) and the channel are structurally
+distinct. You carry the buffer to the one named fan-out method to emit — there is
+no API to push a lone event mid-transaction.
+
+**What this does *not* do:** the type system does not *prove* the transaction
+committed before `publish_after_commit` runs — that ordering stays a caller
+convention. Encoding it in types would mean threading a commit-witness token out
+of `sqlx`, which this domain-free tier-`util` crate deliberately avoids. What the
+crate removes is the trivial footgun the seed had — a bare `send(&event)`
+callable from anywhere, including mid-transaction. The pipeline still owns the
+ordering; the API makes the right order the obvious one. An end-to-end test on
+the consumer side (rollback → no subscriber receives) is what actually closes
+be-botresources.ai#66; it cannot live in this crate.
 
 ```rust,ignore
 use br_util_broadcast::{EventBus, PendingBroadcast};

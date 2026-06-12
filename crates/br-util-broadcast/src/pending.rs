@@ -83,12 +83,6 @@ impl<T> Default for PendingBroadcast<T> {
     }
 }
 
-impl<T> Extend<T> for PendingBroadcast<T> {
-    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        self.events.extend(iter);
-    }
-}
-
 impl<T> FromIterator<T> for PendingBroadcast<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self {
