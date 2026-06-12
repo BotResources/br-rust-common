@@ -121,6 +121,30 @@ jobs:
           fail=0
           for toml in crates/*/Cargo.toml; do
             crate=$(basename "$(dirname "$toml")")
+            # --- TEMPORARY WORKAROUND: time 0.3.48 vs async-nats 0.48 (E0119) ---
+            # async-nats 0.48 has an overly-broad blanket
+            # `impl<Kind> From<Kind> for Error<Kind>`. `time` 0.3.48 (released
+            # 2026-06-12) reintroduced a generic `From` impl that collides with
+            # it, so async-nats fails to compile with E0119. Our LOCKED builds
+            # are fine (Cargo.lock pins time 0.3.47); but `cargo semver-checks`
+            # resolves dependencies FRESH for BOTH the current AND the baseline
+            # rustdoc builds, IGNORING Cargo.lock (a known limitation —
+            # obi1kenobi/cargo-semver-checks#167), and pulls time 0.3.48. The
+            # baseline build is checked out from the crate's tag, so neither a
+            # manifest pin nor a lockfile in this tree can reach it. Until the
+            # upstream fix ships, we skip semver-checks for the three crates
+            # whose dependency graph includes async-nats. The other 8 crates are
+            # unaffected and still fully gated.
+            # REMOVE WHEN async-nats >= 0.50 (the chrono-datetime backend that
+            # drops the broad blanket impl) ships, OR time >= 0.3.49 resolves the
+            # coherence conflict — then this whole `case` goes away.
+            case "$crate" in
+              br-core-integration|br-identity-app|br-util-scope-declaration)
+                echo "::warning::skipping semver-checks for ${crate}: async-nats 0.48 fails to compile under time 0.3.48 (E0119); fresh resolution ignores Cargo.lock. See ci.yml comment (remove when async-nats>=0.50 or time>=0.3.49)."
+                continue
+                ;;
+            esac
+            # --- end workaround ---
             latest=$(git tag --list "${crate}-v*" | sort -V | tail -n1)
             if [ -z "$latest" ]; then
               echo "::notice::no prior tag for ${crate}, skipping semver-checks"
