@@ -9,6 +9,23 @@
 //! crash left behind (it was committed `Pending`, never published). There is no
 //! separate recovery path to forget to run.
 //!
+//! ## One short transaction per message (not a batch)
+//!
+//! Each row is processed in its **own** short transaction — `BEGIN; SELECT … FOR
+//! UPDATE SKIP LOCKED LIMIT 1; publish; apply_transition; COMMIT` — looped until
+//! no `Pending` row remains (or [`RelayPolicy::max_messages`] is reached). The
+//! publish IO is therefore **never** held inside a transaction that locks a
+//! whole batch:
+//!
+//! - the row's lock + its connection are held only for that single publish, so a
+//!   slow broker does not pin a 64-row batch (and its connection) for the sum of
+//!   64 network round-trips;
+//! - a DB error applying one row's transition rolls back **that row only** — it
+//!   cannot roll back, and so re-publish, dozens of already-acked siblings.
+//!
+//! `FOR UPDATE SKIP LOCKED` is kept, so concurrent relay replicas still drain
+//! disjoint rows — each picks a row no other has locked.
+//!
 //! ## Semantics — at-least-once, post-commit
 //!
 //! Publish happens *after* the staging transaction commits, so a consumer can
@@ -17,19 +34,33 @@
 //! after the broker ack but before `apply_transition` leaves the row `Pending`,
 //! and the next pass re-publishes it. Subscribers must therefore de-dupe on the
 //! envelope id (the same idempotency rule the consumer shapes already document).
+//!
+//! ## Publisher timeout (where it belongs)
+//!
+//! Under per-row commit a hung publish still holds **one** row's lock and one
+//! connection until it returns — bounded blast radius, but it should still be
+//! bounded in time. The timeout belongs on the [`IntegrationPublisher`]
+//! (`NatsIntegrationPublisher`) so *every* publish path — relay, direct,
+//! `publish_if_connected` — inherits it, not on the relay loop. A publish that
+//! times out surfaces as a normal failed attempt (`PublishErrorKind::Timeout`)
+//! and the row stays `Pending` for the next pass.
 
 use std::sync::Arc;
 
+use uuid::Uuid;
+
+use crate::IntegrationPublisher;
 use crate::outbox::status::next_after_attempt;
 use crate::outbox::store::{OutboxStore, OutboxStoreError};
-use crate::{ConsumeErrorKind, IntegrationError, IntegrationPublisher};
 
 /// How many publish attempts the relay makes across passes before marking a row
 /// `Failed`. Counts attempts recorded on the row, not retries within one pass.
 pub const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 
-/// How many `Pending` rows one [`OutboxRelay::run_once`] pass drains.
-pub const DEFAULT_BATCH_SIZE: i64 = 64;
+/// How many `Pending` rows one [`OutboxRelay::run_once`] pass processes before
+/// returning — a per-invocation cap that bounds a single pass even if rows keep
+/// arriving. Each row is its own short transaction.
+pub const DEFAULT_MAX_MESSAGES: usize = 256;
 
 /// Tuning for an [`OutboxRelay`] pass.
 ///
@@ -39,23 +70,28 @@ pub const DEFAULT_BATCH_SIZE: i64 = 64;
 pub struct RelayPolicy {
     /// Attempts (across passes) before a row is marked `Failed`. Clamped to ≥1.
     pub max_attempts: u32,
-    /// Rows drained per [`OutboxRelay::run_once`] pass.
-    pub batch_size: i64,
+    /// Max rows one [`OutboxRelay::run_once`] pass processes — each in its own
+    /// short transaction — before it returns. Bounds a single invocation.
+    /// Clamped to ≥1.
+    pub max_messages: usize,
 }
 
 impl Default for RelayPolicy {
     fn default() -> Self {
         Self {
             max_attempts: DEFAULT_MAX_ATTEMPTS,
-            batch_size: DEFAULT_BATCH_SIZE,
+            max_messages: DEFAULT_MAX_MESSAGES,
         }
     }
 }
 
 /// Outcome of one [`OutboxRelay::run_once`] pass — what the caller logs / meters.
+///
+/// One pass processes rows one at a time (each its own short transaction), so
+/// the counts sum the per-row outcomes: `picked == published + failed + retried`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RelayReport {
-    /// Rows picked up this pass.
+    /// Rows picked up and processed this pass (each in its own transaction).
     pub picked: usize,
     /// Rows that reached `Published` this pass.
     pub published: usize,
@@ -106,54 +142,83 @@ impl OutboxRelay {
         }
     }
 
-    /// Run one pass: pick a batch of `Pending` rows (locked `FOR UPDATE SKIP
-    /// LOCKED`, so concurrent relay replicas drain disjoint batches), publish
-    /// each, and persist its transition — all within one transaction so the lock
-    /// is held until the transition is durable. Returns a [`RelayReport`].
+    /// Run one pass: process `Pending` rows **one at a time**, each in its own
+    /// short transaction (`BEGIN; SELECT … WHERE id > cursor FOR UPDATE SKIP
+    /// LOCKED LIMIT 1; publish; apply_transition; COMMIT`), looping until no
+    /// `Pending` row remains or [`RelayPolicy::max_messages`] rows have been
+    /// processed. Returns a [`RelayReport`].
+    ///
+    /// The publish IO is never held inside a batch-locking transaction: a slow
+    /// broker pins only the one row being published (and its connection), and a
+    /// DB error on one row's transition rolls back **that row only** — never
+    /// dozens of already-acked siblings. `FOR UPDATE SKIP LOCKED` keeps replicas
+    /// draining disjoint rows.
+    ///
+    /// The pass advances an `id` cursor so each row is attempted **at most once
+    /// per pass**: a row whose publish fails stays `Pending` but is not re-picked
+    /// until the next pass (the caller's interval is the retry backoff), rather
+    /// than the pass spinning on a persistently-failing row.
     ///
     /// Call this on a schedule (a timer task) *and* once at startup: the startup
     /// pass is the crash-recovery sweep. Idle when the outbox is empty — it does
     /// not spin; the caller owns the interval.
     pub async fn run_once(&self) -> Result<RelayReport, OutboxStoreError> {
-        let mut tx = self.pool.begin().await?;
-        let pending = self
-            .store
-            .fetch_pending(&mut *tx, self.policy.batch_size)
-            .await?;
+        let mut report = RelayReport::default();
+        let cap = self.policy.max_messages.max(1);
+        let mut cursor = Uuid::nil();
 
-        let mut report = RelayReport {
-            picked: pending.len(),
-            ..Default::default()
-        };
-
-        for record in &pending {
-            let publish_result = self
-                .publisher
-                .publish(&record.subject, record.payload.clone())
-                .await;
-            let succeeded = publish_result.is_ok();
-            let transition =
-                next_after_attempt(record.attempts, self.policy.max_attempts, succeeded);
-            let last_error = publish_result.as_ref().err().map(|e| e.to_string());
-
-            self.store
-                .apply_transition(&mut *tx, record.id, transition, last_error.as_deref())
-                .await?;
-
-            classify_pass(&mut report, succeeded, transition.status);
-            if let Err(err) = publish_result {
-                tracing::warn!(
-                    outbox_id = %record.id,
-                    subject = %record.subject,
-                    attempts = transition.attempts,
-                    error = %err,
-                    "outbox publish attempt failed",
-                );
+        for _ in 0..cap {
+            match self.process_one(cursor, &mut report).await? {
+                Some(id) => cursor = id, // advance past the row just attempted
+                None => break,           // no Pending row beyond the cursor — done
             }
         }
 
-        tx.commit().await?;
         Ok(report)
+    }
+
+    /// Process the oldest `Pending` row with `id > after` in its own short
+    /// transaction. Returns `Ok(Some(id))` with the processed row's id (the new
+    /// cursor), or `Ok(None)` if none remained. The transaction commits the
+    /// transition before returning, so the row's lock is released the moment its
+    /// outcome is durable.
+    async fn process_one(
+        &self,
+        after: Uuid,
+        report: &mut RelayReport,
+    ) -> Result<Option<Uuid>, OutboxStoreError> {
+        let mut tx = self.pool.begin().await?;
+        let Some(record) = self.store.fetch_one_pending(&mut *tx, after).await? else {
+            // Nothing left beyond the cursor — commit the empty read tx and stop.
+            tx.commit().await?;
+            return Ok(None);
+        };
+
+        let publish_result = self
+            .publisher
+            .publish(&record.subject, record.payload.clone())
+            .await;
+        let succeeded = publish_result.is_ok();
+        let transition = next_after_attempt(record.attempts, self.policy.max_attempts, succeeded);
+        let last_error = publish_result.as_ref().err().map(|e| e.to_string());
+
+        self.store
+            .apply_transition(&mut *tx, record.id, transition, last_error.as_deref())
+            .await?;
+        tx.commit().await?;
+
+        report.picked += 1;
+        classify_pass(report, succeeded, transition.status);
+        if let Err(err) = publish_result {
+            tracing::warn!(
+                outbox_id = %record.id,
+                subject = %record.subject,
+                attempts = transition.attempts,
+                error = %err,
+                "outbox publish attempt failed",
+            );
+        }
+        Ok(Some(record.id))
     }
 }
 
@@ -172,33 +237,6 @@ fn classify_pass(report: &mut RelayReport, succeeded: bool, status: crate::outbo
     let _ = Published;
 }
 
-/// Verify a durable consumer exists on `stream` before publishing — the honest
-/// form of the medisup seed's `check_consumer`: a fail-fast for a critical
-/// command whose receiver must be online (e.g. no worker is bound, so the
-/// command would sit unconsumed). Returns
-/// [`ConsumeErrorKind::NoConsumer`](crate::ConsumeErrorKind::NoConsumer) when the
-/// consumer is absent, classified through the same layer the consumer shapes use.
-///
-/// This is **opt-in and separate from the relay**: it never auto-provisions, and
-/// most events do not need it (a fact is published whether or not a subscriber
-/// is currently online). Call it from the staging path when, and only when, the
-/// receiver's presence is a precondition for issuing the command.
-pub async fn verify_consumer(
-    jetstream: &async_nats::jetstream::Context,
-    stream: &str,
-    consumer: &str,
-) -> Result<(), IntegrationError> {
-    let stream_handle = jetstream
-        .get_stream(stream)
-        .await
-        .map_err(|e| IntegrationError::consume(ConsumeErrorKind::NoStream, e.to_string()))?;
-    stream_handle
-        .consumer_info(consumer)
-        .await
-        .map_err(|e| IntegrationError::consume(ConsumeErrorKind::NoConsumer, e.to_string()))?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,7 +246,7 @@ mod tests {
     fn default_policy_has_documented_caps() {
         let p = RelayPolicy::default();
         assert_eq!(p.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(p.batch_size, DEFAULT_BATCH_SIZE);
+        assert_eq!(p.max_messages, DEFAULT_MAX_MESSAGES);
     }
 
     // GIVEN a successful publish WHEN the pass is classified THEN it counts as published

@@ -17,15 +17,17 @@
 //! - [`OutboxStatus`] / [`Transition`](status::Transition) / [`next_after_attempt`](status::next_after_attempt)
 //!   — the **pure** state machine (no feature, always compiled and spec-tested).
 //! - [`OutboxRecord`] — the staged message as a typed value (pure).
+//! - [`verify_consumer`](verify::verify_consumer) — the opt-in receiver-online
+//!   precheck. **Ungated** (it touches only `async_nats`, no `sqlx`): a service
+//!   that issues a critical command needs it whether or not it stages outbox rows.
 //! - **`outbox` feature** (pulls `sqlx`): [`stage`](store::stage) /
 //!   [`OutboxStore`](store::OutboxStore) — the same-transaction insert and the
 //!   relay's queries; [`OutboxRelay`](relay::OutboxRelay) — the post-commit /
-//!   recovery publisher; [`verify_consumer`](relay::verify_consumer) — the
-//!   opt-in receiver-online precheck.
+//!   recovery publisher that processes one row per short transaction.
 //!
-//! The pure half stays DB-free so a consumer that only needs the status type, or
-//! that wires its own persistence, does not pull `sqlx`. Enable the `outbox`
-//! feature for the Postgres store + relay.
+//! The pure half stays DB-free so a consumer that only needs the status type, the
+//! precheck, or that wires its own persistence, does not pull `sqlx`. Enable the
+//! `outbox` feature for the Postgres store + relay.
 //!
 //! ## The table is a declared object (the lib never auto-provisions)
 //!
@@ -43,7 +45,7 @@
 //!     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 //!     published_at TIMESTAMPTZ
 //! );
-//! -- the relay's pick-up query filters on status and locks the batch:
+//! -- the relay's per-row pick-up query filters on status and orders by id:
 //! CREATE INDEX integration_outbox_pending_idx
 //!     ON integration_outbox (id) WHERE status = 'PENDING';
 //! ```
@@ -52,19 +54,22 @@
 
 mod record;
 mod status;
+mod verify;
 
 pub use record::OutboxRecord;
 pub use status::{OutboxStatus, Transition, UnknownOutboxStatus, next_after_attempt};
+pub use verify::verify_consumer;
 
 #[cfg(feature = "outbox")]
 mod relay;
 #[cfg(feature = "outbox")]
 mod store;
+#[cfg(feature = "outbox")]
+mod table_name;
 
 #[cfg(feature = "outbox")]
 pub use relay::{
-    DEFAULT_BATCH_SIZE, DEFAULT_MAX_ATTEMPTS, OutboxRelay, RelayPolicy, RelayReport,
-    verify_consumer,
+    DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_MESSAGES, OutboxRelay, RelayPolicy, RelayReport,
 };
 #[cfg(feature = "outbox")]
 pub use store::{DEFAULT_TABLE, OutboxStore, OutboxStoreError, stage, stage_into};

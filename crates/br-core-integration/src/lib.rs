@@ -56,11 +56,12 @@ pub use envelopes::{IntegrationCommand, IntegrationEvent, MessageMetadata};
 pub use error::{ConsumeErrorKind, IntegrationError, PublishErrorKind};
 pub use nats::NatsIntegrationPublisher;
 pub use noop::NoopIntegrationPublisher;
-pub use outbox::{OutboxRecord, OutboxStatus, Transition, UnknownOutboxStatus, next_after_attempt};
-#[cfg(feature = "outbox")]
 pub use outbox::{
-    OutboxRelay, OutboxStore, OutboxStoreError, RelayPolicy, RelayReport, stage, verify_consumer,
+    OutboxRecord, OutboxStatus, Transition, UnknownOutboxStatus, next_after_attempt,
+    verify_consumer,
 };
+#[cfg(feature = "outbox")]
+pub use outbox::{OutboxRelay, OutboxStore, OutboxStoreError, RelayPolicy, RelayReport, stage};
 pub use outcome::MessageOutcome;
 pub use publisher::{IntegrationPublisher, IntegrationPublisherExt};
 pub use subject::{MessageKind, SubjectError, integration_subject};

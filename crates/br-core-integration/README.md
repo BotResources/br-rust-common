@@ -32,8 +32,8 @@ needs to agree with peers on the wire shape and metadata fields.
 | `DurableConsumer` / `Delivery` / `MessageOutcome` | The **receiver** consumer shape: binds a durable consumer and runs a typed handler over a parked message stream (see [Consuming](#consuming)). |
 | `CorrelatedAwaiter` / `CorrelatedMatch` / `AwaiterConfig` | The **awaiter** consumer shape: an ephemeral consumer that resolves on a matching `correlation_id`; `AwaiterConfig` tunes its `inactive_threshold` (how long it stays armed across waits — default 300s). See [Consuming](#consuming). |
 | `integration_subject` / `MessageKind` / `SubjectError` | Builds and validates the subject convention (see below). |
-| `OutboxStatus` / `OutboxRecord` / `next_after_attempt` | The **pure** outbox core (no feature, no `sqlx`): the staged-message value and the retry state machine. See [Transactional outbox](#transactional-outbox). |
-| `OutboxStore` / `OutboxRelay` / `RelayPolicy` / `verify_consumer` | The outbox's Postgres store + post-commit relay. Behind the **`outbox`** feature (pulls `sqlx`). |
+| `OutboxStatus` / `OutboxRecord` / `next_after_attempt` / `verify_consumer` | The **pure** outbox core (no feature, no `sqlx`): the staged-message value, the retry state machine, and the ungated receiver-online precheck (`async_nats` only). See [Transactional outbox](#transactional-outbox). |
+| `OutboxStore` / `OutboxRelay` / `RelayPolicy` | The outbox's Postgres store + per-row-commit relay. Behind the **`outbox`** feature (pulls `sqlx`). |
 
 ## Subject naming convention
 
@@ -222,16 +222,27 @@ Two phases:
    domain write — atomic. Idempotent on the row id (`ON CONFLICT (id) DO
    NOTHING`); the id is a creator-supplied UUIDv7.
 2. **Relay** (post-commit, and the crash-recovery sweep): `OutboxRelay::run_once`
-   reads `Pending` rows (`FOR UPDATE SKIP LOCKED`, so replicas drain disjoint
-   batches), publishes each through the shared `IntegrationPublisher`, and
-   persists the transition. The *same* code that publishes right after a commit
-   re-publishes a row a crash left `Pending` — there is no separate recovery path
-   to forget.
+   processes `Pending` rows **one at a time, each in its own short transaction**
+   (`BEGIN; SELECT … WHERE id > cursor FOR UPDATE SKIP LOCKED LIMIT 1; publish;
+   apply_transition; COMMIT`), looping until none remain (or `max_messages`).
+   `FOR UPDATE SKIP LOCKED` lets replicas drain disjoint rows. The *same* code
+   that publishes right after a commit re-publishes a row a crash left `Pending`
+   — there is no separate recovery path to forget.
+
+   **Why per-row, not per-batch:** the publish IO is never held inside a
+   transaction that locks a whole batch. A slow broker pins only the one row
+   being published (and its connection), not 64 rows for the sum of 64 network
+   round-trips; and a DB error on one row's transition rolls back *that row only*
+   — never dozens of already-acked siblings. A per-pass `id` cursor makes each
+   row attempted at most once per pass (a failed row retries on the next pass —
+   the caller's interval is the backoff), so the pass never spins on a failing
+   row.
 
 **Feature-gated.** The pure core (`OutboxStatus`, `OutboxRecord`,
-`next_after_attempt`) is always available and DB-free. The Postgres store + relay
-are behind the **`outbox`** feature, which pulls `sqlx` — enable it only in a
-service that stages outbox rows in its own Postgres transaction.
+`next_after_attempt`) and the ungated `verify_consumer` precheck are always
+available and DB-free. The Postgres store + relay are behind the **`outbox`**
+feature, which pulls `sqlx` — enable it only in a service that stages outbox rows
+in its own Postgres transaction.
 
 **Semantics — at-least-once, post-commit.** Publish happens after the staging
 transaction commits, so a consumer never dirty-reads an uncommitted producer
@@ -239,6 +250,13 @@ write. A crash after the broker ack but before the status update leaves the row
 `Pending`, and the next pass re-publishes it — so **subscribers must de-dupe on
 the envelope id** (the same idempotency rule the consumer shapes document). There
 is no exactly-once.
+
+**Publisher timeout.** Under per-row commit a hung publish still holds one row's
+lock and one connection until it returns — a bounded blast radius, but the
+publish should still be bounded in time. The timeout belongs on the
+`IntegrationPublisher` (`NatsIntegrationPublisher`), so every publish path — relay,
+direct, fire-and-forget — inherits it; a timed-out publish then surfaces as a
+normal failed attempt and the row stays `Pending` for the next pass.
 
 **The table is a declared object — the lib never auto-provisions.** The store
 assumes the table already exists; the consuming service's migrations own it. The
