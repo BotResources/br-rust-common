@@ -183,6 +183,18 @@ mod tests {
         assert_eq!(back["msg"], json!("careful"));
     }
 
+    /// `init_logging` is idempotent: a second call must not panic (the global
+    /// subscriber is already set, so the second `set_global_default` errors and
+    /// is swallowed). Proves the documented no-panic contract. This is the only
+    /// test that installs the process-global subscriber; no other test emits
+    /// through it, so it does not interfere.
+    #[test]
+    fn init_logging_twice_does_not_panic() {
+        init_logging("test-a");
+        // Second call hits the already-initialised branch and must return cleanly.
+        init_logging("test-b");
+    }
+
     #[test]
     fn user_fields_are_carried_alongside_canonical_ones() {
         let line = render_line(
