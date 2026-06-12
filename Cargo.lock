@@ -306,6 +306,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-util-broadcast"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "br-util-postgres"
 version = "0.7.0"
 dependencies = [
