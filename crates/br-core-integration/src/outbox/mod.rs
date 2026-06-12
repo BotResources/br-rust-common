@@ -14,16 +14,15 @@
 //!
 //! ## Shape
 //!
-//! - [`OutboxStatus`] / [`Transition`](status::Transition) / [`next_after_attempt`](status::next_after_attempt)
+//! - [`OutboxStatus`] / [`Transition`] / [`next_after_attempt`]
 //!   — the **pure** state machine (no feature, always compiled and spec-tested).
 //! - [`OutboxRecord`] — the staged message as a typed value (pure).
-//! - [`verify_consumer`](verify::verify_consumer) — the opt-in receiver-online
-//!   precheck. **Ungated** (it touches only `async_nats`, no `sqlx`): a service
-//!   that issues a critical command needs it whether or not it stages outbox rows.
-//! - **`outbox` feature** (pulls `sqlx`): [`stage`](store::stage) /
-//!   [`OutboxStore`](store::OutboxStore) — the same-transaction insert and the
-//!   relay's queries; [`OutboxRelay`](relay::OutboxRelay) — the post-commit /
-//!   recovery publisher that processes one row per short transaction.
+//! - [`verify_consumer`] — the opt-in receiver-online precheck. **Ungated** (it
+//!   touches only `async_nats`, no `sqlx`): a service that issues a critical
+//!   command needs it whether or not it stages outbox rows.
+//! - **`outbox` feature** (pulls `sqlx`): `stage` / `OutboxStore` — the
+//!   same-transaction insert and the relay's queries; `OutboxRelay` — the
+//!   post-commit / recovery publisher that processes one row per short transaction.
 //!
 //! The pure half stays DB-free so a consumer that only needs the status type, the
 //! precheck, or that wires its own persistence, does not pull `sqlx`. Enable the

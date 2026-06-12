@@ -33,7 +33,7 @@ where
 
 /// Stage `record` into an explicitly named table. See [`stage`]. The table name
 /// is interpolated into the SQL (PG cannot bind an identifier), so it is
-/// validated structurally first ([`validate_table`]) and rejected as a typed
+/// validated structurally first and rejected as a typed
 /// [`OutboxStoreError::InvalidTable`] if it is not a plain `^[a-z_][a-z0-9_]*$`
 /// identifier — never a place to pass user input.
 pub async fn stage_into<'e, E>(

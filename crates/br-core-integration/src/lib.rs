@@ -27,11 +27,11 @@
 //!   is the single source of the `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
 //!   convention.
 //! - **Outbox:** [`outbox`] is the transactional outbox — stage a message in the
-//!   caller's transaction ([`OutboxRecord`], [`stage`](outbox::stage)) and
-//!   publish it post-commit with the crash-recovery [`OutboxRelay`](outbox::OutboxRelay)
-//!   (both behind the `outbox` feature; the [`OutboxStatus`] state machine is
-//!   always available). See the [module docs](outbox) for the at-least-once,
-//!   post-commit semantics and the declared-table contract.
+//!   caller's transaction ([`OutboxRecord`], `stage`) and publish it post-commit
+//!   with the crash-recovery `OutboxRelay` (both behind the `outbox` feature; the
+//!   [`OutboxStatus`] state machine is always available). See the
+//!   [module docs](outbox) for the at-least-once, post-commit semantics and the
+//!   declared-table contract.
 
 pub mod awaiter;
 mod awaiter_config;
@@ -56,14 +56,14 @@ pub use envelopes::{IntegrationCommand, IntegrationEvent, MessageMetadata};
 pub use error::{ConsumeErrorKind, IntegrationError, PublishErrorKind};
 pub use nats::NatsIntegrationPublisher;
 pub use noop::NoopIntegrationPublisher;
-pub use outbox::{
-    OutboxRecord, OutboxStatus, Transition, UnknownOutboxStatus, next_after_attempt,
-    verify_consumer,
-};
 #[cfg(feature = "outbox")]
 pub use outbox::{
     DEFAULT_TABLE, OutboxRelay, OutboxStore, OutboxStoreError, RelayPolicy, RelayReport, stage,
     stage_into,
+};
+pub use outbox::{
+    OutboxRecord, OutboxStatus, Transition, UnknownOutboxStatus, next_after_attempt,
+    verify_consumer,
 };
 pub use outcome::MessageOutcome;
 pub use publisher::{IntegrationPublisher, IntegrationPublisherExt};

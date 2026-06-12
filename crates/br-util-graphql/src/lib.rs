@@ -10,25 +10,28 @@
 //!
 //! ## What it provides (all `feature = "graphql"`)
 //!
-//! - **3-layer error mapping** — [`ErrorCode`] (the cross-service code contract
-//!   the frontends bind to) + [`EdgeError`] (domain-error → app-error) with two
+//! (Items are documented under the `graphql` feature; the overview below uses
+//! plain names so this page renders with default features too.)
+//!
+//! - **3-layer error mapping** — `ErrorCode` (the cross-service code contract
+//!   the frontends bind to) + `EdgeError` (domain-error → app-error) with two
 //!   render edges: `into_gql` (an `async_graphql::Error` with `extensions.code`)
 //!   and `IntoResponse` (the mirrored REST JSON body). Internal-fault detail is
 //!   logged, never returned.
-//! - **[`Affordance`]** — `{ action, allowed, reason_code }`, the dumb-frontend
+//! - **`Affordance`** — `{ action, allowed, reason_code }`, the dumb-frontend
 //!   contract: a blocked affordance must carry a code (no silent denial).
-//! - **[`MutationResult`]** — the success ack; a mutation returns this or an
-//!   [`EdgeError`], never a DTO (R1, collaborative-pure).
-//! - **[`Connection`] / [`Edge`] / [`PageInfo`]** — reusable cursor pagination.
-//! - **[`SubscriptionPayload`]** — the collaborative-pure push: event + fresh
+//! - **`MutationResult`** — the success ack; a mutation returns this or an
+//!   `EdgeError`, never a DTO (R1, collaborative-pure).
+//! - **`Connection` / `Edge` / `PageInfo`** — reusable cursor pagination.
+//! - **`SubscriptionPayload`** — the collaborative-pure push: event + fresh
 //!   entity + recalculated affordances, so a client folds it without refetching.
-//! - **Fallible VO wrappers** ([`values`]) — `TryFrom`/seam conversions over
+//! - **Fallible VO wrappers** (`values`) — `TryFrom`/seam conversions over
 //!   `br-core-values` that **fail with a typed code, never coerce**
 //!   (`LOCALE_UNKNOWN`, `MONEY_OUT_OF_RANGE`, `PRIMARY_CONTENT_MISSING`).
 //!
 //! ## Codes, not language
 //!
-//! Every code this crate emits — the [`ErrorCode`] strings, an [`Affordance`]
+//! Every code this crate emits — the `ErrorCode` strings, an `Affordance`
 //! `reason_code`, a conversion code — is a **stable key, never UI prose**. The
 //! human text and its i18n (EN/FR/JP) live at the client edge, keyed on the code.
 
