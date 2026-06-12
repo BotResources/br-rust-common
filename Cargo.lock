@@ -416,6 +416,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-util-broadcast"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "br-util-graphql"
 version = "0.1.0"
 dependencies = [
