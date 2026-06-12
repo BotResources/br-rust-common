@@ -61,7 +61,10 @@ pub use outbox::{
     verify_consumer,
 };
 #[cfg(feature = "outbox")]
-pub use outbox::{OutboxRelay, OutboxStore, OutboxStoreError, RelayPolicy, RelayReport, stage};
+pub use outbox::{
+    DEFAULT_TABLE, OutboxRelay, OutboxStore, OutboxStoreError, RelayPolicy, RelayReport, stage,
+    stage_into,
+};
 pub use outcome::MessageOutcome;
 pub use publisher::{IntegrationPublisher, IntegrationPublisherExt};
 pub use subject::{MessageKind, SubjectError, integration_subject};
