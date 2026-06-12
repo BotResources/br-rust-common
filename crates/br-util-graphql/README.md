@@ -124,6 +124,16 @@ code now fires **only on input**, when an inbound `MoneyAmount` string is
 non-numeric or overflows `i64` — the parse/overflow boundary, not an `Int` ceiling
 (it carries the offending raw string as its `amount` param).
 
+Where this code surfaces depends on the layer. When `MoneyAmount` is deserialized
+by async-graphql itself (the nominal case — a `MoneyAmount!` argument),
+`MONEY_OUT_OF_RANGE` arrives in the GraphQL **`error.message`** (`Failed to parse
+"MoneyAmount": MONEY_OUT_OF_RANGE`), **not** in `extensions.code`/`params` like the
+codes that flow through `EdgeError` — an inherent limit of the GraphQL scalar-parse
+layer (it has no structured-extension channel). Key on the stable substring
+`MONEY_OUT_OF_RANGE`, never on the async-graphql prefix (which is version-bound).
+The structured `extensions` surface stays available for a service that takes the
+string itself via `GqlMoneyInput`'s `TryFrom` → `EdgeError`.
+
 **Reason-code casing on the `reason` channel.** Codes minted by this crate are
 `UPPER_SNAKE` (`LOCALE_UNKNOWN`, `MONEY_OUT_OF_RANGE`, `PRIMARY_CONTENT_MISSING`);
 a value-object rejection passed through (`unknown_currency`, `localized_empty`, …)
