@@ -4,6 +4,22 @@ All notable changes to this crate are documented in this file. Format inspired
 by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the crate follows
 [SemVer](https://semver.org/).
 
+## [0.1.1] — 2026-06-10
+
+**Docs**
+- The `README.md` was already the crate's root doc (`#![doc = include_str!(..)]`),
+  but its usage example was fenced ```` ```rust,ignore ````, so it was rendered
+  but never compiled. It is now ```` ```rust,no_run ````: the example is compiled
+  (and type-checked, not run) as a doctest by `cargo test`, so it can no longer
+  drift from the code. The composition-root values it cannot construct purely
+  (the two pools, the JetStream context, the readiness handle) are supplied
+  through an `async` boot wrapper.
+- Fixed the example so it compiles: the corrupt-store callback now wires a real
+  `br_util_axum_readiness::ReadinessHandle::set_not_ready` (added as a dev-only
+  dependency for the doctest). The previous, never-compiled example could name a
+  method that did not exist — exactly the doc-must-match-code drift this change
+  closes mechanically.
+
 ## [0.1.0] — 2026-06-10
 
 **Added**

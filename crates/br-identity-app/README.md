@@ -186,14 +186,21 @@ scope lookups; it is not needed now.
 
 ## Usage
 
-```rust,ignore
+```rust,no_run
 use std::sync::Arc;
 use br_identity_app::{
     ConfirmationPublisher, ScopeDeclarationPipeline, ScopeRegistryRepository,
     migrate, run_scope_declarations,
 };
 use br_core_integration::NatsIntegrationPublisher;
+use br_util_axum_readiness::ReadinessHandle;
 
+# async fn boot(
+#     owner_pool: sqlx::PgPool,
+#     app_pool: sqlx::PgPool,
+#     jetstream: async_nats::jetstream::Context,
+#     readiness: ReadinessHandle, // started not_ready, shared with /readyz
+# ) -> Result<(), Box<dyn std::error::Error>> {
 // On boot (owner/migration pool): apply the schema, explicitly.
 migrate(&owner_pool).await?;
 // ... ensure_app_role + grant_app_access (br-util-postgres) ...
@@ -221,16 +228,18 @@ run_scope_declarations(
     // Corrupt store at rest (see "Corrupt store (operator remediation)"): drop
     // readiness / raise an alert. Idempotent — it may fire on every redelivery
     // while the store stays corrupt.
-    |err| readiness.set_not_ready(format!("scope registry store corrupt: {err}")),
+    move |err| readiness.set_not_ready(format!("scope registry store corrupt: {err}")),
 )
 .await?;
+# Ok(())
+# }
 ```
 
 ## Install
 
 ```toml
 [dependencies]
-br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "br-identity-app-v0.1.0" }
+br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "br-identity-app-v0.1.1" }
 ```
 
 ---

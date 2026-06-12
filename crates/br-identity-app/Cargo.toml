@@ -1,6 +1,6 @@
 [package]
 name = "br-identity-app"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -36,3 +36,9 @@ tokio = { workspace = true }
 # url: the e2e swaps the database path of the admin URL to a per-test database
 # for full isolation (the migration uses fixed table names).
 url = { workspace = true }
+# br-util-axum-readiness: the README usage example (now a compiled doctest via
+# `#![doc = include_str!(..)]`) wires the corrupt-store callback into a real
+# ReadinessHandle, so the example proves the actual `set_not_ready` method
+# rather than a method name that compiles nowhere. Dev-only: the runtime crate
+# takes the readiness callback as a generic closure and never names this type.
+br-util-axum-readiness = { workspace = true }

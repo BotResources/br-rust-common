@@ -73,18 +73,18 @@ let publisher: Arc<dyn IntegrationPublisher> =
     Arc::new(NatsIntegrationPublisher::new(jetstream));
 
 let metadata = MessageMetadata::new(
-    Actor::Human(UserId::from(Uuid::new_v4())),
-    Uuid::new_v4(),
+    Actor::Human(UserId::from(Uuid::now_v7())),
+    Uuid::now_v7(), // correlation_id
 );
 
 let evt = IntegrationEvent::new(
-    Uuid::new_v4(),
+    Uuid::now_v7(), // event_id
     "user.created",
     1,
     Utc::now(),
     metadata,
     UserCreatedV1 {
-        user_id: Uuid::new_v4(),
+        user_id: Uuid::now_v7(),
         email: "alice@example.com".into(),
     },
 );
@@ -208,7 +208,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration-v0.3.0" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration-v0.3.1" }
 ```
 
 ---
