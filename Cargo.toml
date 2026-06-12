@@ -11,6 +11,7 @@ members = [
     "crates/br-identity-domain",
     "crates/br-util-axum-auth",
     "crates/br-util-axum-readiness",
+    "crates/br-util-observability",
     "crates/br-util-postgres",
     "crates/br-util-scope-declaration",
 ]
@@ -33,6 +34,7 @@ br-identity-app = { path = "crates/br-identity-app", version = "0.1.1" }
 br-identity-domain = { path = "crates/br-identity-domain", version = "0.1.0" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.2" }
 br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.1" }
+br-util-observability = { path = "crates/br-util-observability", version = "0.1.0" }
 br-util-postgres = { path = "crates/br-util-postgres", version = "0.7.0" }
 br-util-scope-declaration = { path = "crates/br-util-scope-declaration", version = "0.1.1" }
 
@@ -62,4 +64,5 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v5", "v7", "serde"] }
