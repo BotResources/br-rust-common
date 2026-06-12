@@ -1,8 +1,3 @@
-//! Test helpers used by the integration tests in `tests/`. Mirrors
-//! src/test_support.rs (which lives at crate root, `#[cfg(test)]`-gated,
-//! so it is not reachable from this separate test binary). Kept in sync
-//! by hand — the surface is small.
-
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
@@ -43,9 +38,6 @@ pub async fn setup_owner(admin: &PgPool, admin_url: &str) -> (PgPool, String) {
     .await
     .expect("create owner role");
 
-    // PG 15+ revoked default CREATE-on-public from PUBLIC. CNPG's
-    // <svc>_owner has it via database ownership; here we grant it
-    // explicitly so the bootstrap chain can CREATE TABLE in public.
     sqlx::query(&format!("GRANT CREATE ON SCHEMA public TO \"{owner}\""))
         .execute(admin)
         .await

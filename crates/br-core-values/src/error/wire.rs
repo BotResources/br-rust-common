@@ -1,11 +1,3 @@
-//! Hand-rolled serde for [`ValueError`], internally tagged on `code`.
-//!
-//! Not derived: the forward-compat [`ValueError::Unknown`] variant carries the
-//! `code` string itself, which collides with the internal `code` tag the derive
-//! would write. The wire shape is unchanged — every variant is an object tagged
-//! on `code`. On deserialize, an unrecognized `code` degrades to `Unknown`
-//! instead of failing the enclosing envelope (the module forward-compat contract).
-
 use std::fmt;
 
 use serde::de::{self, MapAccess, Visitor};
@@ -46,13 +38,11 @@ impl Serialize for ValueError {
             ValueError::LocalizedDuplicateLocale => {
                 single_code(serializer, "localized_duplicate_locale")
             }
-            // Re-emit the captured code verbatim so a pass-through round-trips.
             ValueError::Unknown { code } => single_code(serializer, code),
         }
     }
 }
 
-/// Serialize a param-less variant as `{ "code": <code> }`.
 fn single_code<S: Serializer>(serializer: S, code: &str) -> Result<S::Ok, S::Error> {
     let mut m = serializer.serialize_map(Some(1))?;
     m.serialize_entry("code", code)?;
@@ -65,9 +55,6 @@ impl<'de> Deserialize<'de> for ValueError {
     }
 }
 
-/// Buffers the few flat params (`value`, `expected_len`) — order-independent —
-/// then dispatches on `code`. A `code` no known variant matches degrades to
-/// `Unknown`. Kept serde-only: no `serde_json` in the tree.
 struct ValueErrorVisitor;
 
 impl<'de> Visitor<'de> for ValueErrorVisitor {
@@ -102,8 +89,6 @@ impl<'de> Visitor<'de> for ValueErrorVisitor {
                     }
                     expected_len = Some(map.next_value()?);
                 }
-                // Unknown params (e.g. those of a newer code) are skipped so the
-                // payload still parses into `Unknown { code }`.
                 _ => {
                     map.next_value::<de::IgnoredAny>()?;
                 }
@@ -126,8 +111,6 @@ impl<'de> Visitor<'de> for ValueErrorVisitor {
             "localized_empty" => Ok(ValueError::LocalizedEmpty),
             "localized_primary_missing" => Ok(ValueError::LocalizedPrimaryMissing),
             "localized_duplicate_locale" => Ok(ValueError::LocalizedDuplicateLocale),
-            // Forward-compat: a code this version doesn't know degrades to
-            // `Unknown` instead of failing the enclosing envelope.
             _ => Ok(ValueError::Unknown { code }),
         }
     }

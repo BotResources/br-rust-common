@@ -1,5 +1,3 @@
-//! ISO 4217 alphabetic currency code, as a constructor-validated newtype.
-
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -7,30 +5,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::error::ValueError;
 use crate::iso::currency_codes::CURRENCY_CODES;
 
-/// ISO 4217 alphabetic currency code (e.g. `EUR`, `USD`, `JPY`).
-///
-/// Self-validating: built via [`Currency::new`], which trims, uppercases, and
-/// validates against the complete ISO 4217 active currency list. Illegal states
-/// are unrepresentable — there is no way to hold a `Currency` that is not a real
-/// ISO code. `RMB` is rejected (`CNY` is correct for the Chinese Yuan); `ZZZ` is
-/// rejected.
-///
-/// No `Deref`: read the code via [`Currency::as_str`] / `AsRef<str>` /
-/// `Display`. Deserialization re-runs [`Currency::new`] and fails closed on an
-/// invalid wire value — serde is a constructor path, not a backdoor.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Currency(String);
 
 impl Currency {
-    /// Build a `Currency` from a raw string: trim, uppercase, require exactly 3
-    /// ASCII letters, then look the code up in the ISO 4217 active list.
-    ///
-    /// # Errors
-    /// - [`ValueError::MalformedCode`] if the trimmed input is not 3 ASCII letters.
-    /// - [`ValueError::UnknownCurrency`] if it is well-formed but not an ISO code.
     pub fn new(raw: &str) -> Result<Self, ValueError> {
         let upper = normalize_alpha_code(raw, 3)?;
-        // O(log n) — `CURRENCY_CODES` is sorted (proven by `codes_are_sorted`).
         if CURRENCY_CODES.binary_search(&upper.as_str()).is_ok() {
             Ok(Self(upper))
         } else {
@@ -38,14 +18,11 @@ impl Currency {
         }
     }
 
-    /// The normalized (uppercase) ISO 4217 code.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// Trim, uppercase, and require exactly `len` ASCII letters. Shared by the ISO
-/// code newtypes; returns the normalized form or [`ValueError::MalformedCode`].
 pub(crate) fn normalize_alpha_code(raw: &str, len: usize) -> Result<String, ValueError> {
     let upper = raw.trim().to_uppercase();
     if upper.len() == len && upper.bytes().all(|b| b.is_ascii_alphabetic()) {
@@ -87,9 +64,6 @@ impl<'de> Deserialize<'de> for Currency {
 mod tests {
     use super::*;
 
-    // ── Valid construction ───────────────────────────────────────────────────
-
-    // Given well-known codes, When constructed, Then accepted and normalized.
     #[test]
     fn well_known_currencies_are_accepted() {
         for code in &["EUR", "USD", "JPY", "GBP", "CNY", "BMD", "XPF"] {
@@ -112,9 +86,6 @@ mod tests {
         assert_eq!(Currency::new(" EUR ").unwrap().as_str(), "EUR");
     }
 
-    // ── Invalid — not in the ISO list (negative vectors) ─────────────────────
-
-    // Given a common mistake (RMB for CNY), When constructed, Then UnknownCurrency.
     #[test]
     fn rejects_rmb_common_mistake_for_cny() {
         assert_eq!(
@@ -134,8 +105,6 @@ mod tests {
             })
         );
     }
-
-    // ── Invalid — malformed (negative vectors) ───────────────────────────────
 
     #[test]
     fn rejects_empty_string() {
@@ -190,8 +159,6 @@ mod tests {
         );
     }
 
-    // ── Display, access, serde ───────────────────────────────────────────────
-
     #[test]
     fn display_and_as_ref_produce_uppercase_code() {
         let c = Currency::new("EUR").unwrap();
@@ -214,7 +181,6 @@ mod tests {
         assert_eq!(original, back);
     }
 
-    // Given an invalid wire value, When deserialized, Then it fails closed.
     #[test]
     fn deserialize_rejects_unknown_code() {
         assert!(serde_json::from_str::<Currency>("\"RMB\"").is_err());
@@ -224,8 +190,6 @@ mod tests {
     fn deserialize_rejects_malformed_code() {
         assert!(serde_json::from_str::<Currency>("\"EU\"").is_err());
     }
-
-    // ── Equality ─────────────────────────────────────────────────────────────
 
     #[test]
     fn equality_is_by_normalized_code() {

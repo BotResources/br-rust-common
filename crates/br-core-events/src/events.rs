@@ -1,16 +1,7 @@
-//! The event shapes themselves: [`RawEvent`] (pre-persistence, producer-side)
-//! and [`DomainEvent`] (persisted / replayed).
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// What an aggregate emits **before** persistence — no id, timestamp, or
-/// metadata yet. In-process producer-side type; intentionally not
-/// `Serialize`/`Deserialize`.
-///
-/// Construct via [`RawEvent::new`]. `#[non_exhaustive]` keeps construction
-/// through the constructor so a future field stays additive.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RawEvent {
@@ -21,11 +12,6 @@ pub struct RawEvent {
 }
 
 impl RawEvent {
-    /// A raw event for `aggregate_id` of `aggregate_type`, of kind
-    /// `event_type`, carrying `payload`. Argument order mirrors the shared
-    /// fields of [`DomainEvent::new`] (`aggregate_id`, `aggregate_type`,
-    /// `event_type`, `payload`) so the producer-side and persisted types read
-    /// in parallel.
     pub fn new(
         aggregate_id: Uuid,
         aggregate_type: impl Into<String>,
@@ -41,12 +27,6 @@ impl RawEvent {
     }
 }
 
-/// What the event store stores and replays.
-///
-/// `metadata` is a `serde_json::Value` (typically a serialized
-/// [`EventMetadata`](crate::EventMetadata)) so the store stays agnostic to the
-/// metadata's exact shape. Construct via [`DomainEvent::new`];
-/// `#[non_exhaustive]` keeps construction through the constructor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct DomainEvent {
@@ -60,9 +40,6 @@ pub struct DomainEvent {
 }
 
 impl DomainEvent {
-    /// A persisted domain event. The caller supplies the event `id` (UUIDv7)
-    /// and `occurred_at` so retries and replays stay idempotent and ordering
-    /// is the producer's to decide.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: Uuid,

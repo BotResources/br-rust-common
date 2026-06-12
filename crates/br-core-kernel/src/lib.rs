@@ -1,29 +1,3 @@
-//! Minimal kernel types shared across BotResources Rust services.
-//!
-//! Today this crate exposes typed ID wrappers ([`UserId`],
-//! [`ServiceAccountId`]) and the [`Actor`] that ties them together (a human or
-//! a machine identity). Keep it intentionally small: only add types that are
-//! genuinely universal across every service.
-//!
-//! The wrappers are deliberately *not* `Deref<Target = Uuid>`: deref coercion
-//! would silently coerce a [`UserId`] into a `&Uuid` anywhere a `&Uuid` is
-//! expected (UUID-keyed maps, SQL binds, `&Uuid`-taking functions), reopening
-//! the "two UUIDs are interchangeable" hole this crate exists to close. To
-//! reach the inner value, call [`UserId::as_uuid`] / [`ServiceAccountId::as_uuid`]
-//! or use the `AsRef<Uuid>` impls — explicit, never implicit.
-//!
-//! The two id types are mutually non-interchangeable at compile time:
-//!
-//! ```compile_fail
-//! use br_core_kernel::{ServiceAccountId, UserId};
-//! use uuid::Uuid;
-//!
-//! fn takes_user(_: UserId) {}
-//!
-//! let id = ServiceAccountId::from(Uuid::nil());
-//! takes_user(id); // a ServiceAccountId is not a UserId
-//! ```
-
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -33,21 +7,11 @@ mod actor;
 
 pub use actor::Actor;
 
-/// Unique identifier of a human user.
-///
-/// Used in `Passport::Human`, domain events, and any reference to a human
-/// actor. Compile-time distinct from [`ServiceAccountId`] and from a bare
-/// `Uuid`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct UserId(pub Uuid);
 
 impl UserId {
-    /// Returns the inner `Uuid` by value (`Uuid` is `Copy`).
-    ///
-    /// Prefer this (or [`AsRef<Uuid>`]) over any implicit coercion: the wrapper
-    /// intentionally does not deref to `Uuid`, so reaching the raw value is
-    /// always an explicit, greppable call site.
     pub const fn as_uuid(&self) -> Uuid {
         self.0
     }
@@ -77,21 +41,11 @@ impl From<UserId> for Uuid {
     }
 }
 
-/// Unique identifier of a service account (machine identity).
-///
-/// Used in `Passport::Service`, integration events, and any cross-BC
-/// reference to a machine identity. Compile-time distinct from [`UserId`] and
-/// from a bare `Uuid`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ServiceAccountId(pub Uuid);
 
 impl ServiceAccountId {
-    /// Returns the inner `Uuid` by value (`Uuid` is `Copy`).
-    ///
-    /// Prefer this (or [`AsRef<Uuid>`]) over any implicit coercion: the wrapper
-    /// intentionally does not deref to `Uuid`, so reaching the raw value is
-    /// always an explicit, greppable call site.
     pub const fn as_uuid(&self) -> Uuid {
         self.0
     }
@@ -125,8 +79,6 @@ impl From<ServiceAccountId> for Uuid {
 mod tests {
     use super::*;
     use uuid::Uuid;
-
-    // ─── UserId ───────────────────────────────────────
 
     #[test]
     fn user_id_display_delegates_to_uuid() {
@@ -176,9 +128,6 @@ mod tests {
     fn user_id_wire_format_is_plain_uuid_string() {
         let uuid = Uuid::from_u128(0x1234_5678);
         let id = UserId::from(uuid);
-        // `#[serde(transparent)]` locks the wire format to a bare UUID string.
-        // The default newtype encoding already produced this shape; the
-        // attribute + this test make it contractual instead of incidental.
         assert_eq!(serde_json::to_string(&id).unwrap(), format!("\"{uuid}\""));
     }
 
@@ -210,8 +159,6 @@ mod tests {
         set.insert(UserId(uuid));
         assert!(set.contains(&UserId(uuid)));
     }
-
-    // ─── ServiceAccountId ─────────────────────────────
 
     #[test]
     fn service_account_id_display_delegates_to_uuid() {
@@ -261,9 +208,6 @@ mod tests {
     fn service_account_id_wire_format_is_plain_uuid_string() {
         let uuid = Uuid::from_u128(0x1234_5678);
         let id = ServiceAccountId::from(uuid);
-        // `#[serde(transparent)]` locks the wire format to a bare UUID string.
-        // The default newtype encoding already produced this shape; the
-        // attribute + this test make it contractual instead of incidental.
         assert_eq!(serde_json::to_string(&id).unwrap(), format!("\"{uuid}\""));
     }
 

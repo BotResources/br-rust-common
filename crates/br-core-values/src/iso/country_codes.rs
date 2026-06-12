@@ -1,11 +1,3 @@
-//! The authoritative ISO 3166-1 alpha-2 country list.
-//!
-//! The complete list as of the current standard: every sovereign state, every
-//! dependent territory, every exceptional reservation. No subset, no "popular
-//! countries only". The list changes rarely (~once every few years); a recompile
-//! when a code is added is a non-issue.
-
-/// All 249 ISO 3166-1 alpha-2 country codes (uppercase).
 pub const COUNTRY_CODES: [&str; 249] = [
     "AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT", "AU", "AW", "AX", "AZ",
     "BA", "BB", "BD", "BE", "BF", "BG", "BH", "BI", "BJ", "BL", "BM", "BN", "BO", "BQ", "BR", "BS",
@@ -30,8 +22,6 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    // The list must be sorted: `CountryCode::new` relies on `binary_search`. This
-    // guards the precondition so it cannot silently regress on an edit.
     #[test]
     fn codes_are_sorted() {
         assert!(
@@ -62,10 +52,6 @@ mod tests {
         }
     }
 
-    // Content vectors prove "the list is current", not "the list has the length
-    // I typed". PRESENCE of recent additions:
-    // - SS (South Sudan, 2011); BQ/CW/SX (successors of the 2010 dissolution of
-    //   the Netherlands Antilles).
     #[test]
     fn contains_recently_added_codes() {
         for code in &["SS", "BQ", "CW", "SX"] {
@@ -76,10 +62,6 @@ mod tests {
         }
     }
 
-    // ABSENCE of retired / non-official codes:
-    // - AN (Netherlands Antilles, retired 2010), CS (Serbia and Montenegro,
-    //   retired 2006), XK (Kosovo — a user-assigned code, NOT an official ISO
-    //   3166-1 element; it must never leak into the active list).
     #[test]
     fn excludes_retired_and_unofficial_codes() {
         for code in &["AN", "CS", "XK"] {

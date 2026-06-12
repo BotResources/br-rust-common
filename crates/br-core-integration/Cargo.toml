@@ -12,19 +12,13 @@ br-core-events = { workspace = true }
 async-nats = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
-# futures-util: StreamExt::next() on the JetStream pull-consumer message stream
-# (the durable wrapper and the correlated awaiter).
 futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-# tokio: time (the awaiter's per-wait deadline via select! + sleep).
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-# br-core-kernel supplies `Actor` / `UserId` to build the envelope metadata in
-# tests: the e2e suites (tests/nats.rs, tests/common/mod.rs) and the awaiter's
-# in-crate unit tests.
 br-core-kernel = { workspace = true }
