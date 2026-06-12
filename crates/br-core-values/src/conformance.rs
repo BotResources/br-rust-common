@@ -1,50 +1,9 @@
-//! Test-support conformance helpers (feature `conformance`).
-//!
-//! The lib owns **no locale list** — each product supplies its own closed
-//! `Locale` enum (see the crate docs). But it does own the **norm** that enum
-//! must satisfy: a language locale is the ASCII-**lowercase** BCP 47 / ISO 639-1
-//! subtag (`en`, `fr`, `ja`) — the wire form of the `L` in
-//! [`Localized`](crate::Localized). This module ships the *mechanism* to prove a
-//! product's enum conforms, without owning the *list*: each product plugs its own
-//! enum into [`assert_lowercase_roundtrip`] in **its** tests.
-//!
-//! Gated behind the `conformance` feature so it never bloats the prod surface —
-//! a consumer enables it under `[dev-dependencies]` / `[features]` for tests only.
-//!
-//! Serde-only (no `serde_json`): the value is serialized through a tiny
-//! string-capturing serializer and re-read through [`serde::de::value`], so the
-//! helper stays inside tier `core`'s dependency budget.
-
 use core::fmt;
 
 use serde::de::IntoDeserializer;
 use serde::de::value::StrDeserializer;
 use serde::{Deserialize, Serialize, Serializer};
 
-/// Assert every locale in `locales` conforms to the platform casing norm: it
-/// serializes to a single **ASCII-lowercase** string **and** deserializes back
-/// from that lowercase string to the same value (round-trip).
-///
-/// Plug a product's closed `Locale` enum in from its own tests:
-///
-/// ```ignore
-/// # use serde::{Serialize, Deserialize};
-/// #[derive(Debug, PartialEq, Serialize, Deserialize)]
-/// #[serde(rename_all = "lowercase")]
-/// enum Locale { En, Fr, Ja }
-///
-/// #[test]
-/// fn locale_is_lowercase_conformant() {
-///     br_core_values::conformance::assert_lowercase_roundtrip(&[
-///         Locale::En, Locale::Fr, Locale::Ja,
-///     ]);
-/// }
-/// ```
-///
-/// # Panics
-/// - if a locale serializes to something other than a single string,
-/// - if that string is not ASCII-lowercase,
-/// - if it does not deserialize back to an equal value.
 pub fn assert_lowercase_roundtrip<L>(locales: &[L])
 where
     L: Serialize + for<'de> Deserialize<'de> + PartialEq + fmt::Debug,
@@ -69,9 +28,6 @@ where
     }
 }
 
-/// Serialize a value through a serializer that only accepts a single string —
-/// the shape a `#[serde(rename_all = "lowercase")]` unit-variant enum produces.
-/// Any other serde call is an error, which surfaces a non-string locale form.
 fn serialize_to_string<T: Serialize>(value: &T) -> Result<String, StringOnlyError> {
     value.serialize(StringCapture)
 }
@@ -93,8 +49,6 @@ impl serde::ser::Error for StringOnlyError {
     }
 }
 
-/// A `Serializer` that succeeds only for a single string (and the str-shaped enum
-/// representations a unit-variant locale uses); everything else errors out.
 struct StringCapture;
 
 fn not_a_string(what: &str) -> StringOnlyError {
@@ -116,8 +70,6 @@ impl Serializer for StringCapture {
         Ok(v.to_owned())
     }
 
-    // A `rename_all = "lowercase"` externally-tagged unit variant serializes as
-    // its (lowercased) name through this path — accept it as the string form.
     fn serialize_unit_variant(
         self,
         _name: &'static str,
@@ -160,8 +112,6 @@ impl Serializer for StringCapture {
     fn serialize_f64(self, _: f64) -> Result<String, StringOnlyError> {
         Err(not_a_string("a float"))
     }
-    // A unit-variant `Locale` never serializes to a char; reject it so the
-    // serializer matches its documented single-string / str-shaped-enum contract.
     fn serialize_char(self, _: char) -> Result<String, StringOnlyError> {
         Err(not_a_string("a char"))
     }
@@ -251,13 +201,11 @@ mod tests {
         Ja,
     }
 
-    // The conformant product enum passes for every variant.
     #[test]
     fn lowercase_locale_enum_passes() {
         assert_lowercase_roundtrip(&[Locale::En, Locale::Fr, Locale::Ja]);
     }
 
-    // A non-lowercase wire form is caught (PascalCase here).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     enum BadLocale {
         En,
@@ -269,8 +217,6 @@ mod tests {
         assert_lowercase_roundtrip(&[BadLocale::En]);
     }
 
-    // The serializer is contractually single-string / str-shaped enum only: a
-    // `char` is not a valid locale wire form and must error, not capture.
     #[test]
     fn char_is_rejected_by_the_serializer() {
         let err = serialize_to_string(&'a').unwrap_err();

@@ -3,13 +3,9 @@ use base64::Engine;
 use crate::error::PassportError;
 use crate::passport::Passport;
 
-/// Trait for types that can be serialized into / deserialized from the
-/// `X-Passport` HTTP header (base64-encoded JSON).
 pub trait PassportHeader: Sized {
-    /// Serialize to base64-encoded JSON for the X-Passport header.
     fn to_header(&self) -> String;
 
-    /// Deserialize from a base64-encoded JSON string (X-Passport header value).
     fn from_header(header: &str) -> Result<Self, PassportError>;
 }
 

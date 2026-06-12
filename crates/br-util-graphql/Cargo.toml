@@ -8,12 +8,6 @@ repository.workspace = true
 description = "The GraphQL/REST edge kit shared across BotResources services: the cross-service ErrorCode contract (GraphQL extensions + REST IntoResponse), first-class Affordance / MutationResult ack / Connection pagination / SubscriptionPayload types, and fallible (TryFrom) GraphQL wrappers over br-core-values"
 
 [features]
-# Everything this crate offers is the GraphQL/REST edge, so the entire surface
-# sits behind `graphql`. The flag exists so a crate can depend on br-util-graphql
-# transitively without pulling async-graphql/axum/br-core-values unless it
-# actually wires an edge — and so the heavy async-graphql/sqlx-adjacent version
-# coupling (see README → "async-graphql version coupling") is opt-in. With no
-# features enabled the crate compiles to nothing.
 graphql = [
     "dep:async-graphql",
     "dep:axum",
@@ -23,10 +17,6 @@ graphql = [
 ]
 
 [dependencies]
-# `async-graphql = "7"` is the estate-wide pin (svc-notifier, svc-identity, the
-# whole be-botresources.ai workspace). It is a SHARED-VERSION COUPLING: every
-# consumer of this crate must agree on the same async-graphql major, so a bump
-# is a coordinated migration, not a local change — see the README.
 async-graphql = { version = "7", features = ["chrono", "uuid"], optional = true }
 axum = { workspace = true, optional = true }
 br-core-values = { workspace = true, optional = true }
@@ -34,8 +24,6 @@ serde_json = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-# The REST IntoResponse tests await the body (`axum::body::to_bytes`) and use
-# `#[tokio::test]`; serde/serde_json inspect the rendered JSON bodies.
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

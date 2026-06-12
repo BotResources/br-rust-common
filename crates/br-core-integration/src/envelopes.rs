@@ -1,33 +1,14 @@
-//! Typed integration envelopes and the metadata alias.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Identity / correlation context attached to every integration message.
-///
-/// This is `br_core_events::EventMetadata` re-exported under the integration
-/// crate's public name — one type, one wire contract, no hand-synced
-/// duplicate. It inherits the typed `br_core_kernel::Actor` and the
-/// backward-compatible wire format (flat `actor_id` + optional `actor_kind`,
-/// legacy payloads default to a human actor). Construct via
-/// `MessageMetadata::new` / `MessageMetadata::with_causation`.
 pub use br_core_events::EventMetadata as MessageMetadata;
 
-/// Fact emitted by a bounded context. `payload` carries the context-specific
-/// event shape.
-///
-/// `#[non_exhaustive]`: build via [`IntegrationEvent::new`], not a struct
-/// literal. Fields stay `pub` for read access.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[non_exhaustive]
 pub struct IntegrationEvent<T> {
     pub event_id: Uuid,
     pub event_type: String,
-    /// Wire schema version of `payload` for this `event_type`. `u8` by design:
-    /// a published-contract version is bumped only on a breaking payload change
-    /// and never realistically exceeds 255 — a wider integer would just be
-    /// dead range on the wire.
     pub version: u8,
     pub occurred_at: DateTime<Utc>,
     pub metadata: MessageMetadata,
@@ -35,9 +16,6 @@ pub struct IntegrationEvent<T> {
 }
 
 impl<T> IntegrationEvent<T> {
-    /// A new integration event. The caller supplies `event_id` (UUIDv7) and
-    /// `occurred_at` so retries stay idempotent and timestamps are the
-    /// producer's to set.
     pub fn new(
         event_id: Uuid,
         event_type: impl Into<String>,
@@ -57,18 +35,11 @@ impl<T> IntegrationEvent<T> {
     }
 }
 
-/// Request asking a bounded context to perform an action. `payload` carries
-/// the context-specific command shape.
-///
-/// `#[non_exhaustive]`: build via [`IntegrationCommand::new`], not a struct
-/// literal. Fields stay `pub` for read access.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[non_exhaustive]
 pub struct IntegrationCommand<T> {
     pub command_id: Uuid,
     pub command_type: String,
-    /// Wire schema version of `payload` for this `command_type`. `u8` by
-    /// design — see [`IntegrationEvent::version`].
     pub version: u8,
     pub issued_at: DateTime<Utc>,
     pub metadata: MessageMetadata,
@@ -76,8 +47,6 @@ pub struct IntegrationCommand<T> {
 }
 
 impl<T> IntegrationCommand<T> {
-    /// A new integration command. The caller supplies `command_id` (UUIDv7)
-    /// and `issued_at`.
     pub fn new(
         command_id: Uuid,
         command_type: impl Into<String>,
@@ -166,9 +135,6 @@ mod tests {
         assert_eq!(back.payload, cmd.payload);
     }
 
-    // M5 + M4: the aliased metadata inherits the events crate's wire change,
-    // including the legacy-defaults-to-Human guarantee. A pre-Actor payload
-    // (no `actor_kind`) embedded in an integration event still deserializes.
     #[test]
     fn legacy_metadata_in_event_defaults_to_human() {
         let legacy = r#"{

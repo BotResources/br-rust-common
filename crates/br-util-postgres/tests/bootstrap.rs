@@ -1,24 +1,3 @@
-//! Full-bootstrap integration test: walks the exact sequence that a
-//! `svc-*` service runs on first boot of a fresh database. Per-module
-//! live tests in src/{role,grant,rls}.rs exercise each function in
-//! isolation; this test catches seam bugs between them — the kind of
-//! seam regression that has shipped to a first boot before, where each
-//! function passed in isolation but the 2-role bootstrap sequence did not.
-//!
-//! Production sequence (mirrored here):
-//!   1. owner pool = LOGIN CREATEROLE NOSUPERUSER (CNPG's `<svc>_owner`)
-//!   2. `ensure_app_role(owner, "<svc>_app", pw)` — idempotent create
-//!   3. migrate as owner (here: hand-crafted CREATE TABLE + policy)
-//!   4. `grant_app_access(owner, "<svc>_app")` — SELECT/INSERT/UPDATE/
-//!      DELETE + ALTER DEFAULT PRIVILEGES for future tables
-//!   5. open app pool (LOGIN, NOSUPERUSER, no other attributes)
-//!   6. per-request: BEGIN, `set_rls_context(tx, passport)`, query,
-//!      COMMIT
-//!
-//! The test asserts the end-to-end claim: a row inserted as actor A is
-//! visible only to actor A through the app pool's RLS-protected SELECT.
-//! Any silent break in steps 1-5 makes step 6 fail or wrong.
-
 mod common;
 
 use br_core_auth::{AuthMethod, Passport};
@@ -50,27 +29,19 @@ fn passport_for(actor: Uuid) -> Passport {
 async fn full_bootstrap_chain_isolates_rows_per_actor() {
     let Some(url) = test_db_url() else { return };
 
-    // Step 0: admin (superuser) connection. Only used to bootstrap the
-    // owner and to clean up at the end — production never has a live
-    // superuser pool in the service process.
     let admin = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
         .await
         .expect("connect as admin");
 
-    // Step 1: owner pool, mirrors CNPG's `<svc>_owner`.
     let (owner_pool, owner) = setup_owner(&admin, &url).await;
     let app_role = unique_role_name();
 
-    // Step 2: create the app role through the owner pool. Hits the
-    // PG-16 NOSUPERUSER-assertion code path that Scenario 1 of #13
-    // broke (verified by the live tests in role.rs too).
     ensure_app_role(&owner_pool, &app_role, APP_PW)
         .await
         .expect("ensure_app_role");
 
-    // Step 3: "migrate" as owner — create the RLS-protected table.
     let table = unique_table_name();
     for sql in [
         format!("CREATE TABLE \"{table}\" (id int, owner_id uuid NOT NULL, val text)"),
@@ -95,21 +66,14 @@ async fn full_bootstrap_chain_isolates_rows_per_actor() {
     .await
     .expect("seed");
 
-    // Step 4: grant the app role table/sequence access.
     grant_app_access(&owner_pool, &app_role)
         .await
         .expect("grant_app_access");
 
-    // Step 5: switch to the app pool — the long-lived runtime pool.
     let app_pool = open_pool_as(&url, &app_role, APP_PW)
         .await
         .expect("app login");
 
-    // Step 6: per-request flow. Actor A sees their row; actor B sees
-    // theirs; neither sees the other's. The full chain only "works" if
-    // every previous step did its job correctly — a missed grant, a
-    // wrong set_config tag, a typo in a policy variable name would
-    // collapse into "0 rows" or "permission denied" here.
     for (actor, expected_id) in [(actor_a, 1i32), (actor_b, 2)] {
         let mut tx = app_pool.begin().await.expect("begin tx");
         set_rls_context(&mut tx, &passport_for(actor))

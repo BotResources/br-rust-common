@@ -1,7 +1,3 @@
-//! Specs for the `Localized` family. A test-local `Locale` enum stands in for a
-//! product's closed locale type — proving the family is genuinely generic and
-//! that the locale's *own* serde form is what reaches the wire.
-
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -11,8 +7,6 @@ use crate::localized::{
     Html, LocalizedContent, LocalizedEntry, LocalizedHtml, LocalizedMd, LocalizedString, Markdown,
 };
 
-/// Product-style closed locale enum with a single lowercase wire form (the
-/// recommended convention), plus a read-compat alias for an earlier stored form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Locale {
@@ -22,9 +16,6 @@ enum Locale {
     Fr,
 }
 
-// ── Construction & accessors ────────────────────────────────────────────────
-
-// Given a single-entry value, When read, Then primary and get agree.
 #[test]
 fn new_creates_with_single_entry() {
     let ls = LocalizedString::new(Locale::En, "Hello".into());
@@ -81,8 +72,6 @@ fn empty_content_string_is_allowed() {
     assert_eq!(ls.primary(), "");
 }
 
-// ── from_parts: the validating constructor (negative vectors) ───────────────
-
 #[test]
 fn from_parts_accepts_a_well_formed_value() {
     let v = Localized::<Markdown, Locale>::from_parts(
@@ -101,14 +90,12 @@ fn from_parts_accepts_a_well_formed_value() {
     assert!(v.is_ok());
 }
 
-// Given no entries, When constructed, Then LocalizedEmpty.
 #[test]
 fn from_parts_rejects_empty_entries() {
     let v = Localized::<Markdown, Locale>::from_parts(Locale::En, vec![]);
     assert_eq!(v.unwrap_err(), ValueError::LocalizedEmpty);
 }
 
-// Given a primary with no matching entry, When constructed, Then PrimaryMissing.
 #[test]
 fn from_parts_rejects_primary_without_entry() {
     let v = Localized::<Markdown, Locale>::from_parts(
@@ -121,7 +108,6 @@ fn from_parts_rejects_primary_without_entry() {
     assert_eq!(v.unwrap_err(), ValueError::LocalizedPrimaryMissing);
 }
 
-// Given a repeated locale, When constructed, Then DuplicateLocale.
 #[test]
 fn from_parts_rejects_duplicate_locale() {
     let v = Localized::<Markdown, Locale>::from_parts(
@@ -140,10 +126,6 @@ fn from_parts_rejects_duplicate_locale() {
     assert_eq!(v.unwrap_err(), ValueError::LocalizedDuplicateLocale);
 }
 
-// ── Serde: wire shape + backdoor closure ────────────────────────────────────
-
-// Given a value, When serialized, Then the format marker is NOT on the wire and
-// the locale uses its own (lowercase) string form.
 #[test]
 fn serialized_shape_omits_format_marker_and_uses_locale_wire_form() {
     let md = LocalizedMd::new(Locale::En, "# Title".into());
@@ -166,8 +148,6 @@ fn serde_roundtrip_preserves_all_entries() {
     assert_eq!(md, back);
 }
 
-// THE backdoor-closure spec: `{"primary":…,"entries":[]}` must fail to
-// deserialize — serde routes through from_parts, it is not a bypass.
 #[test]
 fn deserialize_rejects_empty_entries_closing_the_backdoor() {
     let wire = r#"{"primary":"en","entries":[]}"#;
@@ -186,15 +166,12 @@ fn deserialize_rejects_duplicate_locale() {
     assert!(serde_json::from_str::<LocalizedMd<Locale>>(wire).is_err());
 }
 
-// The product's read-compat alias still deserializes (older stored form).
 #[test]
 fn deserialize_accepts_legacy_locale_alias() {
     let wire = r#"{"primary":"Ja","entries":[{"locale":"Ja","content":"x"}]}"#;
     let v: LocalizedMd<Locale> = serde_json::from_str(wire).unwrap();
     assert_eq!(v.primary_locale(), &Locale::Ja);
 }
-
-// ── LocalizedContent: tagged union, format(), legacy lift ───────────────────
 
 #[test]
 fn content_constructors_produce_the_right_variant() {
@@ -240,8 +217,6 @@ fn content_serde_roundtrip() {
     assert_eq!(c, back);
 }
 
-// Legacy compat: a bare LocalizedMd blob has no `format` tag, so it does NOT
-// deserialize as LocalizedContent directly — recover via From (the lift path).
 #[test]
 fn legacy_bare_md_fails_tagged_union_and_lifts_via_from() {
     let legacy = json!({
@@ -267,14 +242,9 @@ fn content_from_html_produces_html_variant() {
     assert!(matches!(c, LocalizedContent::Html(_)));
 }
 
-// ── Type-level format distinction (compile-time guarantee, shown by use) ────
-
-// LocalizedMd and LocalizedHtml are distinct types: a function over one cannot
-// take the other. This compiles only because the marker discriminates them.
 #[test]
 fn md_and_html_are_distinct_types() {
     fn take_md(_: &LocalizedMd<Locale>) {}
     let md = LocalizedMd::new(Locale::En, "# x".into());
     take_md(&md);
-    // take_md(&LocalizedHtml::new(...)) would not compile — distinct F.
 }

@@ -1,19 +1,5 @@
-//! Outbox table-name validation — the single structural guard run before a table
-//! name is ever interpolated into SQL.
-//!
-//! Postgres cannot bind an *identifier* as a parameter (only values), so the
-//! table name is formatted into the query string. Rather than trust it by
-//! comment, an unsafe name is made **unrepresentable**: only a plain unquoted
-//! identifier (`^[a-z_][a-z0-9_]*$`) is accepted, and every entry point
-//! (`stage_into`, `OutboxStore::new`) runs through [`validate_table`].
-
 use crate::outbox::store::OutboxStoreError;
 
-/// Validate an outbox table name against `^[a-z_][a-z0-9_]*$`. Anything else — a
-/// quote, a space, a `;`, an uppercase letter, a schema qualifier — is rejected
-/// as a typed [`OutboxStoreError::InvalidTable`] before it can reach the SQL
-/// string. ASCII-only on purpose: a valid unquoted PG identifier here needs no
-/// Unicode, and restricting the set keeps the guard auditable.
 pub(crate) fn validate_table(table: &str) -> Result<(), OutboxStoreError> {
     let mut chars = table.chars();
     let valid = match chars.next() {
@@ -36,7 +22,6 @@ mod tests {
     use super::*;
     use crate::outbox::store::DEFAULT_TABLE;
 
-    // GIVEN a plain identifier WHEN validated THEN it is accepted
     #[test]
     fn accepts_plain_identifiers() {
         for table in [
@@ -51,20 +36,18 @@ mod tests {
         }
     }
 
-    // GIVEN a name that could break out of the identifier position WHEN validated
-    // THEN it is a typed InvalidTable, never interpolated into SQL
     #[test]
     fn rejects_unsafe_or_malformed_names() {
         for table in [
-            "",                        // empty
-            "1outbox",                 // leading digit
-            "Outbox",                  // uppercase (would need quoting)
-            "out box",                 // space
-            "out-box",                 // hyphen
-            "outbox;DROP TABLE users", // injection attempt
-            "outbox--",                // comment
-            "\"outbox\"",              // already-quoted
-            "schema.outbox",           // qualified name
+            "",
+            "1outbox",
+            "Outbox",
+            "out box",
+            "out-box",
+            "outbox;DROP TABLE users",
+            "outbox--",
+            "\"outbox\"",
+            "schema.outbox",
         ] {
             let err = validate_table(table).unwrap_err();
             assert!(

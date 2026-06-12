@@ -2,17 +2,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-/// Canonical KV-key derivation for the `bearer_tokens` NATS KV bucket:
-/// lowercase-hex SHA-256 of the plaintext bearer token.
-///
-/// The plaintext token is never stored; only this hash is used as the lookup
-/// key. Issuance hashes the freshly-generated token to write the entry, and
-/// every authenticated request hashes the inbound token to look the entry up.
-/// Both sides MUST go through this function so the hashing stays in lockstep.
-///
-/// PATs are server-issued, high-entropy random secrets, so a fast hash is the
-/// right tool here — it's a key-derivation step, not password storage. Do not
-/// adapt this function for human-chosen secrets; those need argon2/bcrypt.
 pub fn bearer_token_key(plaintext: &str) -> String {
     use std::fmt::Write;
     let digest = Sha256::digest(plaintext.as_bytes());
@@ -23,17 +12,6 @@ pub fn bearer_token_key(plaintext: &str) -> String {
     out
 }
 
-/// Value stored in the `bearer_tokens` NATS KV bucket under the key returned by
-/// [`bearer_token_key`].
-///
-/// Carries the minimum identity needed to resolve a PAT into a `Passport`:
-/// - `email` — the owning user (the issuer of the PAT)
-/// - `token_id` — the PAT's stable identifier, used for audit/revocation and
-///   surfaced on `Passport::Human` via `AuthMethod::Pat { token_id }`
-///
-/// Deserialization is **strict** (`deny_unknown_fields`): an unknown field is
-/// rejected. This is a security contract shared by every service, so a shape
-/// mismatch must fail loud. The wire format of a valid entry is unchanged.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BearerTokenEntry {
@@ -45,8 +23,6 @@ pub struct BearerTokenEntry {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    // ─── bearer_token_key ─────────────────────────────────
 
     #[test]
     fn key_is_64_lowercase_hex_chars() {
@@ -60,7 +36,6 @@ mod tests {
 
     #[test]
     fn key_matches_known_sha256_vector() {
-        // SHA-256("abc") — canonical NIST test vector.
         assert_eq!(
             bearer_token_key("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -92,8 +67,6 @@ mod tests {
     fn key_is_case_sensitive_on_input() {
         assert_ne!(bearer_token_key("Token"), bearer_token_key("token"));
     }
-
-    // ─── BearerTokenEntry serde ───────────────────────────
 
     #[test]
     fn entry_roundtrip() {
@@ -140,9 +113,6 @@ mod tests {
         assert!(serde_json::from_value::<BearerTokenEntry>(v).is_err());
     }
 
-    // Given an entry carrying an unknown field
-    // When deserializing
-    // Then it is rejected — the contract is strict, a shape mismatch fails loud
     #[test]
     fn entry_rejects_unknown_field() {
         let v = json!({

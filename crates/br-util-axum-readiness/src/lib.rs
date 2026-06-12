@@ -1,68 +1,33 @@
-//! A readiness gate for HTTP services — a cloneable toggle plus an Axum handler.
-//!
-//! **Readiness, not liveness.** This gate reports whether the service should
-//! receive traffic *right now*; it never signals that the process is dead. A
-//! service that reports not-ready is taken **out of rotation** (Kubernetes
-//! routes no new requests to it) but is **not restarted** — a restart is driven
-//! by a failed *liveness* probe, which this crate deliberately does not provide.
-//! That distinction is the whole point: a service that fails a startup check
-//! stays alive and inspectable instead of crash-looping.
-//!
-//! What gates readiness is the **caller's** concern. Hold a [`ReadinessHandle`],
-//! start it [`not_ready`] with a reason, and flip it to [`ready`] once your
-//! startup work succeeds — a dependency becomes reachable, a cache warms, a boot
-//! handshake is confirmed. This crate only carries the up/down state and serves
-//! it on `/readyz` via [`readiness_route`]; it knows nothing about *why* a given
-//! service is or isn't ready.
-//!
-//! [`not_ready`]: ReadinessHandle::not_ready
-//! [`ready`]: ReadinessHandle::ready
-
 use std::sync::{Arc, RwLock};
 
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{MethodRouter, get};
 
-/// The current readiness of a service.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Readiness {
-    /// The service should receive traffic.
     Ready,
-    /// The service must be taken out of rotation. `reason` is operator-facing
-    /// copy, surfaced verbatim in the `/readyz` response body and in logs —
-    /// never put a secret or sensitive internal detail in it.
     NotReady { reason: String },
 }
 
 impl Readiness {
-    /// Whether this state is [`Readiness::Ready`].
     pub fn is_ready(&self) -> bool {
         matches!(self, Readiness::Ready)
     }
 }
 
-/// A cloneable handle to a service's readiness state.
-///
-/// Clone it freely: every clone shares the same underlying state, so your
-/// startup logic and the Axum handler built by [`readiness_route`] always
-/// observe the same value.
 #[derive(Clone)]
 pub struct ReadinessHandle {
     state: Arc<RwLock<Readiness>>,
 }
 
 impl ReadinessHandle {
-    /// A handle that starts **ready**. Use for services that never gate but
-    /// still want to expose a `/readyz` probe.
     pub fn ready() -> Self {
         Self {
             state: Arc::new(RwLock::new(Readiness::Ready)),
         }
     }
 
-    /// A handle that starts **not ready** with `reason`. The safe default for a
-    /// gating service: it serves no traffic until something flips it to ready.
     pub fn not_ready(reason: impl Into<String>) -> Self {
         Self {
             state: Arc::new(RwLock::new(Readiness::NotReady {
@@ -71,17 +36,8 @@ impl ReadinessHandle {
         }
     }
 
-    /// Flip to **ready**. Idempotent; logs only on an actual transition.
     pub fn set_ready(&self) {
-        // Decide and mutate under the lock; log *after* releasing it — never
-        // hold the write lock across `tracing` I/O (it would serialize every
-        // `/readyz` reader behind it).
         let was_not_ready = {
-            // Recover from a poisoned lock rather than propagate the panic.
-            // See [`Self::snapshot`] for why this is safe and necessary: every
-            // mutation here is a single infallible assignment with no I/O, so a
-            // poisoned guard cannot expose a torn `Readiness`, and the readiness
-            // gate must keep answering even if some unrelated writer panicked.
             let mut guard = self.state.write().unwrap_or_else(|e| e.into_inner());
             let was_not_ready = !guard.is_ready();
             *guard = Readiness::Ready;
@@ -92,12 +48,8 @@ impl ReadinessHandle {
         }
     }
 
-    /// Flip to **not ready** with `reason`. Idempotent; logs on a transition
-    /// into not-ready or when the reason changes (so it never spams the log).
     pub fn set_not_ready(&self, reason: impl Into<String>) {
         let reason = reason.into();
-        // See `set_ready`: mutate under the lock, log outside it, and recover
-        // a poisoned lock instead of propagating the panic.
         let changed = {
             let mut guard = self.state.write().unwrap_or_else(|e| e.into_inner());
             let changed = match &*guard {
@@ -114,42 +66,15 @@ impl ReadinessHandle {
         }
     }
 
-    /// A snapshot of the current readiness.
-    ///
-    /// **Poison recovery.** A poisoned lock (some thread panicked while holding
-    /// the write guard) is recovered into its inner value rather than
-    /// re-panicking. This is deliberate and is the safe choice *for this type*:
-    /// `Readiness` is a plain enum and every write here is a single infallible
-    /// assignment with no I/O, so a panic can never leave the state half-written
-    /// — there is no torn value to protect against. The opposite (propagating
-    /// the poison) would make a *reader*, the `/readyz` probe, panic and 500
-    /// because some unrelated writer once panicked; a readiness gate's own
-    /// failure mode must fail closed (report a real up/down state, taken out of
-    /// rotation if down), never abort the probe. So the gate keeps answering.
     pub fn snapshot(&self) -> Readiness {
         self.state.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Whether the service is currently ready.
     pub fn is_ready(&self) -> bool {
         self.snapshot().is_ready()
     }
 }
 
-/// An Axum `GET` route reporting the readiness behind `handle`.
-///
-/// `200 OK` (body `"ready"`) when ready, `503 Service Unavailable` (body = the
-/// not-ready reason) otherwise. It is generic over the router state, so it
-/// mounts into any `Router<S>`. Use the conventional `/readyz` path:
-///
-/// ```
-/// use axum::Router;
-/// use br_util_axum_readiness::{ReadinessHandle, readiness_route};
-///
-/// let readiness = ReadinessHandle::not_ready("starting up");
-/// let app: Router = Router::new().route("/readyz", readiness_route(readiness.clone()));
-/// // ... hand `readiness` to the component that flips it once ready.
-/// ```
 pub fn readiness_route<S>(handle: ReadinessHandle) -> MethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -250,10 +175,6 @@ mod tests {
 
     #[tokio::test]
     async fn readyz_still_answers_after_the_lock_is_poisoned() {
-        // Poison the lock by panicking a thread while it holds the write guard,
-        // then assert the probe still answers (recovered, not 500/aborted) and
-        // reports the last-written state. A reader panicking because some
-        // unrelated writer panicked is exactly the failure this gate must avoid.
         let handle = ReadinessHandle::not_ready("starting up");
         handle.set_ready();
 
@@ -269,16 +190,13 @@ mod tests {
             "the lock must now be poisoned for this test to mean anything"
         );
 
-        // Direct reads recover instead of panicking.
         assert!(handle.is_ready());
         assert_eq!(handle.snapshot(), Readiness::Ready);
 
-        // And the HTTP probe answers normally rather than 500-ing.
         let (status, body) = get_readyz(router(handle.clone())).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "ready");
 
-        // A write path also recovers and keeps working.
         handle.set_not_ready("dependency unavailable");
         let (status, body) = get_readyz(router(handle)).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);

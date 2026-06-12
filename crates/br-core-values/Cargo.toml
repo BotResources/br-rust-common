@@ -8,8 +8,6 @@ repository.workspace = true
 description = "Universal, constructor-validated value objects shared across BotResources services: the Localized<F, L> rich-text family (generic over locale) and the ISO value objects (Money, Currency, CountryCode)"
 
 [features]
-# Test-support conformance helpers (e.g. `assert_lowercase_roundtrip`). Off by
-# default so the prod surface stays lean; consumers enable it for their tests.
 conformance = []
 
 [dependencies]

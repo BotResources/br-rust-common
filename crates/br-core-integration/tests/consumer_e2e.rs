@@ -1,10 +1,3 @@
-//! E2E tests for [`DurableConsumer`] against a real NATS JetStream broker.
-//!
-//! Proves what unit tests cannot: durable delivery + typed decode over the
-//! wire, redelivery on nak, term (no infinite redelivery) for a poison message,
-//! and the fail-loud bind contract when a declared stream or consumer is
-//! missing. See `tests/common/mod.rs` for gating (`#[ignore]`, `NATS_URL`).
-
 mod common;
 
 use std::sync::Arc;
@@ -20,8 +13,6 @@ use common::{
 };
 use tokio::sync::mpsc;
 
-/// Durable delivery: a published command is decoded into the typed envelope and
-/// delivered to the handler, which acks it.
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn durable_consumer_delivers_and_acks_command() {
@@ -68,8 +59,6 @@ async fn durable_consumer_delivers_and_acks_command() {
     teardown(&js, &prefix).await;
 }
 
-/// Redelivery on nak: the first delivery naks, the redelivery acks. The handler
-/// sees the same message twice — proving nak triggers redelivery.
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn durable_consumer_redelivers_on_nak() {
@@ -101,7 +90,6 @@ async fn durable_consumer_redelivers_on_nak() {
                     async move {
                         done_tx.send(()).await.ok();
                         if n == 0 {
-                            // First delivery: ask for an immediate redelivery.
                             MessageOutcome::Nak(Some(Duration::from_millis(50)))
                         } else {
                             MessageOutcome::Ack
@@ -114,7 +102,6 @@ async fn durable_consumer_redelivers_on_nak() {
             .ok();
     });
 
-    // Two deliveries expected: original + redelivery.
     for _ in 0..2 {
         tokio::time::timeout(Duration::from_secs(5), done_rx.recv())
             .await
@@ -130,10 +117,6 @@ async fn durable_consumer_redelivers_on_nak() {
     teardown(&js, &prefix).await;
 }
 
-/// Poison message: a payload that does not deserialize into the typed envelope
-/// is termed (not redelivered forever) and surfaced via `on_poison`. Proven by
-/// publishing garbage, asserting `on_poison` fires once, and confirming no
-/// further redelivery arrives.
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn durable_consumer_terms_poison_message() {
@@ -144,7 +127,6 @@ async fn durable_consumer_terms_poison_message() {
     let stream = create_stream(&js, &prefix).await;
     create_durable(&stream, "poison_worker", &subject).await;
 
-    // Publish non-envelope bytes directly so they capture into the stream.
     let publisher = NatsIntegrationPublisher::new(js.clone());
     publisher
         .publish(&subject, serde_json::json!({ "garbage": true }))
@@ -167,7 +149,6 @@ async fn durable_consumer_terms_poison_message() {
                         IntegrationError::Decode { subject, .. } => subject.clone(),
                         other => panic!("expected Decode, got {other:?}"),
                     };
-                    // `on_poison` is sync; hand the subject to the test thread.
                     poison_tx.try_send(subject).ok();
                 },
             )
@@ -181,8 +162,6 @@ async fn durable_consumer_terms_poison_message() {
         .expect("poison subject");
     assert_eq!(poisoned, subject);
 
-    // No redelivery: ack-wait is 2s; if it had not been termed, a second poison
-    // would surface. Assert none arrives within a window past ack-wait.
     let redelivered = tokio::time::timeout(Duration::from_secs(4), poison_rx.recv()).await;
     assert!(
         redelivered.is_err(),
@@ -193,8 +172,6 @@ async fn durable_consumer_terms_poison_message() {
     teardown(&js, &prefix).await;
 }
 
-/// Fail-loud: binding to a stream that does not exist yields
-/// `Consume { kind: NoStream }` — the lib never creates it.
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn bind_fails_loud_when_stream_missing() {
@@ -216,8 +193,6 @@ async fn bind_fails_loud_when_stream_missing() {
     );
 }
 
-/// Fail-loud: the stream exists but the named durable consumer does not →
-/// `Consume { kind: NoConsumer }` — the durable wrapper never creates it.
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn bind_fails_loud_when_consumer_missing() {
@@ -241,11 +216,6 @@ async fn bind_fails_loud_when_consumer_missing() {
     );
 }
 
-/// Zero-CPU idle: a bound consumer with no messages parks on
-/// `consumer.messages()` (never a `fetch()` busy-loop). Proven by sampling this
-/// process's cumulative CPU time across a multi-second idle window and asserting
-/// the consumer burns negligible CPU while parked — a spin loop would show up as
-/// seconds of CPU here.
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn durable_consumer_idles_at_zero_cpu() {
@@ -260,7 +230,6 @@ async fn durable_consumer_idles_at_zero_cpu() {
         .await
         .expect("bind");
     let task = tokio::spawn(async move {
-        // Park: no messages are ever published, so the handler never runs.
         consumer
             .run_commands(
                 |_d: Delivery<IntegrationCommand<TestPayload>>| async { MessageOutcome::Ack },
@@ -270,9 +239,6 @@ async fn durable_consumer_idles_at_zero_cpu() {
             .ok();
     });
 
-    // Let the consumer settle, then measure CPU time over a fixed idle window.
-    // If `ps` is unavailable we cannot sample CPU — skip the assertion cleanly
-    // rather than fail on the environment (the parking behaviour is unchanged).
     tokio::time::sleep(Duration::from_millis(500)).await;
     let idle_window = Duration::from_secs(3);
     let before = common::process_cpu_seconds();
@@ -288,8 +254,6 @@ async fn durable_consumer_idles_at_zero_cpu() {
     };
     let consumed = after - before;
 
-    // A parked consumer should consume well under a second of CPU over 3s of
-    // wall time. A `fetch()` spin loop would burn most of the window.
     assert!(
         consumed < 0.5,
         "parked consumer burned {consumed:.3}s CPU over {}s idle — expected a parked, \

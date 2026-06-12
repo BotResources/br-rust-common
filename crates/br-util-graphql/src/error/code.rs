@@ -1,53 +1,17 @@
-//! [`ErrorCode`] — the canonical, cross-service error-code contract.
-//!
-//! This code set is a **published contract every BR frontend binds to**: a
-//! mutation/query failure surfaces one of these codes in the GraphQL
-//! `extensions.code` field (and as the `code` of a REST error body), and the
-//! client maps the code → localized copy. The strings are therefore **stable
-//! keys, never UI prose** (codes-not-language); renaming one is a breaking
-//! change across the whole estate, not a local edit.
-//!
-//! Before this crate, ~six diverging copies of this enum lived across the
-//! services (each `svc-*/src/error.rs`); unifying them here makes the set the
-//! single source of truth.
-
 use axum::http::StatusCode;
 
-/// The canonical edge error code. Each variant maps to exactly one stable wire
-/// string (`as_str`) and one REST HTTP status (`http_status`).
-///
-/// Total and `Copy` — adding a variant forces every `match` on it to be
-/// updated (no `_ =>` fall-through in the mappings), so the contract can never
-/// silently grow a hole.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorCode {
-    /// No (or invalid) authenticated principal — the caller is not signed in.
-    /// REST: 401.
     Unauthenticated,
-    /// The principal is known but not permitted to perform the operation.
-    /// REST: 403.
     Forbidden,
-    /// The addressed resource does not exist (or is not visible to the caller).
-    /// REST: 404.
     NotFound,
-    /// The operation conflicts with current state (uniqueness, already-done).
-    /// REST: 409.
     Conflict,
-    /// The input is malformed or fails validation (a value-object rejection,
-    /// a bad argument). REST: 400.
     BadUserInput,
-    /// The aggregate is in a state that forbids this transition (a guarded
-    /// state-machine rejection). REST: 422.
     InvalidState,
-    /// An unexpected server-side fault. The detail is logged, never returned —
-    /// the client sees only this code. REST: 500.
     Internal,
 }
 
 impl ErrorCode {
-    /// The stable wire string carried in `extensions.code` / the REST `code`
-    /// field. This is the contract the frontends key on — do not change a
-    /// returned string without treating it as a breaking change.
     pub const fn as_str(self) -> &'static str {
         match self {
             ErrorCode::Unauthenticated => "UNAUTHENTICATED",
@@ -60,9 +24,6 @@ impl ErrorCode {
         }
     }
 
-    /// The REST HTTP status this code maps to, for the [`IntoResponse`] edge.
-    ///
-    /// [`IntoResponse`]: axum::response::IntoResponse
     pub const fn http_status(self) -> StatusCode {
         match self {
             ErrorCode::Unauthenticated => StatusCode::UNAUTHORIZED,
@@ -86,8 +47,6 @@ impl std::fmt::Display for ErrorCode {
 mod tests {
     use super::*;
 
-    // The wire strings are the contract — lock every one against accidental
-    // rename. A change here is a deliberate, breaking, cross-estate migration.
     #[test]
     fn wire_strings_are_the_published_contract() {
         assert_eq!(ErrorCode::Unauthenticated.as_str(), "UNAUTHENTICATED");
@@ -99,8 +58,6 @@ mod tests {
         assert_eq!(ErrorCode::Internal.as_str(), "INTERNAL");
     }
 
-    // codes-not-language: the wire string is an UPPER_SNAKE key, never a
-    // sentence (no spaces, no lowercase prose).
     #[test]
     fn wire_strings_are_codes_not_sentences() {
         for code in EVERY_CODE {
@@ -113,7 +70,6 @@ mod tests {
         }
     }
 
-    // Given each code, Then it maps to its documented REST status.
     #[test]
     fn http_status_mapping_is_total_and_correct() {
         assert_eq!(
@@ -137,8 +93,6 @@ mod tests {
         );
     }
 
-    /// Every variant, so the wire/codes tests iterate the whole contract. Kept
-    /// in the test module (the lib does not need a runtime variant list).
     const EVERY_CODE: [ErrorCode; 7] = [
         ErrorCode::Unauthenticated,
         ErrorCode::Forbidden,

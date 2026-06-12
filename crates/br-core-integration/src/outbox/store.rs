@@ -1,13 +1,3 @@
-//! The Postgres outbox store: the relay's read/transition queries over a named
-//! table, plus the table-name → notify-channel derivation. The same-transaction
-//! `stage` insert lives in the sibling `stage` module ([`stage`](crate::stage)).
-//! Feature-gated behind `outbox` (with `stage`, the only sqlx-touching surface
-//! of this crate).
-//!
-//! The store never auto-provisions: the `integration_outbox` table is a
-//! **declared object** the consuming service's migrations own (the canonical
-//! DDL is in the crate README). A missing table fails loud as a sqlx error.
-
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
@@ -15,21 +5,12 @@ use crate::outbox::OutboxRecord;
 use crate::outbox::status::Transition;
 use crate::outbox::{OutboxStatus, table_name::validate_table};
 
-/// The default outbox table name. Override with [`stage_into`](crate::stage_into)
-/// / [`OutboxStore::new`] for a service that names it differently.
 pub const DEFAULT_TABLE: &str = "integration_outbox";
 
-/// The `NOTIFY` channel name for `table`: the table name itself. The table is
-/// already a validated `^[a-z_][a-z0-9_]*$` identifier, so it is a valid,
-/// injection-free channel; using it verbatim keeps the relay's listener and the
-/// staging notify trivially in agreement. Passed to `pg_notify` as a bound value.
 pub(super) fn notify_channel_for(table: &str) -> String {
     table.to_string()
 }
 
-/// A handle over a named outbox table that the [`OutboxRelay`](crate::OutboxRelay)
-/// uses to read pending rows and persist transitions. Holds no connection — each
-/// method takes the caller's executor, so the relay controls transaction scope.
 #[derive(Debug, Clone)]
 pub struct OutboxStore {
     table: String,
@@ -37,54 +18,25 @@ pub struct OutboxStore {
 
 impl Default for OutboxStore {
     fn default() -> Self {
-        // DEFAULT_TABLE is a known-valid identifier; the validation cannot fail.
         Self::new(DEFAULT_TABLE).expect("DEFAULT_TABLE is a valid outbox identifier")
     }
 }
 
 impl OutboxStore {
-    /// A store over `table`. The name is interpolated into SQL (PG cannot bind
-    /// an identifier), so it is validated structurally at construction:
-    /// a name that is not a plain `^[a-z_][a-z0-9_]*$` identifier is rejected as
-    /// [`OutboxStoreError::InvalidTable`] rather than trusted by comment.
     pub fn new(table: impl Into<String>) -> Result<Self, OutboxStoreError> {
         let table = table.into();
         validate_table(&table)?;
         Ok(Self { table })
     }
 
-    /// The table this store reads and writes.
     pub fn table(&self) -> &str {
         &self.table
     }
 
-    /// The Postgres `LISTEN`/`NOTIFY` channel for this table — the same name
-    /// [`stage`](crate::stage) / [`stage_into`](crate::stage_into) fire
-    /// `pg_notify` on at commit, and the name the relay's
-    /// [`run`](crate::OutboxRelay::run) loop listens on. Deriving it from the
-    /// (already validated) table name keeps the staging notify and the relay's
-    /// listener in agreement without a second configuration knob. For the default
-    /// table this is `integration_outbox`.
     pub fn notify_channel(&self) -> String {
         notify_channel_for(&self.table)
     }
 
-    /// Fetch and lock the single oldest `Pending` row with `id > after`
-    /// (`ORDER BY id LIMIT 1`, UUIDv7 ids sort chronologically), or `None` if no
-    /// such row remains. `FOR UPDATE SKIP LOCKED` lets concurrent relay replicas
-    /// each pick a *different* row — none is processed twice.
-    ///
-    /// `after` is the relay's per-pass cursor: pass [`Uuid::nil`] to start from
-    /// the oldest row, then the last-processed id to advance. It guarantees the
-    /// relay attempts each row **at most once per pass** — a row that fails stays
-    /// `Pending` but, because the cursor has moved past its id, is not re-picked
-    /// until the next pass (the caller's interval is the retry backoff), instead
-    /// of spinning on the same failing row within one pass.
-    ///
-    /// Pass a transaction executor (`&mut *tx`): the row stays locked until the
-    /// relay commits its transition, so a crash mid-publish releases the lock and
-    /// a later pass re-picks the still-`Pending` row. The lock is held for only
-    /// one publish.
     pub async fn fetch_one_pending<'e, E>(
         &self,
         executor: E,
@@ -109,16 +61,6 @@ impl OutboxStore {
         row.map(OutboxRow::into_record).transpose()
     }
 
-    /// Fetch up to `limit` `Pending` rows, oldest first (UUIDv7 ids sort by
-    /// creation time, so ordering by `id` is chronological). `FOR UPDATE SKIP
-    /// LOCKED` lets multiple relay replicas drain the outbox concurrently without
-    /// double-publishing a row. Used by tests/diagnostics to inspect the queue;
-    /// the relay itself processes one row per transaction via
-    /// [`fetch_one_pending`](Self::fetch_one_pending).
-    ///
-    /// Pass a transaction executor (`&mut *tx`): the rows stay locked until the
-    /// caller commits, so a crash releases the lock and another pass re-picks the
-    /// still-`Pending` rows.
     pub async fn fetch_pending<'e, E>(
         &self,
         executor: E,
@@ -140,14 +82,6 @@ impl OutboxStore {
         rows.into_iter().map(OutboxRow::into_record).collect()
     }
 
-    /// Persist a relay [`Transition`] for one row: write the new status and
-    /// attempt count, and — on success — stamp `published_at`. On the terminal
-    /// `Failed` path, record `last_error` for diagnosis.
-    ///
-    /// `last_error` is written unconditionally (to the bound value or `NULL`), so
-    /// a previously-failed row that finally publishes has its `last_error`
-    /// **reset to NULL** — the column always reflects the *latest* attempt, never
-    /// a stale earlier failure. The relay passes `None` on a successful publish.
     pub async fn apply_transition<'e, E>(
         &self,
         executor: E,
@@ -161,10 +95,6 @@ impl OutboxStore {
         let published_at_clause = if transition.status == OutboxStatus::Published {
             "published_at = NOW()"
         } else {
-            // Intentional self-assignment, not a bug: a non-publish transition
-            // (still `Pending`, or terminal `Failed`) must leave `published_at`
-            // untouched, and keeping one UPDATE shape (rather than branching the
-            // SET list) keeps the query stable. PG optimizes the no-op away.
             "published_at = published_at"
         };
         let sql = format!(
@@ -184,28 +114,17 @@ impl OutboxStore {
     }
 }
 
-/// Why an outbox operation failed: an invalid table name (rejected before any
-/// SQL), a transport/SQL error, or a row whose stored status string is not a
-/// known [`OutboxStatus`] (a corrupt or future row — fail loud, never coerce it
-/// into a default).
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum OutboxStoreError {
-    /// The table name is not a plain `^[a-z_][a-z0-9_]*$` identifier. Rejected at
-    /// construction / staging, before it is ever interpolated into SQL — PG
-    /// cannot bind an identifier, so the name is validated structurally instead
-    /// of trusted.
     #[error("invalid outbox table name: {table:?}")]
     InvalidTable { table: String },
-    /// The underlying sqlx query failed (table missing, connection lost, …).
     #[error("outbox query failed: {0}")]
     Sql(#[from] sqlx::Error),
-    /// A row's `status` column held a value outside the known set.
     #[error("outbox row {id} has an unknown status: {value:?}")]
     UnknownStatus { id: Uuid, value: String },
 }
 
-/// The raw row shape `fetch_pending` decodes before validating its status.
 #[derive(sqlx::FromRow)]
 struct OutboxRow {
     id: Uuid,
@@ -216,9 +135,6 @@ struct OutboxRow {
 }
 
 impl OutboxRow {
-    /// Hydrate into a typed [`OutboxRecord`], re-validating the status string
-    /// (an unknown value is a fail-loud [`OutboxStoreError::UnknownStatus`], not
-    /// a silent default) and clamping a negative attempt count to zero.
     fn into_record(self) -> Result<OutboxRecord, OutboxStoreError> {
         let status = OutboxStatus::from_db_str(&self.status).map_err(|e| {
             OutboxStoreError::UnknownStatus {
@@ -240,7 +156,6 @@ impl OutboxRow {
 mod tests {
     use super::*;
 
-    // GIVEN a valid name WHEN a store is built THEN it constructs and carries it
     #[test]
     fn new_accepts_a_valid_table() {
         assert_eq!(
@@ -249,22 +164,17 @@ mod tests {
         );
     }
 
-    // GIVEN an unsafe name WHEN a store is built THEN it fails with InvalidTable
-    // (the structural guard is exercised exhaustively in `table_name`'s tests).
     #[test]
     fn new_rejects_an_unsafe_table() {
         let err = OutboxStore::new("outbox;DROP TABLE users").unwrap_err();
         assert!(matches!(err, OutboxStoreError::InvalidTable { .. }));
     }
 
-    // GIVEN the default store WHEN built THEN it carries the canonical table name
     #[test]
     fn default_store_uses_the_canonical_table() {
         assert_eq!(OutboxStore::default().table(), DEFAULT_TABLE);
     }
 
-    // GIVEN a store WHEN its notify channel is read THEN it is the table name —
-    // the listener and the staging notify agree on it without a second knob.
     #[test]
     fn notify_channel_is_the_table_name() {
         assert_eq!(OutboxStore::default().notify_channel(), DEFAULT_TABLE);
