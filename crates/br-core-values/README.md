@@ -96,7 +96,7 @@ deserializes back from that lowercase form (round-trip):
 
 ```toml
 [dev-dependencies]
-br-core-values = { version = "0.1", features = ["conformance"] }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.8.0", features = ["conformance"] }
 ```
 
 ```rust,ignore
@@ -164,7 +164,7 @@ never by a rejecting constructor here.)
 ## Tier & dependencies
 
 Tier `core`: depends only on `serde` (+ `thiserror` for the error type). No I/O,
-no `async`, no `br-util-*`. Per-crate semver, distributed by git tag.
+no `async`, no `br-util-*`. Unified workspace versioning, distributed by git tag.
 
 ## Install
 
