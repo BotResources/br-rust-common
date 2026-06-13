@@ -9,6 +9,28 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
+## [0.9.0] — 2026-06-13
+
+### Added
+
+- **`br-util-graphql` — `Affordance.params`.** `Affordance` gains an optional
+  `params: Option<Json<BTreeMap<String, String>>>` field: a structured,
+  codes-keyed map (same Rust type and builder ergonomics as `EdgeError`'s
+  `params`) that attaches data keyed to `reason_code`, exposed on the wire as a
+  nullable GraphQL `JSON` scalar (`params: JSON`). Attach it with the chainable
+  `Affordance::block(action, reason).with_param(key, value)` / `.with_params(...)`;
+  `allow` / `block` leave it unset (renders `null`, existing outputs unchanged).
+  The map is codes, never user-facing prose — human copy and i18n stay at the edge.
+
+### Changed
+
+- **`br-util-graphql` — `Affordance` is now `#[non_exhaustive]`** (breaking). This
+  is the breaking change that justifies the minor bump: external crates can no
+  longer build an `Affordance` by struct literal — construct via
+  `Affordance::allow` / `Affordance::block` (then `.with_param` / `.with_params`),
+  the only supported path. In exchange, every future field addition to
+  `Affordance` becomes non-breaking. In-crate literal construction is unaffected.
+
 ## [0.8.0] — 2026-06-13
 
 ### Changed
