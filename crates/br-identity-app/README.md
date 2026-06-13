@@ -239,9 +239,9 @@ run_scope_declarations(
 
 ```toml
 [dependencies]
-br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "br-identity-app-v0.1.1" }
+br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "v0.8.0" }
 ```
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)

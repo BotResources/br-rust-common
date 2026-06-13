@@ -43,7 +43,7 @@ impl OutboxRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Actor, IntegrationEvent, MessageMetadata, UserId};
+    use crate::{Actor, EventMetadata, IntegrationEvent, UserId};
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -71,7 +71,7 @@ mod tests {
             "user.created",
             1,
             DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
-            MessageMetadata::new(Actor::Human(UserId::from(Uuid::nil())), Uuid::nil()),
+            EventMetadata::new(Actor::Human(UserId::from(Uuid::nil())), Uuid::nil()),
             UserCreatedV1 {
                 user_id: Uuid::nil(),
             },

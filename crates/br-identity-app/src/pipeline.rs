@@ -9,13 +9,6 @@ use crate::repository::ScopeRegistryRepository;
 
 const MAX_ATTEMPTS: u32 = 5;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum HandledOutcome {
-    Accepted { service: ServiceKey },
-    Rejected { reason: ScopeDeclarationError },
-}
-
 pub struct ScopeDeclarationPipeline<P: br_core_integration::IntegrationPublisher + ?Sized> {
     repository: ScopeRegistryRepository,
     confirmations: ConfirmationPublisher<P>,
@@ -35,7 +28,7 @@ impl<P: br_core_integration::IntegrationPublisher + ?Sized> ScopeDeclarationPipe
     pub async fn handle(
         &self,
         command: &IntegrationCommand<DeclareServiceScopes>,
-    ) -> Result<HandledOutcome, AppError> {
+    ) -> Result<DeclarationOutcome, AppError> {
         for _ in 0..MAX_ATTEMPTS {
             let (mut registry, loaded_version) = self.repository.load().await?;
 
@@ -43,13 +36,13 @@ impl<P: br_core_integration::IntegrationPublisher + ?Sized> ScopeDeclarationPipe
                 DeclarationOutcome::Rejected { reason } => {
                     return self.reject(command, reason).await;
                 }
-                DeclarationOutcome::Accepted { service, .. } => {
+                DeclarationOutcome::Accepted { service, result } => {
                     match self.repository.save(&registry, loaded_version).await? {
                         SaveOutcome::Persisted => {
                             self.confirmations
                                 .publish_accepted(command, service.clone())
                                 .await?;
-                            return Ok(HandledOutcome::Accepted { service });
+                            return Ok(DeclarationOutcome::Accepted { service, result });
                         }
                         SaveOutcome::VersionConflict => continue,
                         SaveOutcome::ScopeConflict { scope_key, owner } => {
@@ -73,12 +66,12 @@ impl<P: br_core_integration::IntegrationPublisher + ?Sized> ScopeDeclarationPipe
         &self,
         command: &IntegrationCommand<DeclareServiceScopes>,
         reason: ScopeDeclarationError,
-    ) -> Result<HandledOutcome, AppError> {
+    ) -> Result<DeclarationOutcome, AppError> {
         let service = rejected_reply_service(command);
         self.confirmations
             .publish_rejected(command, service, reason.clone())
             .await?;
-        Ok(HandledOutcome::Rejected { reason })
+        Ok(DeclarationOutcome::Rejected { reason })
     }
 }
 
@@ -92,13 +85,13 @@ fn rejected_reply_service(command: &IntegrationCommand<DeclareServiceScopes>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use br_core_integration::{Actor, MessageMetadata, UserId};
+    use br_core_integration::{Actor, EventMetadata, UserId};
     use chrono::Utc;
     use uuid::Uuid;
 
     fn command(json: &str) -> IntegrationCommand<DeclareServiceScopes> {
         let metadata =
-            MessageMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7());
+            EventMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7());
         IntegrationCommand::new(
             Uuid::now_v7(),
             "service_scope.declare",

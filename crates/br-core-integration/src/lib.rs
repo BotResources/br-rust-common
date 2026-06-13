@@ -17,7 +17,7 @@ pub use awaiter::{CorrelatedAwaiter, CorrelatedMatch};
 pub use awaiter_config::AwaiterConfig;
 pub use br_core_events::{Actor, ServiceAccountId, UserId};
 pub use consumer::{Delivery, DurableConsumer};
-pub use envelopes::{IntegrationCommand, IntegrationEvent, MessageMetadata};
+pub use envelopes::{EventMetadata, IntegrationCommand, IntegrationEvent};
 pub use error::{ConsumeErrorKind, IntegrationError, PublishErrorKind};
 pub use nats::NatsIntegrationPublisher;
 pub use noop::NoopIntegrationPublisher;

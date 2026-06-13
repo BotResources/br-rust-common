@@ -59,4 +59,4 @@ br-test-support = { path = "../br-test-support" }
 ---
 
 Part of [`br-rust-common`](https://github.com/BotResources/br-rust-common). See
-[CHANGELOG.md](./CHANGELOG.md). © BotResources — MIT.
+[CHANGELOG.md](../../CHANGELOG.md). © BotResources — MIT.

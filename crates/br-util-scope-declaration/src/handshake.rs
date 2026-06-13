@@ -1,8 +1,9 @@
 use br_core_integration::{
-    CorrelatedAwaiter, CorrelatedMatch, IntegrationCommand, IntegrationError, IntegrationEvent,
-    IntegrationPublisherExt, MessageMetadata, NatsIntegrationPublisher,
+    CorrelatedAwaiter, CorrelatedMatch, EventMetadata, IntegrationCommand, IntegrationError,
+    IntegrationEvent, IntegrationPublisherExt, NatsIntegrationPublisher,
 };
 use br_core_scope::{DeclareServiceScopes, ScopeDeclaration, ServiceKey, ServiceScopesRejected};
+use br_scope_declaration_contract::VERSION;
 use br_util_axum_readiness::ReadinessHandle;
 use chrono::Utc;
 use uuid::Uuid;
@@ -10,7 +11,7 @@ use uuid::Uuid;
 use crate::actor::declaring_actor;
 use crate::config::ScopeDeclarationConfig;
 use crate::outcome::ScopeDeclarationOutcome;
-use crate::subjects::{self, DeclarationSubjects};
+use crate::subjects::DeclarationSubjects;
 
 pub async fn declare_scopes(
     jetstream: &async_nats::jetstream::Context,
@@ -78,11 +79,11 @@ fn build_command(
     correlation_id: Uuid,
     declaration: ScopeDeclaration,
 ) -> IntegrationCommand<DeclareServiceScopes> {
-    let metadata = MessageMetadata::new(declaring_actor(service), correlation_id);
+    let metadata = EventMetadata::new(declaring_actor(service), correlation_id);
     IntegrationCommand::new(
         Uuid::now_v7(),
         DeclarationSubjects::command_type(),
-        subjects::VERSION,
+        VERSION,
         Utc::now(),
         metadata,
         DeclareServiceScopes::new(declaration),

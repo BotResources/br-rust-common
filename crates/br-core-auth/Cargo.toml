@@ -1,6 +1,6 @@
 [package]
 name = "br-core-auth"
-version = "0.6.2"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,6 +9,7 @@ description = "Passport identity DTO, X-Passport header codec, PAT bearer-token 
 
 [dependencies]
 base64 = { workspace = true }
+br-core-kernel = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

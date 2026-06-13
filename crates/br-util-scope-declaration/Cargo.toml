@@ -1,6 +1,6 @@
 [package]
 name = "br-util-scope-declaration"
-version = "0.1.1"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,6 +10,7 @@ description = "Boot-time scope-declaration handshake helper: a generic service d
 [dependencies]
 br-core-integration = { workspace = true }
 br-core-scope = { workspace = true }
+br-scope-declaration-contract = { workspace = true }
 br-util-axum-readiness = { workspace = true }
 async-nats = { workspace = true }
 chrono = { workspace = true }

@@ -7,8 +7,10 @@ use br_core_integration::{
 };
 use br_core_scope::DeclareServiceScopes;
 
+use br_identity_domain::DeclarationOutcome;
+
 use crate::error::AppError;
-use crate::pipeline::{HandledOutcome, ScopeDeclarationPipeline};
+use crate::pipeline::ScopeDeclarationPipeline;
 
 const NAK_DELAY: Duration = Duration::from_secs(5);
 
@@ -52,14 +54,15 @@ where
     G: FnMut(&AppError) + Send,
 {
     match pipeline.handle(&command).await {
-        Ok(HandledOutcome::Accepted { service }) => {
+        Ok(DeclarationOutcome::Accepted { service, .. }) => {
             tracing::info!(%service, "scope declaration accepted");
             MessageOutcome::Ack
         }
-        Ok(HandledOutcome::Rejected { reason }) => {
+        Ok(DeclarationOutcome::Rejected { reason }) => {
             tracing::info!(reason = %reason, "scope declaration rejected");
             MessageOutcome::Ack
         }
+        Ok(_) => MessageOutcome::Ack,
         Err(err) if err.is_permanent() => {
             tracing::error!(
                 error = %err,

@@ -143,49 +143,30 @@ jobs:
       - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
         with:
           tool: cargo-semver-checks
-      - name: cargo semver-checks (per-crate)
-        # For each crate, baseline = its own latest tag (`<crate>-vX.Y.Z`).
-        # When `Cargo.toml` version > latest tag, semver-checks allows
-        # breaking changes proportional to the bump; when versions match,
-        # it enforces "no API change". Crates without any prior tag are
-        # skipped (first release).
+      - name: cargo semver-checks (per-crate, unified baseline)
         run: |
           set -euo pipefail
           shopt -s nullglob
           fail=0
+          baseline=$(git tag --list "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1)
+          if [ -z "$baseline" ]; then
+            echo "::notice::no prior workspace tag (v*), skipping semver-checks (first unified release)"
+            exit 0
+          fi
           for toml in crates/*/Cargo.toml; do
             crate=$(basename "$(dirname "$toml")")
-            # --- TEMPORARY WORKAROUND: time 0.3.48 vs async-nats 0.48 (E0119) ---
-            # async-nats 0.48 has an overly-broad blanket
-            # `impl<Kind> From<Kind> for Error<Kind>`. `time` 0.3.48 (released
-            # 2026-06-12) reintroduced a generic `From` impl that collides with
-            # it, so async-nats fails to compile with E0119. Our LOCKED builds
-            # are fine (Cargo.lock pins time 0.3.47); but `cargo semver-checks`
-            # resolves dependencies FRESH for BOTH the current AND the baseline
-            # rustdoc builds, IGNORING Cargo.lock (a known limitation —
-            # obi1kenobi/cargo-semver-checks#167), and pulls time 0.3.48. The
-            # baseline build is checked out from the crate's tag, so neither a
-            # manifest pin nor a lockfile in this tree can reach it. Until the
-            # upstream fix ships, we skip semver-checks for the three crates
-            # whose dependency graph includes async-nats. The other 8 crates are
-            # unaffected and still fully gated.
-            # REMOVE WHEN async-nats >= 0.50 (the chrono-datetime backend that
-            # drops the broad blanket impl) ships, OR time >= 0.3.49 resolves the
-            # coherence conflict — then this whole `case` goes away.
             case "$crate" in
               br-core-integration|br-identity-app|br-util-scope-declaration)
-                echo "::warning::skipping semver-checks for ${crate}: async-nats 0.48 fails to compile under time 0.3.48 (E0119); fresh resolution ignores Cargo.lock. See ci.yml comment (remove when async-nats>=0.50 or time>=0.3.49)."
+                echo "::warning::skipping semver-checks for ${crate}: async-nats 0.48 fails to compile under time 0.3.48 (E0119); fresh resolution ignores Cargo.lock (cargo-semver-checks#167). Remove when async-nats>=0.50 or time>=0.3.49."
                 continue
                 ;;
             esac
-            # --- end workaround ---
-            latest=$(git tag --list "${crate}-v*" | sort -V | tail -n1)
-            if [ -z "$latest" ]; then
-              echo "::notice::no prior tag for ${crate}, skipping semver-checks"
+            if ! git cat-file -e "${baseline}:crates/${crate}/Cargo.toml" 2>/dev/null; then
+              echo "::notice::${crate} did not exist at ${baseline}, skipping semver-checks (new crate)"
               continue
             fi
-            echo "::group::${crate} vs ${latest}"
-            if ! cargo semver-checks -p "${crate}" --baseline-rev "${latest}"; then
+            echo "::group::${crate} vs ${baseline}"
+            if ! cargo semver-checks -p "${crate}" --baseline-rev "${baseline}"; then
               fail=1
             fi
             echo "::endgroup::"
@@ -193,15 +174,11 @@ jobs:
           exit $fail
 
   changelog:
-    name: changelog entry per Cargo.toml version
+    name: changelog entry for the workspace version
     runs-on: ubuntu-latest
-    # Gate: every crate's current Cargo.toml version must have a matching
-    # `## [X.Y.Z]` section in its CHANGELOG.md. Catches the "bumped version
-    # but forgot the changelog entry" mistake at PR time, before the
-    # release-tags workflow would push an undocumented tag.
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      - name: check changelog entries
+      - name: check changelog entry
         run: bash .github/scripts/check-changelog.sh
       - name: check README tag pins are fresh
         run: bash .github/scripts/check-readme-pins.sh

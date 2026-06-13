@@ -1,10 +1,6 @@
-use br_core_integration::{MessageKind, integration_subject};
-
-pub(crate) const VERSION: u8 = 1;
-
-const BC: &str = "identity";
-const AGGREGATE: &str = "service_scope";
-const COMMAND_NAME: &str = "declare";
+use br_scope_declaration_contract::{
+    accepted_subject, command_subject, command_type, rejected_subject,
+};
 
 pub(crate) struct DeclarationSubjects {
     pub declare: String,
@@ -14,14 +10,13 @@ pub(crate) struct DeclarationSubjects {
 
 impl DeclarationSubjects {
     pub fn build() -> Self {
-        let subject = |kind, name| {
-            integration_subject(BC, kind, AGGREGATE, name, VERSION)
-                .expect("contract subject segments are valid by construction")
-        };
         Self {
-            declare: subject(MessageKind::Cmd, COMMAND_NAME),
-            accepted: subject(MessageKind::Evt, "accepted"),
-            rejected: subject(MessageKind::Evt, "rejected"),
+            declare: command_subject()
+                .expect("contract subject segments are valid by construction"),
+            accepted: accepted_subject()
+                .expect("contract subject segments are valid by construction"),
+            rejected: rejected_subject()
+                .expect("contract subject segments are valid by construction"),
         }
     }
 
@@ -30,21 +25,14 @@ impl DeclarationSubjects {
     }
 
     pub fn command_type() -> String {
-        format!("{AGGREGATE}.{COMMAND_NAME}")
+        command_type()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn subjects_match_the_published_contract() {
-        let s = DeclarationSubjects::build();
-        assert_eq!(s.declare, "identity.cmd.service_scope.declare.v1");
-        assert_eq!(s.accepted, "identity.evt.service_scope.accepted.v1");
-        assert_eq!(s.rejected, "identity.evt.service_scope.rejected.v1");
-    }
+    use br_scope_declaration_contract::VERSION;
 
     #[test]
     fn confirmation_filters_are_the_two_event_subjects() {

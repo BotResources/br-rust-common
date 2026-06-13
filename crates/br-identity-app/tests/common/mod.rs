@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use br_core_integration::NatsIntegrationPublisher;
-use br_core_integration::{Actor, IntegrationCommand, MessageMetadata, UserId};
+use br_core_integration::{Actor, EventMetadata, IntegrationCommand, UserId};
 use br_core_scope::{
     DeclareServiceScopes, ScopeDeclaration, ScopeKey, ScopeSpec, ServiceKey, ServiceManifest,
 };
@@ -347,7 +347,7 @@ fn integration_command(
     correlation_id: Uuid,
     actor: Uuid,
 ) -> IntegrationCommand<DeclareServiceScopes> {
-    let metadata = MessageMetadata::new(Actor::Human(UserId::from(actor)), correlation_id);
+    let metadata = EventMetadata::new(Actor::Human(UserId::from(actor)), correlation_id);
     IntegrationCommand::new(
         Uuid::now_v7(),
         "service_scope.declare",

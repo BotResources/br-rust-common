@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use br_core_integration::{
-    IntegrationError, IntegrationEvent, IntegrationPublisher, MessageMetadata,
+    EventMetadata, IntegrationError, IntegrationEvent, IntegrationPublisher,
     NatsIntegrationPublisher, PublishErrorKind,
 };
 use br_core_kernel::{Actor, UserId};
@@ -158,7 +158,7 @@ pub fn sample_event(thing_id: Uuid) -> IntegrationEvent<ThingHappenedV1> {
         "thing.happened",
         1,
         Utc::now(),
-        MessageMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7()),
+        EventMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7()),
         ThingHappenedV1 { thing_id },
     )
 }

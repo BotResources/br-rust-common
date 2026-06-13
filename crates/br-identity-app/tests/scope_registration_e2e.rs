@@ -3,7 +3,8 @@ mod common;
 use std::time::Duration;
 
 use br_core_scope::{ScopeKey, ScopeSpec, ServiceKey, ServiceManifest};
-use br_identity_app::{HandledOutcome, SaveOutcome, ScopeRegistryRepository};
+use br_identity_app::{SaveOutcome, ScopeRegistryRepository};
+use br_identity_domain::DeclarationOutcome;
 use common::{NatsEnv, PgEnv, declare_command, declare_command_from_json, pipeline, prerequisites};
 use sqlx::Row;
 use uuid::Uuid;
@@ -315,7 +316,7 @@ async fn scope_conflict_yields_rejected_confirmation_without_redelivery() {
     racer.await.ok();
 
     match outcome {
-        Ok(HandledOutcome::Rejected { reason }) => {
+        Ok(DeclarationOutcome::Rejected { reason }) => {
             assert_eq!(reason.to_string(), "scope_owned_by_another_service");
             let confirmation = nats
                 .await_confirmation(correlation, Duration::from_secs(10))
@@ -334,7 +335,7 @@ async fn scope_conflict_yields_rejected_confirmation_without_redelivery() {
                 "the unique-violation rejection must be emitted exactly once (no nak/redelivery loop)"
             );
         }
-        Ok(HandledOutcome::Accepted { .. }) => {
+        Ok(DeclarationOutcome::Accepted { .. }) => {
             eprintln!(
                 "scope_conflict e2e: race lost (accepted) — classification proven by the \
                  repository-seam test; skipping the rejected assertion this run"
