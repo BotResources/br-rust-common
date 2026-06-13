@@ -16,7 +16,7 @@ validation rules.
 
 **When not to use.** The transport envelope, correlation, causation, and
 timestamps — those are `br-core-integration`'s `IntegrationCommand<T>` /
-`IntegrationEvent<T>` and their `MessageMetadata`. This crate's messages are the
+`IntegrationEvent<T>` and their `EventMetadata`. This crate's messages are the
 `T` they carry; it carries no envelope of its own.
 
 ## Key distinctions
@@ -77,7 +77,7 @@ timestamps — those are `br-core-integration`'s `IntegrationCommand<T>` /
 | `ServiceScopesRejected` | Rejected-event payload: `{ service: ServiceKey, reason: ScopeDeclarationError }` (one reason; rejection is atomic). |
 
 Correlation, causation, and timestamps live on the integration envelope's
-`MessageMetadata`, **never** in these payloads — and that envelope is composed at
+`EventMetadata`, **never** in these payloads — and that envelope is composed at
 the consumer (`br-core-integration`'s `IntegrationCommand<T>` /
 `IntegrationEvent<T>`); this crate has **no dependency** on it.
 
@@ -124,9 +124,9 @@ let payload = DeclareServiceScopes::new(declaration);
 
 ```toml
 [dependencies]
-br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope-v0.1.1" }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "v0.8.0" }
 ```
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)

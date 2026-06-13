@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use br_core_events::EventMetadata as MessageMetadata;
+pub use br_core_events::EventMetadata;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[non_exhaustive]
@@ -11,7 +11,7 @@ pub struct IntegrationEvent<T> {
     pub event_type: String,
     pub version: u8,
     pub occurred_at: DateTime<Utc>,
-    pub metadata: MessageMetadata,
+    pub metadata: EventMetadata,
     pub payload: T,
 }
 
@@ -21,7 +21,7 @@ impl<T> IntegrationEvent<T> {
         event_type: impl Into<String>,
         version: u8,
         occurred_at: DateTime<Utc>,
-        metadata: MessageMetadata,
+        metadata: EventMetadata,
         payload: T,
     ) -> Self {
         Self {
@@ -42,7 +42,7 @@ pub struct IntegrationCommand<T> {
     pub command_type: String,
     pub version: u8,
     pub issued_at: DateTime<Utc>,
-    pub metadata: MessageMetadata,
+    pub metadata: EventMetadata,
     pub payload: T,
 }
 
@@ -52,7 +52,7 @@ impl<T> IntegrationCommand<T> {
         command_type: impl Into<String>,
         version: u8,
         issued_at: DateTime<Utc>,
-        metadata: MessageMetadata,
+        metadata: EventMetadata,
         payload: T,
     ) -> Self {
         Self {
@@ -78,8 +78,8 @@ mod tests {
         count: u32,
     }
 
-    fn sample_metadata() -> MessageMetadata {
-        MessageMetadata::new(Actor::Human(UserId::from(Uuid::nil())), Uuid::nil())
+    fn sample_metadata() -> EventMetadata {
+        EventMetadata::new(Actor::Human(UserId::from(Uuid::nil())), Uuid::nil())
             .with_causation(Uuid::nil())
     }
 
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn service_metadata_in_event_roundtrips() {
-        let meta = MessageMetadata::new(
+        let meta = EventMetadata::new(
             Actor::Service(ServiceAccountId::from(Uuid::from_u128(9))),
             Uuid::nil(),
         );

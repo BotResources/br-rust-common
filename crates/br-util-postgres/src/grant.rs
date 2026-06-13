@@ -33,7 +33,7 @@ pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), Postg
 mod live_tests {
     use super::*;
     use crate::role::ensure_app_role;
-    use crate::test_support::{
+    use br_test_support::{
         cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
     };
     use sqlx::Row;

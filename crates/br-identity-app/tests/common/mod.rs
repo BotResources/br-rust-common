@@ -1,15 +1,17 @@
-#![allow(dead_code)] // shared helper: each e2e binary uses a subset
+#![allow(dead_code)]
 
 use std::sync::Arc;
 
 use br_core_integration::NatsIntegrationPublisher;
-use br_core_integration::{Actor, IntegrationCommand, MessageMetadata, UserId};
+use br_core_integration::{Actor, EventMetadata, IntegrationCommand, UserId};
 use br_core_scope::{
     DeclareServiceScopes, ScopeDeclaration, ScopeKey, ScopeSpec, ServiceKey, ServiceManifest,
 };
 use br_identity_app::{
     ConfirmationPublisher, ScopeDeclarationPipeline, ScopeRegistryRepository, migrate,
 };
+pub use br_test_support::test_db_url;
+use br_test_support::{cleanup_role, open_pool_as, unique_suffix};
 use chrono::Utc;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -17,10 +19,6 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 pub const APP_PW: &str = "identity_app_pw_e2e_only";
-
-pub fn test_db_url() -> Option<String> {
-    std::env::var("TEST_DATABASE_URL").ok()
-}
 
 pub fn nats_url() -> Option<String> {
     std::env::var("NATS_URL").ok()
@@ -34,10 +32,6 @@ pub fn prerequisites() -> Option<(String, String)> {
             None
         }
     }
-}
-
-pub fn unique_suffix() -> String {
-    Uuid::now_v7().simple().to_string()[..24].to_string()
 }
 
 pub struct PgEnv {
@@ -134,26 +128,6 @@ fn swap_database(url: &str, db_name: &str) -> String {
     let mut parsed = url::Url::parse(url).expect("admin url parses");
     parsed.set_path(&format!("/{db_name}"));
     parsed.to_string()
-}
-
-async fn open_pool_as(url: &str, role: &str, password: &str) -> Result<PgPool, sqlx::Error> {
-    let opts = PgConnectOptions::from_str(url)
-        .expect("parse url")
-        .username(role)
-        .password(password);
-    PgPoolOptions::new()
-        .max_connections(4)
-        .connect_with(opts)
-        .await
-}
-
-async fn cleanup_role(admin: &PgPool, role: &str) {
-    let _ = sqlx::query(&format!("DROP OWNED BY \"{role}\" CASCADE"))
-        .execute(admin)
-        .await;
-    let _ = sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
-        .execute(admin)
-        .await;
 }
 
 pub const DECLARE_SUBJECT: &str = "identity.cmd.service_scope.declare.v1";
@@ -373,7 +347,7 @@ fn integration_command(
     correlation_id: Uuid,
     actor: Uuid,
 ) -> IntegrationCommand<DeclareServiceScopes> {
-    let metadata = MessageMetadata::new(Actor::Human(UserId::from(actor)), correlation_id);
+    let metadata = EventMetadata::new(Actor::Human(UserId::from(actor)), correlation_id);
     IntegrationCommand::new(
         Uuid::now_v7(),
         "service_scope.declare",

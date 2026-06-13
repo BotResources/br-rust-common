@@ -13,6 +13,6 @@ pub use conflict::SaveOutcome;
 pub use consumer::run_scope_declarations;
 pub use error::AppError;
 pub use migrations::migrate;
-pub use pipeline::{HandledOutcome, ScopeDeclarationPipeline};
+pub use pipeline::ScopeDeclarationPipeline;
 pub use publisher::ConfirmationPublisher;
 pub use repository::ScopeRegistryRepository;

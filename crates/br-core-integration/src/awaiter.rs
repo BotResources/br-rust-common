@@ -7,18 +7,18 @@ use uuid::Uuid;
 
 use crate::awaiter_config::AwaiterConfig;
 use crate::nats_classify::{classify_get_stream, classify_messages_error};
-use crate::{ConsumeErrorKind, IntegrationError, MessageMetadata};
+use crate::{ConsumeErrorKind, EventMetadata, IntegrationError};
 
 #[non_exhaustive]
 pub struct CorrelatedMatch {
     pub subject: String,
-    pub metadata: MessageMetadata,
+    pub metadata: EventMetadata,
     pub payload: Vec<u8>,
 }
 
 #[derive(Deserialize)]
 struct CorrelationProbe {
-    metadata: MessageMetadata,
+    metadata: EventMetadata,
 }
 
 pub struct CorrelatedAwaiter {
@@ -117,8 +117,7 @@ mod tests {
     use br_core_kernel::{Actor, UserId};
 
     fn envelope_bytes(correlation_id: Uuid) -> Vec<u8> {
-        let metadata =
-            MessageMetadata::new(Actor::Human(UserId::from(Uuid::nil())), correlation_id);
+        let metadata = EventMetadata::new(Actor::Human(UserId::from(Uuid::nil())), correlation_id);
         serde_json::to_vec(&serde_json::json!({
             "event_id": Uuid::nil(),
             "event_type": "service_scope.accepted",

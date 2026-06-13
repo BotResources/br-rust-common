@@ -25,21 +25,23 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 
 | Crate | Tier | Description | Docs | Changelog |
 |---|---|---|---|---|
-| `br-core-kernel` | core | Typed ID wrappers (`UserId`, `ServiceAccountId`) | [README](crates/br-core-kernel/README.md) | [CHANGELOG](crates/br-core-kernel/CHANGELOG.md) |
-| `br-core-auth` | core | `Passport` DTO, `X-Passport` header codec, PAT bearer-token contract | [README](crates/br-core-auth/README.md) | [CHANGELOG](crates/br-core-auth/CHANGELOG.md) |
-| `br-core-events` | core | Shared event envelopes (`EventMetadata`, `RawEvent`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](crates/br-core-events/CHANGELOG.md) |
-| `br-core-integration` | core | Typed integration envelopes + `IntegrationPublisher` (NATS JetStream / noop) | [README](crates/br-core-integration/README.md) | [CHANGELOG](crates/br-core-integration/CHANGELOG.md) |
-| `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | [README](crates/br-core-scope/README.md) | [CHANGELOG](crates/br-core-scope/CHANGELOG.md) |
-| `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | [README](crates/br-core-values/README.md) | [CHANGELOG](crates/br-core-values/CHANGELOG.md) |
-| `br-util-postgres` | util | Postgres pools, TLS, RLS context, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
-| `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
-| `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](crates/br-util-axum-readiness/CHANGELOG.md) |
-| `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | [README](crates/br-util-broadcast/README.md) | [CHANGELOG](crates/br-util-broadcast/CHANGELOG.md) |
-| `br-util-graphql` | util | GraphQL/REST edge kit: `ErrorCode` cross-service contract, `Affordance` / `MutationResult` / `Connection` / `SubscriptionPayload`, fallible `br-core-values` wrappers | [README](crates/br-util-graphql/README.md) | [CHANGELOG](crates/br-util-graphql/CHANGELOG.md) |
-| `br-util-observability` | util | Boot-time observability: structured JSON logging + an always-200 `/livez` liveness route | [README](crates/br-util-observability/README.md) | [CHANGELOG](crates/br-util-observability/CHANGELOG.md) |
-| `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | [README](crates/br-util-scope-declaration/README.md) | [CHANGELOG](crates/br-util-scope-declaration/CHANGELOG.md) |
-| `br-identity-domain` | bc | Identity bounded context, pure domain — scope-registration slice (`ScopeRegistry` aggregate, commands, events) | [README](crates/br-identity-domain/README.md) | [CHANGELOG](crates/br-identity-domain/CHANGELOG.md) |
-| `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | [README](crates/br-identity-app/README.md) | [CHANGELOG](crates/br-identity-app/CHANGELOG.md) |
+| `br-core-kernel` | core | Typed ID wrappers (`UserId`, `ServiceAccountId`) | [README](crates/br-core-kernel/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-auth` | core | `Passport` DTO, `X-Passport` header codec, PAT bearer-token contract | [README](crates/br-core-auth/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-events` | core | Shared event envelopes (`EventMetadata`, `RawEvent`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-integration` | core | Typed integration envelopes + `IntegrationPublisher` (NATS JetStream / noop) | [README](crates/br-core-integration/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | [README](crates/br-core-scope/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | [README](crates/br-core-values/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | [README](crates/br-scope-declaration-contract/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-postgres` | util | Postgres pools, TLS, RLS context, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | [README](crates/br-util-broadcast/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-graphql` | util | GraphQL/REST edge kit: `ErrorCode` cross-service contract, `Affordance` / `MutationResult` / `Connection` / `SubscriptionPayload`, fallible `br-core-values` wrappers | [README](crates/br-util-graphql/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-observability` | util | Boot-time observability: structured JSON logging + an always-200 `/livez` liveness route | [README](crates/br-util-observability/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | [README](crates/br-util-scope-declaration/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-identity-domain` | bc | Identity bounded context, pure domain — scope-registration slice (`ScopeRegistry` aggregate, commands, events) | [README](crates/br-identity-domain/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | [README](crates/br-identity-app/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-test-support` | dev | Dev-only shared Postgres e2e test helpers (role/pool/name primitives); a path dev-dependency, never a normal dependency | [README](crates/br-test-support/README.md) | [CHANGELOG](CHANGELOG.md) |
 
 ## Architecture
 
@@ -50,24 +52,22 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 
 ## Distribution
 
-Not published on crates.io. Each crate is versioned and tagged independently
-(`<crate-name>-vX.Y.Z`) and consumed by git tag:
+Not published on crates.io. All crates share a unified version and are released
+under a single git tag (`vX.Y.Z`) consumed by git tag:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres-v0.7.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v0.8.0" }
 ```
 
 ## Release process
 
-1. In your PR, bump the affected crate's `Cargo.toml` version and add a
-   matching `## [X.Y.Z] — YYYY-MM-DD` section to its `CHANGELOG.md`.
-2. Open the PR. CI runs `cargo semver-checks` per crate against its own
-   latest tag (`<crate>-v…`), so a version bump that doesn't match the
-   actual API change will fail the check.
-3. On merge to `main`, the `release-tags` workflow scans every
-   `crates/*/Cargo.toml`, creates the matching `<crate>-vX.Y.Z` annotated
-   tag if missing, and pushes it. That tag *is* the published version —
+1. In your PR, bump the workspace version in the root `Cargo.toml` and add a
+   matching `## [X.Y.Z] — YYYY-MM-DD` section to `CHANGELOG.md`.
+2. Open the PR. CI runs `cargo semver-checks` per crate against the previous
+   tag, so a version bump that doesn't match the actual API change will fail the check.
+3. On merge to `main`, the `release-tags` workflow creates the matching `vX.Y.Z`
+   annotated tag if missing, and pushes it. That tag *is* the published version —
    downstream consumers pin to it.
 
 ## Dev

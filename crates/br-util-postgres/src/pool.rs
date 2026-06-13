@@ -268,7 +268,7 @@ mod tests {
 
 #[cfg(test)]
 mod live_tls_tests {
-    use crate::test_support::{test_db_url, test_tls_db_url};
+    use br_test_support::{test_db_url, test_tls_db_url};
     use sqlx::Connection;
     use sqlx::postgres::PgConnection;
 

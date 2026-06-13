@@ -1,6 +1,6 @@
 use br_core_integration::{
-    IntegrationCommand, IntegrationError, IntegrationEvent, IntegrationPublisher,
-    IntegrationPublisherExt, MessageMetadata, NatsIntegrationPublisher, PublishErrorKind,
+    EventMetadata, IntegrationCommand, IntegrationError, IntegrationEvent, IntegrationPublisher,
+    IntegrationPublisherExt, NatsIntegrationPublisher, PublishErrorKind,
 };
 use br_core_kernel::{Actor, UserId};
 use chrono::{DateTime, Utc};
@@ -23,8 +23,8 @@ fn unique_prefix() -> String {
     format!("br_test_{suffix}")
 }
 
-fn sample_metadata() -> MessageMetadata {
-    MessageMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7())
+fn sample_metadata() -> EventMetadata {
+    EventMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7())
 }
 
 async fn setup(

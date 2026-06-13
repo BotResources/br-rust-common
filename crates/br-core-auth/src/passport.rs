@@ -1,3 +1,4 @@
+use br_core_kernel::{Actor, ServiceAccountId, UserId};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
@@ -43,6 +44,15 @@ impl Passport {
             Passport::Service {
                 service_account_id, ..
             } => *service_account_id,
+        }
+    }
+
+    pub fn to_actor(&self) -> Actor {
+        match self {
+            Passport::Human { user_id, .. } => Actor::Human(UserId::from(*user_id)),
+            Passport::Service {
+                service_account_id, ..
+            } => Actor::Service(ServiceAccountId::from(*service_account_id)),
         }
     }
 
@@ -174,6 +184,30 @@ mod tests {
         let p = impersonated_human();
         assert_eq!(p.actor_id(), Uuid::from_u128(1));
         assert_ne!(p.actor_id(), Uuid::from_u128(999));
+    }
+
+    #[test]
+    fn to_actor_maps_human_to_human_user_id() {
+        let uid = Uuid::from_u128(99);
+        let p = Passport::Human {
+            user_id: uid,
+            is_super_admin: false,
+            is_active: true,
+            auth_method: AuthMethod::Jwt,
+            impersonator: None,
+            claims: json!({}),
+        };
+        assert_eq!(p.to_actor(), Actor::Human(UserId::from(uid)));
+    }
+
+    #[test]
+    fn to_actor_maps_service_to_service_account_id() {
+        let sid = Uuid::from_u128(77);
+        let p = Passport::Service {
+            service_account_id: sid,
+            claims: json!({}),
+        };
+        assert_eq!(p.to_actor(), Actor::Service(ServiceAccountId::from(sid)));
     }
 
     #[test]

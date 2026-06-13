@@ -7,14 +7,20 @@ pub fn test_db_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL").ok()
 }
 
+pub fn test_tls_db_url() -> Option<String> {
+    std::env::var("TEST_TLS_DATABASE_URL").ok()
+}
+
+pub fn unique_suffix() -> String {
+    Uuid::now_v7().simple().to_string()[..24].to_string()
+}
+
 pub fn unique_role_name() -> String {
-    let suffix = &Uuid::now_v7().simple().to_string()[..24];
-    format!("br_test_{suffix}")
+    format!("br_test_{}", unique_suffix())
 }
 
 pub fn unique_table_name() -> String {
-    let suffix = &Uuid::now_v7().simple().to_string()[..24];
-    format!("br_test_tbl_{suffix}")
+    format!("br_test_tbl_{}", unique_suffix())
 }
 
 pub async fn cleanup_role(admin: &PgPool, role: &str) {
@@ -26,34 +32,35 @@ pub async fn cleanup_role(admin: &PgPool, role: &str) {
         .await;
 }
 
-pub async fn setup_owner(admin: &PgPool, admin_url: &str) -> (PgPool, String) {
-    let owner = unique_role_name();
-    let password = "owner_pw_for_e2e_only";
+pub async fn setup_caller(admin: &PgPool, admin_url: &str) -> (PgPool, String) {
+    let caller = unique_role_name();
+    let password = "caller_pw_for_e2e_only";
 
-    sqlx::query(&format!(
-        "CREATE ROLE \"{owner}\" LOGIN CREATEROLE NOSUPERUSER \
+    let create_sql = format!(
+        "CREATE ROLE \"{caller}\" LOGIN CREATEROLE NOSUPERUSER \
          PASSWORD '{password}'"
-    ))
-    .execute(admin)
-    .await
-    .expect("create owner role");
-
-    sqlx::query(&format!("GRANT CREATE ON SCHEMA public TO \"{owner}\""))
+    );
+    sqlx::query(&create_sql)
         .execute(admin)
         .await
-        .expect("grant CREATE on public to owner");
+        .expect("create caller role");
+
+    sqlx::query(&format!("GRANT CREATE ON SCHEMA public TO \"{caller}\""))
+        .execute(admin)
+        .await
+        .expect("grant CREATE on public to caller");
 
     let opts = PgConnectOptions::from_str(admin_url)
         .expect("TEST_DATABASE_URL must parse as a Postgres URL")
-        .username(&owner)
+        .username(&caller)
         .password(password);
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect_with(opts)
         .await
-        .expect("connect as owner");
+        .expect("connect as caller");
 
-    (pool, owner)
+    (pool, caller)
 }
 
 pub async fn open_pool_as(

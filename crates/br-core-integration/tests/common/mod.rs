@@ -1,6 +1,6 @@
 #![allow(dead_code)] // shared test-helper module; each binary uses only a subset
 
-use br_core_integration::{IntegrationCommand, IntegrationEvent, MessageMetadata};
+use br_core_integration::{EventMetadata, IntegrationCommand, IntegrationEvent};
 use br_core_kernel::{Actor, UserId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,8 @@ pub fn unique_prefix() -> String {
     format!("br_test_{}", Uuid::now_v7().simple())
 }
 
-pub fn metadata(correlation_id: Uuid) -> MessageMetadata {
-    MessageMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), correlation_id)
+pub fn metadata(correlation_id: Uuid) -> EventMetadata {
+    EventMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), correlation_id)
 }
 
 pub fn command(label: &str, correlation_id: Uuid) -> IntegrationCommand<TestPayload> {

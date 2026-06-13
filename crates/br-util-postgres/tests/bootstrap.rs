@@ -1,15 +1,12 @@
-mod common;
-
 use br_core_auth::{AuthMethod, Passport};
+use br_test_support::{
+    cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
+};
 use br_util_postgres::{ensure_app_role, grant_app_access, set_rls_context};
 use serde_json::json;
 use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
-
-use common::{
-    cleanup_role, open_pool_as, setup_owner, test_db_url, unique_role_name, unique_table_name,
-};
 
 const APP_PW: &str = "bootstrap_app_pw_e2e_only";
 
@@ -35,7 +32,7 @@ async fn full_bootstrap_chain_isolates_rows_per_actor() {
         .await
         .expect("connect as admin");
 
-    let (owner_pool, owner) = setup_owner(&admin, &url).await;
+    let (owner_pool, owner) = setup_caller(&admin, &url).await;
     let app_role = unique_role_name();
 
     ensure_app_role(&owner_pool, &app_role, APP_PW)

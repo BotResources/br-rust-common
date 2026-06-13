@@ -19,7 +19,7 @@ needs to agree with peers on the wire shape and metadata fields.
 
 | Type | Role |
 |---|---|
-| `MessageMetadata` | Re-export of `br_core_events::EventMetadata` — one type, one wire contract. Carries a typed `br_core_kernel::Actor` (human or machine), `correlation_id`, `causation_id` (skipped on the wire when `None`). Backward-compatible wire format: pre-`Actor` payloads (no `actor_kind`) default to a human actor. |
+| `EventMetadata` | Re-export of `br_core_events::EventMetadata` — one type, one wire contract. Carries a typed `br_core_kernel::Actor` (human or machine), `correlation_id`, `causation_id` (skipped on the wire when `None`). Backward-compatible wire format: pre-`Actor` payloads (no `actor_kind`) default to a human actor. |
 | `IntegrationEvent<T>` | Envelope for a fact: `event_id`, `event_type`, `version: u8`, `occurred_at`, `metadata`, `payload: T`. `#[non_exhaustive]` — build via `IntegrationEvent::new`. |
 | `IntegrationCommand<T>` | Envelope for a request: `command_id`, `command_type`, `version: u8`, `issued_at`, `metadata`, `payload: T`. `#[non_exhaustive]` — build via `IntegrationCommand::new`. |
 | `IntegrationError` | `Publish { kind, detail }` (transport), `Consume { kind, detail }` (bind/pull), `Decode { subject, detail }` (poison message), `Serialization(serde_json::Error)` (encoding). `#[non_exhaustive]`. |
@@ -60,7 +60,7 @@ relevant streams.
 use std::sync::Arc;
 use br_core_integration::{
     integration_subject, IntegrationEvent, IntegrationPublisher,
-    IntegrationPublisherExt, MessageKind, MessageMetadata, NatsIntegrationPublisher,
+    IntegrationPublisherExt, MessageKind, EventMetadata, NatsIntegrationPublisher,
 };
 use br_core_integration::{Actor, UserId};
 use chrono::Utc;
@@ -74,7 +74,7 @@ struct UserCreatedV1 { user_id: Uuid, email: String }
 let publisher: Arc<dyn IntegrationPublisher> =
     Arc::new(NatsIntegrationPublisher::new(jetstream));
 
-let metadata = MessageMetadata::new(
+let metadata = EventMetadata::new(
     Actor::Human(UserId::from(Uuid::now_v7())),
     Uuid::now_v7(), // correlation_id
 );
@@ -354,13 +354,13 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration-v0.4.0" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v0.8.0" }
 
 # The transactional outbox (the `OutboxStore` + `OutboxRelay`) is behind an
 # opt-in feature that pulls `sqlx`; the base crate stays DB-free without it:
-# br-core-integration = { git = "...", package = "br-core-integration", tag = "br-core-integration-v0.4.0", features = ["outbox"] }
+# br-core-integration = { git = "...", package = "br-core-integration", tag = "v0.8.0", features = ["outbox"] }
 ```
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)

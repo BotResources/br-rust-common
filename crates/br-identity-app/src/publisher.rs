@@ -1,18 +1,15 @@
 use br_core_integration::{
-    IntegrationCommand, IntegrationEvent, IntegrationPublisher, IntegrationPublisherExt,
-    MessageKind, MessageMetadata, integration_subject,
+    EventMetadata, IntegrationCommand, IntegrationEvent, IntegrationPublisher,
+    IntegrationPublisherExt,
 };
 use br_core_scope::{
     ScopeDeclarationError, ServiceKey, ServiceScopesAccepted, ServiceScopesRejected,
 };
+use br_scope_declaration_contract::{VERSION, event_subject, event_type};
 use chrono::Utc;
 use uuid::Uuid;
 
 use crate::error::AppError;
-
-const BC: &str = "identity";
-const AGGREGATE: &str = "service_scope";
-const VERSION: u8 = 1;
 
 pub struct ConfirmationPublisher<P: IntegrationPublisher + ?Sized> {
     publisher: std::sync::Arc<P>,
@@ -48,16 +45,14 @@ impl<P: IntegrationPublisher + ?Sized> ConfirmationPublisher<P> {
         command: &IntegrationCommand<T>,
         payload: Pay,
     ) -> Result<(), AppError> {
-        let subject = integration_subject(BC, MessageKind::Evt, AGGREGATE, name, VERSION)
-            .expect("static confirmation subject segments are valid");
+        let subject = event_subject(name).expect("static confirmation subject segments are valid");
 
-        let metadata =
-            MessageMetadata::new(command.metadata.actor, command.metadata.correlation_id)
-                .with_causation(command.command_id);
+        let metadata = EventMetadata::new(command.metadata.actor, command.metadata.correlation_id)
+            .with_causation(command.command_id);
 
         let event = IntegrationEvent::new(
             Uuid::now_v7(),
-            format!("{AGGREGATE}.{name}"),
+            event_type(name),
             VERSION,
             Utc::now(),
             metadata,
@@ -78,8 +73,7 @@ mod tests {
 
     fn command() -> IntegrationCommand<DeclareServiceScopes> {
         let correlation = Uuid::now_v7();
-        let metadata =
-            MessageMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), correlation);
+        let metadata = EventMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), correlation);
         IntegrationCommand::new(
             Uuid::now_v7(),
             "service_scope.declare",
@@ -91,18 +85,6 @@ mod tests {
             )
             .unwrap(),
         )
-    }
-
-    #[test]
-    fn confirmation_subjects_match_the_contract() {
-        assert_eq!(
-            integration_subject(BC, MessageKind::Evt, AGGREGATE, "accepted", VERSION).unwrap(),
-            "identity.evt.service_scope.accepted.v1"
-        );
-        assert_eq!(
-            integration_subject(BC, MessageKind::Evt, AGGREGATE, "rejected", VERSION).unwrap(),
-            "identity.evt.service_scope.rejected.v1"
-        );
     }
 
     #[tokio::test]

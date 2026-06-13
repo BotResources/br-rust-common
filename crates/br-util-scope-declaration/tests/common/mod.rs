@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use br_core_integration::{
-    IntegrationEvent, IntegrationPublisherExt, MessageMetadata, NatsIntegrationPublisher,
+    EventMetadata, IntegrationEvent, IntegrationPublisherExt, NatsIntegrationPublisher,
 };
 use br_core_kernel::{Actor, UserId};
 use br_core_scope::{
@@ -191,8 +191,8 @@ pub async fn declare_message_count(js: &async_nats::jetstream::Context, stream_n
     info.state.messages
 }
 
-fn metadata(correlation_id: Uuid) -> MessageMetadata {
-    MessageMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), correlation_id)
+fn metadata(correlation_id: Uuid) -> EventMetadata {
+    EventMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), correlation_id)
 }
 
 fn accepted_event(correlation_id: Uuid) -> IntegrationEvent<ServiceScopesAccepted> {

@@ -9,6 +9,8 @@ members = [
     "crates/br-core-values",
     "crates/br-identity-app",
     "crates/br-identity-domain",
+    "crates/br-scope-declaration-contract",
+    "crates/br-test-support",
     "crates/br-util-axum-auth",
     "crates/br-util-axum-readiness",
     "crates/br-util-broadcast",
@@ -19,30 +21,31 @@ members = [
 ]
 
 [workspace.package]
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/BotResources/br-rust-common"
 
 [workspace.dependencies]
-# Internal (this repo)
-br-core-auth = { path = "crates/br-core-auth", version = "0.6.2" }
-br-core-events = { path = "crates/br-core-events", version = "0.4.0" }
-br-core-integration = { path = "crates/br-core-integration", version = "0.4.0" }
-br-core-kernel = { path = "crates/br-core-kernel", version = "0.4.1" }
-br-core-scope = { path = "crates/br-core-scope", version = "0.1.1" }
-br-core-values = { path = "crates/br-core-values", version = "0.1.0" }
-br-identity-app = { path = "crates/br-identity-app", version = "0.1.1" }
-br-identity-domain = { path = "crates/br-identity-domain", version = "0.1.0" }
-br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.4.2" }
-br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.1" }
-br-util-broadcast = { path = "crates/br-util-broadcast", version = "0.1.0" }
-br-util-graphql = { path = "crates/br-util-graphql", version = "0.1.0" }
-br-util-observability = { path = "crates/br-util-observability", version = "0.2.0" }
-br-util-postgres = { path = "crates/br-util-postgres", version = "0.7.0" }
-br-util-scope-declaration = { path = "crates/br-util-scope-declaration", version = "0.1.1" }
+br-core-auth = { path = "crates/br-core-auth", version = "0.8.0" }
+br-core-events = { path = "crates/br-core-events", version = "0.8.0" }
+br-core-integration = { path = "crates/br-core-integration", version = "0.8.0" }
+br-core-kernel = { path = "crates/br-core-kernel", version = "0.8.0" }
+br-core-scope = { path = "crates/br-core-scope", version = "0.8.0" }
+br-core-values = { path = "crates/br-core-values", version = "0.8.0" }
+br-identity-app = { path = "crates/br-identity-app", version = "0.8.0" }
+br-identity-domain = { path = "crates/br-identity-domain", version = "0.8.0" }
+br-scope-declaration-contract = { path = "crates/br-scope-declaration-contract", version = "0.8.0" }
+br-test-support = { path = "crates/br-test-support", version = "0.8.0" }
+br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.8.0" }
+br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.8.0" }
+br-util-broadcast = { path = "crates/br-util-broadcast", version = "0.8.0" }
+br-util-graphql = { path = "crates/br-util-graphql", version = "0.8.0" }
+br-util-observability = { path = "crates/br-util-observability", version = "0.8.0" }
+br-util-postgres = { path = "crates/br-util-postgres", version = "0.8.0" }
+br-util-scope-declaration = { path = "crates/br-util-scope-declaration", version = "0.8.0" }
 
-# External
 async-nats = "0.48"
 async-trait = "0.1"
 futures-util = "0.3"
@@ -55,12 +58,6 @@ metrics-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-# `tls-rustls-ring-webpki`: pure-Rust rustls with the `ring` crypto provider
-# and the bundled webpki-roots CA set — no system trust store, no OpenSSL, so
-# the container build stays hermetic. Without a TLS backend, sqlx 0.8 rejects
-# `sslmode=require|verify-ca|verify-full` at connect time ("TLS upgrade
-# required … built without TLS support enabled"), making the crate's
-# remote-host TLS requirement unfulfillable at runtime.
 url = "2"
 sqlx = { version = "0.8", features = [
     "postgres",
