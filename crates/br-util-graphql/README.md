@@ -62,12 +62,22 @@ resolver / handler / endpoint becomes uniform.
 
 ## The other edge types
 
-- **`Affordance { action, allowed, reason_code }`** — the dumb-frontend
+- **`Affordance { action, allowed, reason_code, params? }`** — the dumb-frontend
   contract. The domain computes it and projects it (in the read snapshot *and*
   re-emitted on every state-changing event); the client renders it, never
   re-deriving "can I click this?". Build with `Affordance::allow(action)` or
   `Affordance::block(action, reason_code)` — a **blocked affordance must carry a
   code** (no silent denial), and `reason_code` is a key, never a sentence.
+  `params` is an **optional** structured map keyed to `reason_code` (e.g.
+  `{ "min_members": "1" }` on `system_group_protected`) — attach it with the
+  chainable `.with_param(key, value)` / `.with_params(...)`. It is the **same Rust
+  type** (`BTreeMap<String, String>`) with the **same builder ergonomics** as
+  `EdgeError::params`, but **not the same wire shape**: `EdgeError` renders its
+  params as a nested object inside the GraphQL `extensions`, whereas
+  `Affordance.params` is exposed on the wire as a **nullable `JSON` scalar field**
+  (`params: JSON`). It carries **codes, never UI prose** (the client localizes
+  using `reason_code` + `params`); `allow` / `block` leave it `null`, so existing
+  producers and their wire output are unchanged.
 - **`MutationResult`** — the success ack (`{ success: true }`). A mutation
   returns this or an `EdgeError`, **never a DTO** (R1, collaborative-pure): new
   state reaches clients via the event stream, so two clients can't diverge. The
@@ -166,7 +176,7 @@ this crate even when its own public surface is unchanged.
 
 ```toml
 [dependencies]
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v0.8.0", features = ["graphql"] }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v0.9.0", features = ["graphql"] }
 ```
 
 ---

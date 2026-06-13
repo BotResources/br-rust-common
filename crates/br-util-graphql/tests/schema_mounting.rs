@@ -63,7 +63,7 @@ impl Query {
             },
             vec![
                 Affordance::allow("rename"),
-                Affordance::block("delete", "locked"),
+                Affordance::block("delete", "locked").with_param("min_members", "1"),
             ],
         )
     }
@@ -119,7 +119,7 @@ async fn subscription_payload_registers_and_resolves() {
         { lastChange {
             event { __typename ... on DocRenamed { newName } }
             entity { id name }
-            affordances { action allowed reasonCode }
+            affordances { action allowed reasonCode params }
         } }
     "#;
     let response = schema().execute(query).await;
@@ -137,8 +137,10 @@ async fn subscription_payload_registers_and_resolves() {
         affordances[0]["reasonCode"],
         Value::Null.into_json().unwrap()
     );
+    assert_eq!(affordances[0]["params"], Value::Null.into_json().unwrap());
     assert_eq!(affordances[1]["allowed"], false);
     assert_eq!(affordances[1]["reasonCode"], "locked");
+    assert_eq!(affordances[1]["params"]["min_members"], "1");
 }
 
 #[tokio::test]
@@ -200,6 +202,10 @@ async fn sdl_exposes_the_generic_types() {
     assert!(
         sdl.contains("type Affordance"),
         "missing Affordance:\n{sdl}"
+    );
+    assert!(
+        sdl.contains("params: JSON"),
+        "Affordance.params must render as the JSON scalar:\n{sdl}"
     );
     assert!(
         sdl.contains("type DocSubscriptionPayload"),

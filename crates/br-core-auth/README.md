@@ -174,7 +174,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v0.8.0" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v0.9.0" }
 ```
 
 ---
