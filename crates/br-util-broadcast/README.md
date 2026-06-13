@@ -84,7 +84,7 @@ not UI prose; the human text and its i18n live at the edge. The enum is
 
 Tier `util`: depends only on `tokio` (`sync` for the broadcast channel) and
 `thiserror` (the error type). No I/O beyond the in-process channel, no `br-*`
-dependency. Per-crate semver, distributed by git tag.
+dependency. Unified workspace versioning, distributed by git tag.
 
 ## Install
 

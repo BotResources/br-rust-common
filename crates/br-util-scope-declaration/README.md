@@ -85,7 +85,8 @@ touches this crate.
 ## Subjects & fail-loud infrastructure
 
 Subjects follow the integration convention `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
-and are fixed by the published `br-core-scope` contract:
+and are fixed by the `br-scope-declaration-contract` crate (the single source of
+the wire coordinates):
 
 - command:  `identity.cmd.service_scope.declare.v1`
 - accepted: `identity.evt.service_scope.accepted.v1`

@@ -45,13 +45,9 @@ declared trusted must carry `sslmode=require` (or `verify-ca` /
 connect — **unconditionally, with no environment-gated escape hatch**. The only
 way to reach a remote host over plaintext is to declare it in
 `TRUSTED_NETWORK_HOSTS`. This is defense-in-depth for genuinely remote
-databases — a managed/off-cluster Postgres, a cross-segment link. As of 0.6.1 the crate
-ships a **rustls TLS backend** (`tls-rustls-ring-webpki`: pure-Rust rustls +
-the `ring` provider + bundled webpki CA roots, no system trust store or
-OpenSSL), so that requirement is actually fulfillable at runtime. Before
-0.6.1 the workspace built sqlx without any TLS backend, so a `sslmode=require`
-URL would fail to connect with "TLS upgrade required … built without TLS
-support enabled" — the requirement was validated but unbacked.
+databases — a managed/off-cluster Postgres, a cross-segment link. The crate ships a **rustls TLS backend** (`tls-rustls-ring-webpki`: pure-Rust
+rustls + the `ring` provider + bundled webpki CA roots, no system trust store or
+OpenSSL), so that requirement is fulfillable at runtime.
 
 ### `TRUSTED_NETWORK_HOSTS` matching contract
 
@@ -80,13 +76,13 @@ equals the host extracted from the URL, exactly:
 |---|---|
 | `init_pool(url) -> PgPool` | Long-lived runtime pool (max 20, min 2 connections). Validates TLS before connecting. **Does not run migrations.** |
 | `init_migration_pool() -> PgPool` | Short-lived owner pool (max 2). Reads `DATABASE_URL_OWNER` (falls back to `DATABASE_URL`). Use to run migrations, then drop before creating the app pool. |
-| `validate_database_tls(url)` | Standalone TLS validator. `sslmode` is resolved by sqlx itself (single source of truth: `sslmode`/`ssl-mode` alias, case-insensitive, last value wins); the host is judged from the URL **authority** by an independent, fail-closed extractor — deliberately *not* sqlx's, whose absent-host default is `localhost` — and a URL that overrides the target via a `host=`/`hostaddr=` query parameter is rejected outright (the validator cannot vouch for a host it does not judge). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` — unconditionally, with no escape hatch. Validation only — the rustls backend (since 0.6.1) is what lets such a connection actually complete. |
+| `validate_database_tls(url)` | Standalone TLS validator. `sslmode` is resolved by sqlx itself (single source of truth: `sslmode`/`ssl-mode` alias, case-insensitive, last value wins); the host is judged from the URL **authority** by an independent, fail-closed extractor — deliberately *not* sqlx's, whose absent-host default is `localhost` — and a URL that overrides the target via a `host=`/`hostaddr=` query parameter is rejected outright (the validator cannot vouch for a host it does not judge). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` — unconditionally, with no escape hatch. Validation only — the bundled rustls backend is what lets such a connection actually complete. |
 
 ### Role provisioning
 
 | Item | Role |
 |---|---|
-| `ensure_app_role(pool, role_name, password)` | Idempotent `CREATE ROLE … LOGIN` (guarded by an `IF NOT EXISTS` `DO` block) + `ALTER ROLE … PASSWORD`. Call at startup via the **owner** pool, before `sqlx::migrate`. Validates `role_name` against `^[a-z][a-z0-9_]*$` (≤63 bytes). The role inherits Postgres's no-privilege defaults from `CREATE ROLE … LOGIN` (NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT) — there is **no** explicit hardening `ALTER`, because on PG 16+ asserting those flags requires SUPERUSER (dropped in 0.5.1). The password is embedded as a **dollar-quoted literal** with a per-call random UUIDv7 tag, not a bind parameter — Postgres rejects bind params in DDL (`ALTER ROLE … PASSWORD $1` is a syntax error), so the 0.5.2 fix dollar-quotes instead. The generated SQL is never logged. |
+| `ensure_app_role(pool, role_name, password)` | Idempotent `CREATE ROLE … LOGIN` (guarded by an `IF NOT EXISTS` `DO` block) + `ALTER ROLE … PASSWORD`. Call at startup via the **owner** pool, before `sqlx::migrate`. Validates `role_name` against `^[a-z][a-z0-9_]*$` (≤63 bytes). The role inherits Postgres's no-privilege defaults from `CREATE ROLE … LOGIN` (NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT) — there is **no** explicit hardening `ALTER`, because on PG 16+ asserting those flags requires SUPERUSER. The password is embedded as a **dollar-quoted literal** with a per-call random UUIDv7 tag, not a bind parameter — Postgres rejects bind params in DDL (`ALTER ROLE … PASSWORD $1` is a syntax error), so dollar-quoting is used instead. The generated SQL is never logged. |
 | `grant_app_access(pool, app_role)` | Post-migration GRANTs on schema `public` (USAGE, full CRUD on tables, USAGE+SELECT on sequences) **plus** `ALTER DEFAULT PRIVILEGES` so tables created by future migrations are GRANTed automatically. Must run via the same role that owns subsequent migrations. |
 
 ### RLS
@@ -107,7 +103,7 @@ equals the host extracted from the URL, exactly:
 | `DATABASE_URL` | App runtime pool URL. |
 | `DATABASE_URL_OWNER` | Migration pool URL (falls back to `DATABASE_URL`). |
 | `TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass — and the **only** way to reach a remote host without TLS. |
-| `TRUSTED_HOSTS` | **Deprecated** (since 0.6.0; removal targeted for 1.0.0). Former name of `TRUSTED_NETWORK_HOSTS`; still honored as a fallback when the new name is unset, and warns on use. Rename it. |
+| `TRUSTED_HOSTS` | **Deprecated** (removal targeted for v1.0.0). Former name of `TRUSTED_NETWORK_HOSTS`; still honored as a fallback when the new name is unset, and warns on use. Rename it. |
 
 ## Two-role startup recipe
 

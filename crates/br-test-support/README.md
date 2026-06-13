@@ -46,15 +46,19 @@ small so a leaked pool surfaces fast.
 | Passwords are inline literals | These roles live only for the duration of one e2e test against a disposable database; they are never real credentials. |
 | `expect(...)` on setup, `Result` on `open_pool_as` | Setup failures are environment faults that should abort the test loudly; `open_pool_as` is also used to *assert* that a connection is refused, so it must return the error rather than panic. |
 
-## Installation
+## Usage
 
-This crate ships by git tag (no crates.io). Reference it from a consuming crate's
-`[dev-dependencies]` by workspace path:
+This crate is **dev-only and workspace-internal**. It is not published and must
+never appear in the dependency closure of any production crate. Reference it only
+from `[dev-dependencies]` of crates that live inside the `br-rust-common`
+workspace, using a path dependency:
 
 ```toml
 [dev-dependencies]
 br-test-support = { path = "../br-test-support" }
 ```
+
+External consumers of `br-rust-common` must **never** depend on this crate.
 
 ---
 

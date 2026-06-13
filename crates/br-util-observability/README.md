@@ -122,7 +122,7 @@ let app = Router::new()
 Tier `util`: a technical wrapper over `tracing` / `tracing-subscriber`, `axum` /
 `tower`, and the `metrics` facade (`metrics-exporter-prometheus` with the HTTP
 listener disabled, `metrics-process` for the universal collectors). No domain,
-no policy. Per-crate semver, distributed by git tag.
+no policy. Unified workspace versioning, distributed by git tag.
 
 ## Install
 
