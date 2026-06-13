@@ -387,6 +387,7 @@ dependencies = [
  "br-core-integration",
  "br-core-scope",
  "br-identity-domain",
+ "br-test-support",
  "br-util-axum-readiness",
  "br-util-postgres",
  "chrono",
@@ -409,6 +410,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "br-test-support"
+version = "0.1.0"
+dependencies = [
+ "sqlx",
+ "uuid",
 ]
 
 [[package]]
@@ -477,6 +486,7 @@ name = "br-util-postgres"
 version = "0.7.0"
 dependencies = [
  "br-core-auth",
+ "br-test-support",
  "serde_json",
  "sqlx",
  "thiserror 2.0.18",

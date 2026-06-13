@@ -21,6 +21,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+br-test-support = { workspace = true }
 br-util-postgres = { workspace = true }
 futures-util = { workspace = true }
 tokio = { workspace = true }

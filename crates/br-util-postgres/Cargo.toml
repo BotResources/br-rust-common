@@ -16,5 +16,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+br-test-support = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

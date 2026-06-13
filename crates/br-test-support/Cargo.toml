@@ -1,0 +1,12 @@
+[package]
+name = "br-test-support"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Dev-only shared Postgres e2e test helpers (role/pool/name primitives) for the br-rust-common crates; consumed as a path dev-dependency, never a normal dependency"
+
+[dependencies]
+sqlx = { workspace = true }
+uuid = { workspace = true }

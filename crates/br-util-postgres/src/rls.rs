@@ -55,10 +55,10 @@ mod live_tests {
     use super::*;
     use crate::grant::grant_app_access;
     use crate::role::ensure_app_role;
-    use crate::test_support::{
+    use br_core_auth::{AuthMethod, Passport};
+    use br_test_support::{
         cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
     };
-    use br_core_auth::{AuthMethod, Passport};
     use serde_json::json;
     use sqlx::Row;
     use sqlx::postgres::PgPoolOptions;

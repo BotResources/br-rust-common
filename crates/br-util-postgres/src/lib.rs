@@ -5,9 +5,6 @@ mod pool;
 mod rls;
 mod role;
 
-#[cfg(test)]
-mod test_support;
-
 pub use error::PostgresError;
 pub use grant::grant_app_access;
 pub use pool::{init_migration_pool, init_pool, validate_database_tls};
