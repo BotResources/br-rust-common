@@ -1,11 +1,3 @@
-//! The authoritative ISO 4217 active alphabetic currency list.
-//!
-//! The complete list of alphabetic codes from the ISO 4217 active currency
-//! list. Numeric codes and precious-metal codes (XAG, XAU, XPD, XPT) are
-//! excluded — those are out of scope for monetary amounts. The list changes
-//! rarely; a recompile when a code is added is a non-issue.
-
-/// All active ISO 4217 alphabetic currency codes (uppercase).
 pub const CURRENCY_CODES: [&str; 169] = [
     "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT",
     "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD",
@@ -27,8 +19,6 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    // The list must be sorted: `Currency::new` relies on `binary_search`. This
-    // guards the precondition so it cannot silently regress on an edit.
     #[test]
     fn codes_are_sorted() {
         assert!(
@@ -59,10 +49,6 @@ mod tests {
         }
     }
 
-    // Content vectors prove "the list is current", not "the list has the length
-    // I typed". PRESENCE of recent additions:
-    // - SLE (new Sierra Leone leone, 2022), ZWG (Zimbabwe Gold, 2024),
-    //   VED (redenominated Venezuelan bolívar, 2021).
     #[test]
     fn contains_recently_added_codes() {
         for code in &["SLE", "ZWG", "VED"] {
@@ -73,9 +59,6 @@ mod tests {
         }
     }
 
-    // ABSENCE of recently-retired codes:
-    // - HRK (Croatian kuna, replaced by EUR 2023), SLL (old SL leone, redenominated
-    //   to SLE 2022), ZWL (old Zimbabwe dollar, demonetized 2024 for ZWG).
     #[test]
     fn excludes_recently_retired_codes() {
         for code in &["HRK", "SLL", "ZWL"] {

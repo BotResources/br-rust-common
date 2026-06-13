@@ -1,0 +1,15 @@
+[package]
+name = "br-util-broadcast"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape makes publishing before the DB transaction commits hard to write by accident (notify-after-commit by construction), not compiler-enforced"
+
+[dependencies]
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

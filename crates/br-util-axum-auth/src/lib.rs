@@ -1,9 +1,3 @@
-//! Axum middleware that decodes the `X-Passport` header into a typed
-//! [`br_core_auth::Passport`] request extension.
-//!
-//! Returns a uniform, opaque `401 Unauthorized` for a missing, empty, or
-//! malformed header.
-
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::StatusCode;
@@ -12,30 +6,9 @@ use axum::response::{IntoResponse, Response};
 
 use br_core_auth::{Passport, PassportHeader};
 
-/// Constant body returned for every rejection. The precise cause is logged
-/// server-side, never disclosed to the caller, so the 401 is opaque and gives
-/// an unauthenticated caller no validation oracle.
 const UNAUTHORIZED_BODY: &str = "unauthorized";
 
-/// Axum middleware that extracts the `X-Passport` header, decodes the
-/// base64-encoded JSON into a [`Passport`], and inserts it as a request
-/// extension.
-///
-/// Returns a uniform, opaque `401 Unauthorized` (constant body
-/// `"unauthorized"`) when the header is missing, empty, non-UTF8, or
-/// malformed — every cause looks identical to the caller so the response is
-/// not a validation oracle; the precise cause goes to `tracing::warn!`
-/// server-side (the header value is never logged, as it may carry a forged
-/// passport payload).
-///
-/// **Trust boundary.** `X-Passport` is trustworthy only because the gateway
-/// strips any client-supplied copy and re-injects the resolved one, and
-/// NetworkPolicy blocks direct external access. This middleware *decodes* the
-/// header; it does not authenticate its origin — never expose a service
-/// mounting it except behind the gateway.
 pub async fn passport_header_middleware(mut request: Request<Body>, next: Next) -> Response {
-    // SECURITY: never interpolate the header VALUE into any log line below —
-    // it may contain a forged passport payload chosen by the caller.
     let header_val = match request.headers().get("X-Passport") {
         Some(v) => match v.to_str() {
             Ok(s) if !s.is_empty() => s.to_string(),
@@ -66,7 +39,6 @@ pub async fn passport_header_middleware(mut request: Request<Body>, next: Next) 
     next.run(request).await
 }
 
-/// The single, opaque 401 response shared by every rejection cause.
 fn unauthorized() -> Response {
     (StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY).into_response()
 }
@@ -157,8 +129,6 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// Drive one request and return its `(status, body)`. A fresh router per
-    /// request because `oneshot` consumes the service.
     async fn run(req: Request<Body>) -> (StatusCode, Vec<u8>) {
         let resp = test_router().oneshot(req).await.unwrap();
         let status = resp.status();
@@ -169,22 +139,14 @@ mod tests {
         (status, bytes)
     }
 
-    // Given the four distinct rejection causes (missing / empty / non-UTF8 /
-    // malformed header)
-    // When each is rejected
-    // Then the 401 body is byte-identical across all of them — the response
-    // leaks nothing about which check failed (no validation oracle)
     #[tokio::test]
     async fn all_rejection_causes_return_identical_opaque_body() {
-        // missing
         let missing = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        // empty
         let empty = Request::builder()
             .uri("/test")
             .header("X-Passport", "")
             .body(Body::empty())
             .unwrap();
-        // non-UTF8 header value (raw bytes that are not valid UTF-8)
         let non_utf8 = Request::builder()
             .uri("/test")
             .header(
@@ -193,7 +155,6 @@ mod tests {
             )
             .body(Body::empty())
             .unwrap();
-        // malformed (valid UTF-8, not a decodable passport)
         let malformed = Request::builder()
             .uri("/test")
             .header("X-Passport", "not-valid-base64!!!")

@@ -1,38 +1,16 @@
-//! The [`Actor`] that performs an action: a human user or a machine identity.
-
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{ServiceAccountId, UserId};
 
-/// Who performed an action — a human [`UserId`] or a machine [`ServiceAccountId`].
-///
-/// This is the typed replacement for the historical "actor is a bare `Uuid`"
-/// shape: with only a `Uuid`, a human and a service account were
-/// indistinguishable, so any downstream needing to branch on actor kind had to
-/// guess. `Actor` carries the distinction in the type, while [`id`](Actor::id)
-/// recovers the inner `Uuid` when the kind doesn't matter.
-///
-/// Its own serde shape is internally tagged (`{ "kind": "human", "id": "…" }`),
-/// but envelopes that embed an `Actor` (e.g. `br_core_events::EventMetadata`)
-/// flatten it onto their own wire format and own that contract — do not rely on
-/// this tagged shape across a wire boundary; rely on the embedding type's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum Actor {
-    /// A human user.
     Human(UserId),
-    /// A machine identity (service account).
     Service(ServiceAccountId),
 }
 
 impl Actor {
-    /// The inner `Uuid`, whichever variant this is.
-    ///
-    /// Use when the actor's identity is needed but its kind is not — e.g.
-    /// stamping `actor_id` onto a flat wire envelope. To branch on kind, match
-    /// the variant or call [`is_human`](Actor::is_human) /
-    /// [`is_service`](Actor::is_service).
     pub const fn id(&self) -> Uuid {
         match self {
             Self::Human(id) => id.as_uuid(),
@@ -40,12 +18,10 @@ impl Actor {
         }
     }
 
-    /// Whether this actor is a human user.
     pub const fn is_human(&self) -> bool {
         matches!(self, Self::Human(_))
     }
 
-    /// Whether this actor is a machine identity (service account).
     pub const fn is_service(&self) -> bool {
         matches!(self, Self::Service(_))
     }

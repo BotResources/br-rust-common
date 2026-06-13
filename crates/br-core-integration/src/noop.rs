@@ -1,11 +1,5 @@
-//! No-op [`IntegrationPublisher`] for tests and disabled-messaging defaults.
-
 use crate::{IntegrationError, IntegrationPublisher};
 
-/// No-op publisher. [`publish`](IntegrationPublisher::publish) always returns
-/// `Ok(())`; [`publish_if_connected`](IntegrationPublisher::publish_if_connected)
-/// does nothing. For tests and as a default when integration messaging is
-/// disabled.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct NoopIntegrationPublisher;
 

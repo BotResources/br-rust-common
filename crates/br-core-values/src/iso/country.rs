@@ -1,5 +1,3 @@
-//! ISO 3166-1 alpha-2 country code, as a constructor-validated newtype.
-
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -8,29 +6,12 @@ use crate::error::ValueError;
 use crate::iso::country_codes::COUNTRY_CODES;
 use crate::iso::currency::normalize_alpha_code;
 
-/// ISO 3166-1 alpha-2 country code (e.g. `FR`, `US`, `JP`).
-///
-/// Self-validating: built via [`CountryCode::new`], which trims, uppercases, and
-/// validates against the complete ISO 3166-1 alpha-2 list (all 249 codes).
-/// Illegal states are unrepresentable. `UK` is rejected (`GB` is correct for the
-/// United Kingdom); `ZZ` is rejected.
-///
-/// No `Deref`: read the code via [`CountryCode::as_str`] / `AsRef<str>` /
-/// `Display`. Deserialization re-runs [`CountryCode::new`] and fails closed on an
-/// invalid wire value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CountryCode(String);
 
 impl CountryCode {
-    /// Build a `CountryCode` from a raw string: trim, uppercase, require exactly
-    /// 2 ASCII letters, then look the code up in the ISO 3166-1 alpha-2 list.
-    ///
-    /// # Errors
-    /// - [`ValueError::MalformedCode`] if the trimmed input is not 2 ASCII letters.
-    /// - [`ValueError::UnknownCountry`] if it is well-formed but not an ISO code.
     pub fn new(raw: &str) -> Result<Self, ValueError> {
         let upper = normalize_alpha_code(raw, 2)?;
-        // O(log n) — `COUNTRY_CODES` is sorted (proven by `codes_are_sorted`).
         if COUNTRY_CODES.binary_search(&upper.as_str()).is_ok() {
             Ok(Self(upper))
         } else {
@@ -38,7 +19,6 @@ impl CountryCode {
         }
     }
 
-    /// The normalized (uppercase) ISO 3166-1 alpha-2 code.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -73,8 +53,6 @@ impl<'de> Deserialize<'de> for CountryCode {
 mod tests {
     use super::*;
 
-    // ── Valid construction ───────────────────────────────────────────────────
-
     #[test]
     fn valid_iso_codes_are_accepted() {
         for code in &["FR", "US", "JP", "GB", "DE", "SS"] {
@@ -82,7 +60,6 @@ mod tests {
         }
     }
 
-    // Territories and remote islands are in the spec, not just sovereign states.
     #[test]
     fn territories_and_remote_islands_are_accepted() {
         for code in &["BM", "BV", "TF"] {
@@ -105,8 +82,6 @@ mod tests {
     fn whitespace_is_trimmed_before_validation() {
         assert_eq!(CountryCode::new(" FR ").unwrap().as_str(), "FR");
     }
-
-    // ── Invalid — not in the ISO list (negative vectors) ─────────────────────
 
     #[test]
     fn rejects_uk_common_mistake_for_gb() {
@@ -131,8 +106,6 @@ mod tests {
             Err(ValueError::UnknownCountry { value: "XX".into() })
         );
     }
-
-    // ── Invalid — malformed (negative vectors) ───────────────────────────────
 
     #[test]
     fn rejects_empty_string() {
@@ -185,8 +158,6 @@ mod tests {
         ));
     }
 
-    // ── Display, access, serde ───────────────────────────────────────────────
-
     #[test]
     fn display_and_as_ref_produce_uppercase_code() {
         let c = CountryCode::new("us").unwrap();
@@ -209,7 +180,6 @@ mod tests {
         assert_eq!(original, back);
     }
 
-    // Given an invalid wire value, When deserialized, Then it fails closed.
     #[test]
     fn deserialize_rejects_unknown_code() {
         assert!(serde_json::from_str::<CountryCode>("\"ZZ\"").is_err());
@@ -219,8 +189,6 @@ mod tests {
     fn deserialize_rejects_malformed_code() {
         assert!(serde_json::from_str::<CountryCode>("\"FRA\"").is_err());
     }
-
-    // ── Equality ─────────────────────────────────────────────────────────────
 
     #[test]
     fn equality_is_by_normalized_code() {

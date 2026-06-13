@@ -1,30 +1,40 @@
 [package]
 name = "br-core-integration"
-version = "0.3.1"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Typed integration-event/command envelopes and IntegrationPublisher trait for cross-bounded-context messaging over NATS"
+description = "Typed integration-event/command envelopes, IntegrationPublisher trait, and a transactional outbox for cross-bounded-context messaging over NATS"
+
+[features]
+# The transactional outbox's Postgres store + relay. Off by default so the
+# base crate (publishers, consumers, the awaiter, the pure outbox state machine)
+# stays free of a `sqlx` dependency — only a service that stages outbox rows in
+# its own Postgres transaction enables it. The `OutboxStatus` state machine and
+# `OutboxRecord` are always available; this feature adds the DB-touching surface.
+# `sqlx/uuid` + `sqlx/json` supply the `Type`/`Encode`/`Decode` impls the store
+# binds (`Uuid` ids, `JSONB` payloads); they extend the workspace sqlx pin.
+outbox = ["dep:sqlx", "sqlx/uuid", "sqlx/json"]
 
 [dependencies]
 br-core-events = { workspace = true }
 async-nats = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
-# futures-util: StreamExt::next() on the JetStream pull-consumer message stream
-# (the durable wrapper and the correlated awaiter).
 futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# sqlx: only the outbox store/relay touch Postgres; gated behind `outbox` so the
+# base crate carries no DB dependency. Inherits the workspace pin (postgres +
+# runtime-tokio + the rustls TLS backend) — the outbox store itself binds plain
+# queries and lets the caller supply the transaction/pool, but it shares the
+# workspace's single sqlx feature set so every consumer links the same build.
+sqlx = { workspace = true, optional = true }
 thiserror = { workspace = true }
-# tokio: time (the awaiter's per-wait deadline via select! + sleep).
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-# br-core-kernel supplies `Actor` / `UserId` to build the envelope metadata in
-# tests: the e2e suites (tests/nats.rs, tests/common/mod.rs) and the awaiter's
-# in-crate unit tests.
 br-core-kernel = { workspace = true }

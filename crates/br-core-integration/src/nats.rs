@@ -1,18 +1,5 @@
-//! JetStream-backed [`IntegrationPublisher`].
-
 use crate::{IntegrationError, IntegrationPublisher};
 
-/// JetStream-backed publisher. Wraps an [`async_nats::jetstream::Context`].
-///
-/// - [`publish`](IntegrationPublisher::publish) serializes the JSON value to
-///   bytes, sends it on `subject`, and awaits the broker ack. Any ack error
-///   (broker down, no-responders, no stream for the subject, etc.) surfaces as
-///   [`IntegrationError::Publish`] with a classified
-///   [`PublishErrorKind`](crate::PublishErrorKind).
-/// - [`publish_if_connected`](IntegrationPublisher::publish_if_connected)
-///   does the same but logs and swallows any error — useful for best-effort
-///   side-channel emissions where the request handler must not fail because
-///   the bus is unavailable.
 pub struct NatsIntegrationPublisher {
     jetstream: async_nats::jetstream::Context,
 }
@@ -31,9 +18,6 @@ impl IntegrationPublisher for NatsIntegrationPublisher {
         payload: serde_json::Value,
     ) -> Result<(), IntegrationError> {
         let bytes = serde_json::to_vec(&payload)?;
-        // Two await points each return an `async_nats` `PublishError`; both are
-        // classified through `from_publish`. The no-stream case surfaces at the
-        // ack await as `StreamNotFound` → `PublishErrorKind::NoStream`.
         let ack = self
             .jetstream
             .publish(subject.to_string(), bytes.into())
