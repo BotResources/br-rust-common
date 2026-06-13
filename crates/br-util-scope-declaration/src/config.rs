@@ -1,14 +1,11 @@
 use std::time::Duration;
 
-use br_core_integration::AwaiterConfig;
-
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ScopeDeclarationConfig {
     pub enabled: bool,
     pub stream_name: String,
     pub wait_timeout: Duration,
-    pub awaiter: AwaiterConfig,
 }
 
 impl ScopeDeclarationConfig {
@@ -19,7 +16,6 @@ impl ScopeDeclarationConfig {
             enabled: true,
             stream_name: stream_name.into(),
             wait_timeout: Self::DEFAULT_WAIT_TIMEOUT,
-            awaiter: AwaiterConfig::default(),
         }
     }
 
@@ -41,7 +37,6 @@ mod tests {
         assert!(c.enabled);
         assert_eq!(c.stream_name, "IDENTITY");
         assert_eq!(c.wait_timeout, ScopeDeclarationConfig::DEFAULT_WAIT_TIMEOUT);
-        assert_eq!(c.awaiter, AwaiterConfig::default());
     }
 
     #[test]

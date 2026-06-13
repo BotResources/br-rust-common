@@ -24,13 +24,13 @@ needs to agree with peers on the wire shape and metadata fields.
 | `IntegrationCommand<T>` | Envelope for a request: `command_id`, `command_type`, `version: u8`, `issued_at`, `metadata`, `payload: T`. `#[non_exhaustive]` — build via `IntegrationCommand::new`. |
 | `IntegrationError` | `Publish { kind, detail }` (transport), `Consume { kind, detail }` (bind/pull), `Decode { subject, detail }` (poison message), `Serialization(serde_json::Error)` (encoding). `#[non_exhaustive]`. |
 | `PublishErrorKind` | Classifies a publish failure: `NoStream`, `Timeout`, `Other`. `#[non_exhaustive]`. |
-| `ConsumeErrorKind` | Classifies a consume/bind failure: `NoStream`, `NoConsumer` (missing declared object at bind), `ConsumerGone` (the consumer vanished mid-run — deleted server-side or, for the awaiter, reaped past its `inactive_threshold`), `Other`. `#[non_exhaustive]`. |
+| `ConsumeErrorKind` | Classifies a consume/bind failure: `NoStream`, `NoConsumer` (missing declared object at bind), `ConsumerGone` (the consumer vanished mid-run — deleted server-side, or the awaiter's NATS connection closed), `Other`. `#[non_exhaustive]`. |
 | `IntegrationPublisher` (trait, object-safe) | `publish(subject, payload) -> Result<(), IntegrationError>` and fire-and-forget `publish_if_connected(subject, payload)`. |
 | `IntegrationPublisherExt` (blanket trait) | Typed helpers: `publish_event`, `publish_command`, and `_if_connected` variants. |
 | `NatsIntegrationPublisher` | JetStream-backed implementation, awaits the broker ack. |
 | `NoopIntegrationPublisher` | No-op; for tests and as a default when messaging is disabled. |
 | `DurableConsumer` / `Delivery` / `MessageOutcome` | The **receiver** consumer shape: binds a durable consumer and runs a typed handler over a parked message stream (see [Consuming](#consuming)). |
-| `CorrelatedAwaiter` / `CorrelatedMatch` / `AwaiterConfig` | The **awaiter** consumer shape: an ephemeral consumer that resolves on a matching `correlation_id`; `AwaiterConfig` tunes its `inactive_threshold` (how long it stays armed across waits — default 300s). See [Consuming](#consuming). |
+| `CorrelatedAwaiter` / `CorrelatedMatch` | The **awaiter** consumer shape: a core NATS push subscription on the confirmation subjects that resolves on the first message matching a `correlation_id`. See [Consuming](#consuming). |
 | `integration_subject` / `MessageKind` / `SubjectError` | Builds and validates the subject convention (see below). |
 | `OutboxStatus` / `OutboxRecord` / `next_after_attempt` / `classify_failure` / `retry_backoff` / `verify_consumer` | The **pure** outbox core (no feature, no `sqlx`): the staged-message value, the retry state machine, the structural-vs-transient failure classifier, the retry-backoff policy, and the ungated receiver-online precheck (`async_nats` only). See [Transactional outbox](#transactional-outbox). |
 | `OutboxStore` / `OutboxRelay` / `RelayPolicy` / `RelayHealth` | The outbox's Postgres store + subscribe-driven per-row-commit relay (`run` is the entry point), plus its `Degraded`-on-structural-failure health signal. Behind the **`outbox`** feature (pulls `sqlx`). |
@@ -106,13 +106,14 @@ Receiving comes in **two deliberately different shapes**. Pick by role.
 | Shape | Type | Use when | Consumer | Queue group? |
 |---|---|---|---|---|
 | **Receiver** | `DurableConsumer` | You consume commands/events addressed to your context (e.g. Identity consuming a `…cmd…` subject). | A *pre-declared* durable consumer, bound by name. | Yes — replicas binding the **same** durable name share delivery (one message → one worker). |
-| **Awaiter** | `CorrelatedAwaiter` | You published a command and await its correlated reply (e.g. a declaring replica awaiting `…accepted` / `…rejected`). | A *per-boot ephemeral* consumer, created at runtime. | No — every replica sees all replies and filters its own by `correlation_id`. |
+| **Awaiter** | `CorrelatedAwaiter` | You published a command and await its correlated reply (e.g. a declaring replica awaiting `…accepted` / `…rejected`). | A *per-boot* core NATS push subscription, opened at runtime. | No — every replica sees all replies and filters its own by `correlation_id`. |
 
-**No auto-provisioning.** Both bind by name and **fail loud** if the stream — or,
-for `DurableConsumer`, the named consumer — is missing (`IntegrationError::Consume`
-with `ConsumeErrorKind::NoStream` / `NoConsumer`). The lib never creates a stream
-or a durable consumer. The awaiter *does* create its **ephemeral** consumer — a
-read cursor, not infrastructure — but never the stream.
+**No auto-provisioning.** Both assert the declared stream exists by name and
+**fail loud** if it — or, for `DurableConsumer`, the named consumer — is missing
+(`IntegrationError::Consume` with `ConsumeErrorKind::NoStream` / `NoConsumer`).
+The lib never creates a stream or a durable consumer. The awaiter still asserts
+the stream (the declared infra must exist) but awaits over a **core NATS push
+subscription**, not a JetStream consumer — no infrastructure is created.
 
 **Delivery is at-least-once, not exactly-once.** A message is redelivered until
 explicitly acked or termed; the handler returns a `MessageOutcome`
@@ -159,21 +160,24 @@ consumer
 
 ### Awaiter — `CorrelatedAwaiter`
 
-The safe protocol is **subscribe-first**: create the awaiter, *then* publish the
-command, then await. On timeout, re-publish (same `correlation_id`) and await
-again — the awaiter stays armed across waits **up to its configured
-`inactive_threshold` of inactivity** (`AwaiterConfig`, default 300s), so no reply
-is missed in between. A reply emitted *before* the awaiter exists is missed by
-design; subscribe-first + re-publish makes that safe.
+The confirmation is a transient, fire-once correlated reply — it needs neither
+durability nor catch-up — so the awaiter is a **core NATS push subscription** on
+the confirmation subjects, not a JetStream consumer. `create` first asserts the
+declared stream exists (fail loud with `ConsumeErrorKind::NoStream` if absent —
+the lib never auto-provisions), then opens the core subscriptions over the
+JetStream context's own `client()`. A JetStream publish also reaches core
+subscribers on the same subject, so the JetStream-published reply is delivered
+live.
 
-**Stays armed only up to `inactive_threshold`.** *During* a wait the pull stream
-issues requests that keep the ephemeral consumer alive; *between* waits nothing
-polls it. The server reaps an ephemeral consumer after `inactive_threshold` of
-such inactivity, so beyond that bound the next `await_correlation` **fails loud**
-with `ConsumeErrorKind::ConsumerGone` rather than silently missing the reply on a
-recreated `New`-policy consumer. The default (300s) is generous; raise it with
-`CorrelatedAwaiter::create_with(.., AwaiterConfig { inactive_threshold })` if the
-gap between a timed-out wait and the next re-publish can exceed it.
+The protocol is **subscribe-first**: `create` opens the subscriptions, *then* you
+publish the command, then you await. Because the subscription is established
+before the command is published, the reply always arrives after the SUB — a reply
+landing *inside* the first await window is delivered within that window, with no
+consumer-establishment race. On timeout, re-publish (same `correlation_id`) and
+await again; a core subscription parks at zero CPU between waits and issues no
+pull requests, so it stays armed indefinitely with no inactivity bound. A reply
+emitted *before* the awaiter exists is missed by design; subscribe-first +
+re-publish makes that safe.
 
 ```rust
 use std::time::Duration;
@@ -191,11 +195,6 @@ let mut awaiter = CorrelatedAwaiter::create(
     ],
 )
 .await?;
-// Need a longer armed window between waits? Use `create_with`
-// (`AwaiterConfig` is non-exhaustive — start from `default()`):
-// let mut config = AwaiterConfig::default();
-// config.inactive_threshold = Duration::from_secs(600);
-// CorrelatedAwaiter::create_with(&jetstream, "IDENTITY", subjects, config).await?;
 
 // … publish the command carrying `correlation_id` here (subscribe-first) …
 
@@ -354,11 +353,11 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v0.9.0" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v0.10.0" }
 
 # The transactional outbox (the `OutboxStore` + `OutboxRelay`) is behind an
 # opt-in feature that pulls `sqlx`; the base crate stays DB-free without it:
-# br-core-integration = { git = "...", package = "br-core-integration", tag = "v0.9.0", features = ["outbox"] }
+# br-core-integration = { git = "...", package = "br-core-integration", tag = "v0.10.0", features = ["outbox"] }
 ```
 
 ---

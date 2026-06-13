@@ -6,7 +6,8 @@ use br_util_axum_readiness::ReadinessHandle;
 use br_util_scope_declaration::{ScopeDeclarationConfig, ScopeDeclarationOutcome, declare_scopes};
 use common::{
     StubReceiver, StubReply, create_identity_stream, declare_message_count, jetstream,
-    notifier_declaration, spawn_delayed_accept_stub, teardown, unique_stream,
+    notifier_declaration, serialize_identity_stream, spawn_delayed_accept_stub, teardown,
+    unique_stream,
 };
 
 fn fast_config(stream_name: &str) -> ScopeDeclarationConfig {
@@ -19,6 +20,7 @@ fn fast_config(stream_name: &str) -> ScopeDeclarationConfig {
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn accepted_sets_readiness_up() {
     let Some(_) = common::nats_url() else { return };
+    let _guard = serialize_identity_stream().await;
     let js = jetstream().await;
     let stream = unique_stream();
     let _s = create_identity_stream(&js, &stream).await;
@@ -48,6 +50,7 @@ async fn accepted_sets_readiness_up() {
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn rejected_sets_readiness_down_with_reason() {
     let Some(_) = common::nats_url() else { return };
+    let _guard = serialize_identity_stream().await;
     let js = jetstream().await;
     let stream = unique_stream();
     let _s = create_identity_stream(&js, &stream).await;
@@ -83,6 +86,7 @@ async fn rejected_sets_readiness_down_with_reason() {
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn timeout_then_republish_then_accepted() {
     let Some(_) = common::nats_url() else { return };
+    let _guard = serialize_identity_stream().await;
     let js = jetstream().await;
     let stream = unique_stream();
     let _s = create_identity_stream(&js, &stream).await;
@@ -115,6 +119,7 @@ async fn timeout_then_republish_then_accepted() {
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn duplicate_confirmations_first_match_wins() {
     let Some(_) = common::nats_url() else { return };
+    let _guard = serialize_identity_stream().await;
     let js = jetstream().await;
     let stream = unique_stream();
     let _s = create_identity_stream(&js, &stream).await;
@@ -144,6 +149,7 @@ async fn duplicate_confirmations_first_match_wins() {
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn disabled_mode_publishes_nothing_and_sets_ready() {
     let Some(_) = common::nats_url() else { return };
+    let _guard = serialize_identity_stream().await;
     let js = jetstream().await;
     let stream = unique_stream();
     let _s = create_identity_stream(&js, &stream).await;
@@ -172,6 +178,7 @@ async fn disabled_mode_publishes_nothing_and_sets_ready() {
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn missing_stream_fails_loud() {
     let Some(_) = common::nats_url() else { return };
+    let _guard = serialize_identity_stream().await;
     let js = jetstream().await;
     let absent = format!("{}_absent", unique_stream());
 

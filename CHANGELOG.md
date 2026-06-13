@@ -9,6 +9,41 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
+## [0.10.0] — 2026-06-13
+
+### Fixed
+
+- **`br-core-integration` / `br-util-scope-declaration` — scope-declaration boot
+  no longer eats ~10s of dead time on the happy path.** `CorrelatedAwaiter` waited
+  for the correlated reply over a freshly-created `DeliverPolicy::New` ephemeral
+  JetStream pull consumer. A reply that arrived *during the first await window* was
+  not surfaced on that window's `messages()` stream (a pull-request establishment
+  race on the new consumer); it was only drained on the next loop pass, after a
+  full `wait_timeout` elapsed and `declare_scopes` re-published. Every
+  scope-declaring service therefore paid one `wait_timeout` (default 10s) of dead
+  time before readiness flipped UP, even when Identity replied in under a second.
+  The awaiter now awaits over a **core NATS push subscription** opened (before the
+  command is published) on the confirmation subjects, so a reply landing inside the
+  first window is delivered within it — the establishment race is structurally gone
+  and the subscription parks at zero CPU between waits with no pull requests. The
+  declare command stays on JetStream (durable); a JetStream publish also reaches
+  core subscribers on the same subject. The fail-loud-on-missing-stream contract is
+  unchanged: `create` still asserts the declared stream exists and returns
+  `ConsumeErrorKind::NoStream` if absent.
+
+### Changed (breaking)
+
+- **`br-core-integration`: `AwaiterConfig` and `CorrelatedAwaiter::create_with`
+  removed.** `AwaiterConfig` tuned only the ephemeral consumer's
+  `inactive_threshold`, a JetStream-consumer concept with no meaning for a core
+  push subscription. `CorrelatedAwaiter::create(jetstream, stream_name,
+  filter_subjects)` is now the sole constructor; its signature and
+  `await_correlation` / `CorrelatedMatch` are unchanged.
+- **`br-util-scope-declaration`: `ScopeDeclarationConfig.awaiter` field removed.**
+  It carried the now-deleted `AwaiterConfig`. `ScopeDeclarationConfig` still tunes
+  `enabled`, `stream_name`, and `wait_timeout`; construct it with `enabled(..)` /
+  `disabled(..)` as before.
+
 ## [0.9.0] — 2026-06-13
 
 ### Added

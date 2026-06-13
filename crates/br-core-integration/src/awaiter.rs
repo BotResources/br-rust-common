@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use async_nats::jetstream::consumer::{self, pull::Config as PullConfig};
+use async_nats::Subscriber;
 use futures_util::StreamExt;
+use futures_util::stream::{SelectAll, select_all};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::awaiter_config::AwaiterConfig;
-use crate::nats_classify::{classify_get_stream, classify_messages_error};
+use crate::nats_classify::classify_get_stream;
 use crate::{ConsumeErrorKind, EventMetadata, IntegrationError};
 
 #[non_exhaustive]
@@ -22,7 +22,7 @@ struct CorrelationProbe {
 }
 
 pub struct CorrelatedAwaiter {
-    messages: consumer::pull::Stream,
+    messages: SelectAll<Subscriber>,
 }
 
 impl CorrelatedAwaiter {
@@ -31,44 +31,24 @@ impl CorrelatedAwaiter {
         stream_name: impl AsRef<str>,
         filter_subjects: Vec<String>,
     ) -> Result<Self, IntegrationError> {
-        Self::create_with(
-            jetstream,
-            stream_name,
-            filter_subjects,
-            AwaiterConfig::default(),
-        )
-        .await
-    }
-
-    pub async fn create_with(
-        jetstream: &async_nats::jetstream::Context,
-        stream_name: impl AsRef<str>,
-        filter_subjects: Vec<String>,
-        config: AwaiterConfig,
-    ) -> Result<Self, IntegrationError> {
-        let stream = jetstream
+        jetstream
             .get_stream(stream_name.as_ref())
             .await
             .map_err(|e| IntegrationError::consume(classify_get_stream(&e), e.to_string()))?;
 
-        let config = PullConfig {
-            durable_name: None,
-            deliver_policy: consumer::DeliverPolicy::New,
-            ack_policy: consumer::AckPolicy::None,
-            filter_subjects,
-            inactive_threshold: config.inactive_threshold,
-            ..Default::default()
-        };
-        let consumer = stream
-            .create_consumer(config)
-            .await
-            .map_err(|e| IntegrationError::consume(ConsumeErrorKind::Other, e.to_string()))?;
-        let messages = consumer
-            .messages()
-            .await
-            .map_err(|e| IntegrationError::consume(ConsumeErrorKind::Other, e.to_string()))?;
+        let client = jetstream.client();
+        let mut subscriptions = Vec::with_capacity(filter_subjects.len());
+        for subject in filter_subjects {
+            let subscription = client
+                .subscribe(subject)
+                .await
+                .map_err(|e| IntegrationError::consume(ConsumeErrorKind::Other, e.to_string()))?;
+            subscriptions.push(subscription);
+        }
 
-        Ok(Self { messages })
+        Ok(Self {
+            messages: select_all(subscriptions),
+        })
     }
 
     pub async fn await_correlation(
@@ -86,12 +66,9 @@ impl CorrelatedAwaiter {
                     let Some(message) = next else {
                         return Err(IntegrationError::consume(
                             ConsumeErrorKind::ConsumerGone,
-                            "awaiter pull stream ended (ephemeral consumer gone)",
+                            "awaiter subscription ended (NATS connection closed)",
                         ));
                     };
-                    let message = message.map_err(|e| {
-                        IntegrationError::consume(classify_messages_error(&e), e.to_string())
-                    })?;
 
                     let Ok(probe) = serde_json::from_slice::<CorrelationProbe>(&message.payload)
                     else {
