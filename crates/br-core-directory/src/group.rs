@@ -30,7 +30,7 @@ mod tests {
         serde_json::json!({
             "version": 1,
             "name": "engineering",
-            "organization_id": "00000000-0000-0000-0000-000000000000",
+            "x_custom": "00000000-0000-0000-0000-000000000000",
             "is_system": false,
             "member_ids": [
                 "01938c1f-0000-7000-8000-000000000001",
@@ -55,10 +55,10 @@ mod tests {
     }
 
     #[test]
-    fn organization_id_rides_as_extension_not_core() {
+    fn project_fields_ride_as_extensions_not_core() {
         let group: PublishedGroup = serde_json::from_value(live_reference_wire()).unwrap();
         assert_eq!(
-            group.extension("organization_id"),
+            group.extension("x_custom"),
             Some(&Value::from("00000000-0000-0000-0000-000000000000"))
         );
         assert_eq!(group.extension("is_system"), Some(&Value::from(false)));
@@ -68,7 +68,7 @@ mod tests {
     }
 
     #[test]
-    fn membership_is_derivable_from_member_ids() {
+    fn has_member_is_derivable_from_member_ids() {
         let group: PublishedGroup = serde_json::from_value(live_reference_wire()).unwrap();
         let member: Uuid = "01938c1f-0000-7000-8000-000000000001".parse().unwrap();
         let stranger: Uuid = "01938c1f-0000-7000-8000-0000000000ff".parse().unwrap();

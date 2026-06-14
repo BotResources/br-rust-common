@@ -32,10 +32,7 @@ mod tests {
             "avatar_mime": "image/png",
             "locale": "en",
             "disabled_at": "2025-04-12T09:30:00Z",
-            "is_platform_member": true,
-            "memberships": [
-                { "org_id": "00000000-0000-0000-0000-000000000000", "is_admin": true }
-            ]
+            "x_custom": { "nested": "value" }
         })
     }
 
@@ -59,13 +56,9 @@ mod tests {
     fn project_fields_ride_as_extensions_not_core() {
         let user: PublishedUser = serde_json::from_value(live_reference_wire()).unwrap();
         assert_eq!(user.extension("locale"), Some(&Value::from("en")));
-        assert_eq!(
-            user.extension("is_platform_member"),
-            Some(&Value::from(true))
-        );
         assert_eq!(user.extension("version"), Some(&Value::from(1)));
         assert!(user.extension("avatar_object_key").is_some());
-        assert!(user.extension("memberships").is_some());
+        assert!(user.extension("x_custom").is_some());
         assert!(user.extension("email").is_none());
         assert!(user.extension("first_name").is_none());
     }

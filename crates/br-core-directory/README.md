@@ -22,10 +22,10 @@ denormalized, staleable permission copy in KV would be dead, write-only data.
 
 **Why this is a freeze, not an invention.** The wire is **extracted from the
 live, already-consumed Published Language in be-botresources** (`svc-identity`
-publishes it, `svc-website` reads `is_platform_member` from it today). The wire —
-field names, KV key layout, JSON casing — is frozen as that reference has it; a
-Go anchor mirrors this crate's serde shape and the e2e-harness imports this crate
-as the oracle to deserialize the Go-frozen wire (lib drift → the deser fails).
+publishes it, downstream services read it today). The wire — field names, KV key
+layout, JSON casing — is frozen as that reference has it; a Go anchor mirrors
+this crate's serde shape and the e2e-harness imports this crate as the oracle to
+deserialize the Go-frozen wire (lib drift → the deser fails).
 
 ## The contract surface
 
@@ -33,7 +33,7 @@ as the oracle to deserialize the Go-frozen wire (lib drift → the deser fails).
   `last_name`; everything else rides in the flattened `extensions` bag. The
   `user_id` is **not** a body field — it is the KV key suffix.
 - **`PublishedGroup`** — typed **core/kernel** fields `name`, `member_ids`
-  (membership is derivable: `has_member(user_id)`); the rest rides in
+  (member presence is derivable: `has_member(user_id)`); the rest rides in
   `extensions`. The `group_id` is the KV key suffix, not a body field.
 - **`DirectoryMeta`** (`identity/_meta`) — declares the published `entities`
   (`users` [+ `groups`]) and a `version`. Consumers self-configure from it and
@@ -50,19 +50,16 @@ Like the Passport `claims` bag: a **generic** service binds the **core** typed
 fields only; a project's extra fields are carried in `extensions`
 (`#[serde(flatten)]` map) and read only by the consumers that care, via
 `.extension("key")`. The kernel is exactly the **project-invariant** facts;
-anything that varies between projects stays an extension.
+anything that varies between projects stays an extension. The bag is opaque —
+the core contract never names a project field; a consumer reads what it needs
+entirely on its own side.
 
-- **`organization_id` is an extension, not core** — tenancy is the dimension
-  closest to domain (Hanshow is mono-tenant, no orgs). It lives in a group's
-  `extensions`; a tenancy-aware consumer opts into reading it. The core stays
-  tenancy-free and works mono-tenant. (In the live be-botresources wire it sits
-  inline on the group; here it lands in `extensions` with no wire change.)
-- Other be-botresources fields that ride as extensions today: a user's `version`,
-  `avatar_object_key`, `avatar_mime`, `locale`, `disabled_at`,
-  `is_platform_member`, `memberships`; a group's `version`, `is_system`.
+- be-botresources fields that ride as extensions today: a user's `version`,
+  `avatar_object_key`, `avatar_mime`, `locale`, `disabled_at`; a group's
+  `version`, `is_system`.
 - **Promotion rule:** a generic service needing an extension field **that is
-  project-invariant** ⇒ promote it to core. Tenancy is not invariant ⇒ stays
-  an extension.
+  project-invariant** ⇒ promote it to core. A field that varies between projects
+  stays an extension.
 
 ## Out of scope
 
@@ -77,7 +74,7 @@ anchor and the Px/Cx conformance suites live in `br-e2e-harness`.
 | Thing | Why it is the way it is |
 |---|---|
 | Core fields are `first_name` / `last_name`, not a single `name` | The frozen live wire splits the name; a single `name` core field could not deserialize a real be-botresources KV value, breaking the freeze. |
-| `organization_id` rides in `extensions`, though the live wire has it inline on the group | Tenancy is a per-project seam; the typed core must work for a mono-tenant project. Flatten keeps the wire byte-identical while the typed core stays tenancy-free. |
+| Project fields ride in `extensions`, though the live wire has some inline on the group | The typed core must work across projects; flatten keeps the wire byte-identical while the core stays a project-invariant kernel that names no project field. |
 | Round-trip tests assert `serde_json::Value` equality, not byte equality | `#[serde(flatten)]` re-emits typed fields before bag fields, so byte order differs from the live producer; semantic (Value) equality is the correct freeze invariant for a JSON KV wire. |
 | `PublishedEntity` has an `Other(String)` variant and hand-written serde, not `#[serde(other)]` | A future identity may publish a new entity; an old consumer must auto-degrade, not crash — so an unknown value is captured (not dropped) and round-trips, while adding a known variant still forces every match to be revisited. |
 | `_meta` is shipped here though it is not yet live in be-botresources | It is the designed auto-degrade manifest the consumer kit (WU4) and the P-suite conformance need frozen now; freezing the shape early is the point of the pre-freeze normalization. |

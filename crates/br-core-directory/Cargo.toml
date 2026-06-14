@@ -11,5 +11,3 @@ description = "Frozen read contract for the identity Published Language (Publish
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
-
-[dev-dependencies]
