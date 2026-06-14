@@ -11,6 +11,12 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Fixed
+
+- Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`
+  and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
+  `LICENSE` file and crate manifests were already correct).
+
 ## [0.11.0] — 2026-06-14
 
 ### Added
