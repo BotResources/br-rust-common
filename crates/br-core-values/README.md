@@ -50,6 +50,17 @@ wants a uniform format string per marker.
   **fails closed** — a payload like `{"primary":"en","entries":[]}` does *not*
   deserialize. This matters because in an event-logged system serde is the main
   constructor path (every hydration), not `new()`.
+- **Content is trimmed at construction; interior whitespace is preserved.**
+  Every construction path (`new`, `from_parts`, `set`, and therefore both the
+  `Deserialize` path and the `br-util-graphql` input bridge, which route through
+  `from_parts`) normalizes each entry's content with `str::trim()` — leading and
+  trailing whitespace only. Interior whitespace is **never** altered: Markdown
+  indentation, blank lines between paragraphs and code-block whitespace are
+  semantic and survive verbatim. The guarantee is that two contents differing
+  only by surrounding whitespace (e.g. a trailing `\n`) are `Eq` and serialize
+  identically. Whitespace-only content trims to the empty string, which remains
+  allowed — the value object normalizes, it does not enforce required-ness (a
+  domain seam).
 - **`entries()` iterator.** Read every translation without round-tripping through
   `serde_json` to reach the private fields.
 - **`LocalizedHtml` stores raw HTML verbatim and does not sanitize.**
@@ -96,7 +107,7 @@ deserializes back from that lowercase form (round-trip):
 
 ```toml
 [dev-dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.10.0", features = ["conformance"] }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.11.0", features = ["conformance"] }
 ```
 
 ```rust,ignore
@@ -170,7 +181,7 @@ no `async`, no `br-util-*`. Unified workspace versioning, distributed by git tag
 
 ```toml
 [dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.10.0" }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.11.0" }
 ```
 
 ---

@@ -21,14 +21,14 @@ impl<F, L> Localized<F, L> {
         Self {
             entries: vec![LocalizedEntry {
                 locale: primary.clone(),
-                content,
+                content: content.trim().to_owned(),
             }],
             primary,
             _format: PhantomData,
         }
     }
 
-    pub fn from_parts(primary: L, entries: Vec<LocalizedEntry<L>>) -> Result<Self, ValueError>
+    pub fn from_parts(primary: L, mut entries: Vec<LocalizedEntry<L>>) -> Result<Self, ValueError>
     where
         L: PartialEq,
     {
@@ -43,6 +43,9 @@ impl<F, L> Localized<F, L> {
         if !entries.iter().any(|e| e.locale == primary) {
             return Err(ValueError::LocalizedPrimaryMissing);
         }
+        for entry in &mut entries {
+            entry.content = entry.content.trim().to_owned();
+        }
         Ok(Self {
             primary,
             entries,
@@ -54,6 +57,7 @@ impl<F, L> Localized<F, L> {
     where
         L: PartialEq,
     {
+        let content = content.trim().to_owned();
         if let Some(entry) = self.entries.iter_mut().find(|e| e.locale == locale) {
             entry.content = content;
         } else {

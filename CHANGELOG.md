@@ -11,9 +11,125 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-14
+
+### Added
+
+- **`br-util-directory` — publisher + consumer kit for the identity Published
+  Language.** A single `util`-tier crate built on `br-core-directory`,
+  **feature-gated to honor the real dependency asymmetry**: `default = []`;
+  `publisher` touches NATS KV only (no Postgres); `consumer` additionally pulls
+  `br-util-postgres` + `sqlx` for the KV→PG projection. The kit **never
+  auto-creates the KV bucket or the PG schema** — it takes an already-bound
+  `kv::Store` / `PgPool` and fails loud if infra is absent. Each side
+  reconciles by **orphan-delete**, never wipe (the PII-deletion guarantee).
+  - *Publisher* — the project supplies its source of truth through the
+    `DirectorySource` seam (`manifest` + `desired_users` + `desired_groups`);
+    `DirectoryPublisher` provides the mechanism: `reconcile` (whole-bucket diff
+    + minimal put/delete + `_meta` write, degrading groups when the manifest
+    drops them) and the incremental `publish_user` / `retract_user` /
+    `publish_group` / `retract_group` / `write_meta`. The minimal diff is the
+    pure `reconcile_entries(desired, observed) -> Vec<KvOp>`.
+  - *Consumer* — `connect_pool` (a TLS-validated pool via
+    `br_util_postgres::init_pool`), `migrate` (`known_users` / `known_groups` /
+    the `known_user_group` junction) and `DirectoryProjector`, the KV→PG
+    projector (`reconcile` on boot + incremental `apply_*` / `remove_*`). The
+    **denormalized KV group wire (`member_ids`) is recomposed into the
+    normalized junction** via the pure `member_rows`, each group upsert applied
+    in one transaction. Typed readers **carry the key-derived id** —
+    `resolve_user` / `is_member` / `group_name` over `DirectorySnapshot` — and
+    **auto-degrade** (group readers return `None` / `false` when the manifest
+    omits `groups`). Pure logic (diff, orphan set, recompose, reader resolution
+    + auto-degrade) is unit-tested here; the real-PG / real-NATS Px/Cx suites
+    are out of scope (br-e2e-harness, a later work unit).
+- **`br-core-directory` — frozen read contract for the identity Published
+  Language.** Pure `core`-tier serde DTOs for the identity directory roster
+  published over NATS KV (display / enumeration, never authZ): `PublishedUser`
+  (typed core `email` / `first_name` / `last_name` + a flattened `extensions`
+  bag), `PublishedGroup` (typed core `name` / `member_ids` with
+  `has_member` + `extensions`), the `DirectoryMeta` (`identity/_meta`) manifest
+  with auto-degrade (`publishes_users` / `publishes_groups`), and the frozen KV
+  key conventions (`USERS_KEY_PREFIX` / `GROUPS_KEY_PREFIX` / `META_KEY`,
+  `user_kv_key` / `group_kv_key` + the reverse `*_id_from_kv_key` parsers). The
+  wire is **extracted and frozen from the live, already-consumed
+  be-botresources Published Language**, not invented. Core + extension model
+  like the Passport claims bag: the contract binds the kernel and stays
+  policy-free, while project-specific fields (`locale`, …) ride opaquely in the
+  flattened `extensions` bag — the contract never names them and a consumer
+  reads them entirely on its own side. No `sqlx` / `async-nats` deps so it
+  imports cleanly as a wire oracle. The publisher / consumer kits and the Px/Cx
+  conformance suites are out of scope (other work units).
+- **`br-util-graphql` — localized output bridge (`GqlLocalized` / `GqlLocalizedEntry`).**
+  The crate now ships the **output** half of the localized-value bridge to match the
+  existing input half (`GqlLocalizedInput`). Two `#[derive(SimpleObject)]` types and a
+  converter `GqlLocalized::from_localized::<F, L: GqlLocale>(&Localized<F, L>)`, both
+  format-agnostic (`F` = `Markdown`/`Html`/`PlainText`) and locale-agnostic (generic
+  `L`), let a subgraph return a `Localized<F, L>` in a GraphQL response without
+  hand-rolling a local `SimpleObject`. The canonical-locale field is named
+  **`primaryLocale`** (a wire locale code), never `primary` — it holds a code, not the
+  text. `entries` carries **every** locale, the primary included.
+- **`br-core-auth` — `PassportBuilder` behind the `test-support` feature.** A
+  fluent builder for forging a `Passport` (`.user_id() .super_admin() .active()
+  .pat() .impersonator() .claim() .claims()` + `.build()` / `.build_service()`),
+  co-located with the type it builds so it tracks every field change with zero
+  drift. Policy-free: claim keys are set through the generic `claim` / `claims`,
+  never baked in. Gated behind `feature = "test-support"` so it never reaches a
+  production binary; enable it as a dev-dependency. Promotes the builder that
+  lived downstream in `br-test-harness`.
+- **`br-core-auth` — typed scopes claim binding (`Passport` ↔ `ScopeKey`).**
+  `pub const SCOPES_CLAIM_KEY = "scopes"`, `Passport::scopes() -> Vec<ScopeKey>`
+  and `Passport::has_scope(&ScopeKey) -> bool`, plus a re-export of
+  `br_core_scope::ScopeKey`. The scope grant carried in the Passport is now a
+  typed platform contract end-to-end (declared as `ScopeKey`, granted as
+  `ScopeKey`, read as `ScopeKey`), replacing the per-service
+  `claim::<Vec<String>>("scopes")` convention. Serialized shape: a JSON array of
+  scope-key strings under the `scopes` claim. `scopes()` skips malformed entries
+  and `has_scope` is fail-closed — a bad claim entry never widens access.
+  `br-core-auth` gains a (verified-acyclic) dependency on `br-core-scope`.
+
+### Changed (breaking)
+
+- **`br-util-graphql`: `GqlLocale` gains a required method `fn as_wire(&self) -> &str`.**
+  The trait now owns **both directions** of the wire↔locale mapping: `from_wire`
+  (string → locale) and `as_wire` (locale → string), the latter needed by
+  `GqlLocalized::from_localized` to emit a locale code on the wire. This is the
+  symmetric design (one trait, both directions) chosen over bounding the converter on
+  `L: AsRef<str>` — `AsRef<str>` would force every product locale to expose a `&str`
+  view that may not equal its wire code, whereas `as_wire` is the explicit, dedicated
+  inverse of `from_wire` and cannot diverge from it. Adding a required trait method is a
+  breaking change for external impls, but the lib has **no non-test `GqlLocale` impls**
+  and a `0.x → 0.x` minor bump may break per Cargo's semver rules; a product impl adds
+  one `as_wire` match arm per locale. (Note: `cargo-semver-checks` runs **0 checks** on
+  this crate because its entire surface sits behind a single crate-root
+  `#![cfg(feature = "graphql")]`, so the tool produces an empty comparison surface — its
+  "no semver update required" line reflects *nothing checked*, not *no break*; the
+  breaking change above is asserted by inspection, not by the tool.)
+
 ### Changed
 
+- **`br-core-values` — `Localized<F, L>` now trims leading/trailing whitespace
+  from content at construction.** Every construction path normalizes each
+  entry's content with `str::trim()`: `new`, `from_parts` (which covers both the
+  `Deserialize` path and the `br-util-graphql` `GqlLocalizedInput::into_localized`
+  bridge, since both route through it) and `set`. **Interior whitespace is
+  preserved** — Markdown indentation, blank lines between paragraphs and
+  code-block whitespace are semantic, so only the outer edges are stripped, never
+  collapsed. This removes equality/dedup/wire-roundtrip drift where two logically
+  equal contents differed only by a trailing newline. Whitespace-only content
+  trims to the empty string, which stays allowed (required-ness is a domain seam,
+  not the value object's job). **This is a behavior change with no public-API
+  signature change** — no type, function signature or serde shape moved, so
+  `cargo-semver-checks` does not (and should not) flag it; its silence here is
+  correct, not evidence the behavior is unchanged.
 - Relicensed from MIT to Apache-2.0.
+
+### Fixed
+
+- **Workspace internal version pins realigned to `0.11.0`.** Opening the
+  `0.11.0` integration branch bumped `[workspace.package] version` but left the
+  `[workspace.dependencies]` path-dep pins at `version = "0.10.0"`, so every
+  internal crate failed to resolve (`requirement br-core-* = "^0.10.0"` did not
+  match the `0.11.0` candidate). Bumped all internal pins to `0.11.0`.
 
 ## [0.10.0] — 2026-06-13
 

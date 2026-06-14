@@ -107,7 +107,8 @@ missing primary content, and truncated `Money` i64→i32):
 | `GqlMoney` (output) | `From<&Money>` | **infallible** — the full `i64` minor-unit amount is carried by the `MoneyAmount` scalar (a decimal string), no ceiling, **never truncates** |
 | `GqlMoneyInput` (input) | `TryFrom<GqlMoneyInput> for Money` | `MONEY_OUT_OF_RANGE` if the inbound `MoneyAmount` string is non-numeric or overflows `i64`; the currency's own code (e.g. `unknown_currency`) if the ISO code is unknown — **never coerced, never truncated** |
 | `GqlLocalizedInput` (input) | `into_localized::<F, L>()` | `LOCALE_UNKNOWN` (any unknown locale) / `PRIMARY_CONTENT_MISSING` (no entry for the primary) / the value object's own code (empty, duplicate) |
-| `GqlLocale` (trait) | `parse_wire(&str)` | `LOCALE_UNKNOWN` — the product-supplied seam that parses a wire locale into its closed `Locale` enum, refusing unknowns |
+| `GqlLocalized` (output) | `from_localized::<F, L>(&Localized<F, L>)` | **infallible** — projects the domain value to a `SimpleObject` carrying `primaryLocale` (the canonical locale's wire code) and `entries` (every locale, the primary included) |
+| `GqlLocale` (trait) | `parse_wire(&str)` / `as_wire(&self)` | `LOCALE_UNKNOWN` on parse — the product-supplied seam that owns **both directions** of the wire↔locale mapping: `from_wire` (string → locale, fallible) and `as_wire` (locale → string, total) |
 
 `GqlValueError` carries the rejection (`LOCALE_UNKNOWN`, `MONEY_OUT_OF_RANGE`,
 `PRIMARY_CONTENT_MISSING`, or a wrapped value-object code) and converts to an
@@ -156,8 +157,18 @@ keys. A client reading the `reason` field must therefore key on the exact string
 not assume one casing convention.
 
 The locale seam (`GqlLocale`) exists because **the lib owns no locale list**
-(neither does `br-core-values`): each product implements `from_wire` on its own
-`Locale` enum and the wrappers refuse anything it does not recognize.
+(neither does `br-core-values`): each product implements `from_wire` and `as_wire`
+on its own `Locale` enum — the trait owns both directions of the wire↔locale
+mapping, so the input wrappers refuse anything `from_wire` does not recognize and
+the output bridge emits the same code `as_wire` round-trips. Choosing the trait
+method over an `L: AsRef<str>` bound on `from_localized` keeps the wire code the
+*explicit dedicated inverse* of `from_wire` — an `AsRef<str>` view could differ
+from the wire code and silently desync the two directions.
+
+**Field-naming.** `GqlLocalized.primaryLocale` holds a **locale code** (e.g.
+`"en"`), not the primary text — named so deliberately, after a review surfaced
+that a field literally named `primary` carrying a code misleads consumers. The
+primary's text is the `content` of its matching entry in `entries`.
 
 ## async-graphql version coupling (the sensitive point)
 
@@ -176,7 +187,7 @@ this crate even when its own public surface is unchanged.
 
 ```toml
 [dependencies]
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v0.10.0", features = ["graphql"] }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v0.11.0", version = "0.11.0", features = ["graphql"] }
 ```
 
 ---

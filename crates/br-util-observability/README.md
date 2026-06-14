@@ -128,7 +128,7 @@ no policy. Unified workspace versioning, distributed by git tag.
 
 ```toml
 [dependencies]
-br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "v0.10.0" }
+br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "v0.11.0" }
 ```
 
 ---

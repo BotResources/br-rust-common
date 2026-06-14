@@ -1,9 +1,12 @@
 use br_core_kernel::{Actor, ServiceAccountId, UserId};
+use br_core_scope::ScopeKey;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use crate::auth_method::AuthMethod;
+
+pub const SCOPES_CLAIM_KEY: &str = "scopes";
 
 fn deserialize_claims<'de, D>(deserializer: D) -> Result<serde_json::Value, D::Error>
 where
@@ -105,6 +108,21 @@ impl Passport {
         self.claims()
             .get(key)
             .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    pub fn scopes(&self) -> Vec<ScopeKey> {
+        self.claim::<Vec<String>>(SCOPES_CLAIM_KEY)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|raw| ScopeKey::new(raw).ok())
+            .collect()
+    }
+
+    pub fn has_scope(&self, scope: &ScopeKey) -> bool {
+        self.claim::<Vec<String>>(SCOPES_CLAIM_KEY)
+            .unwrap_or_default()
+            .iter()
+            .any(|raw| raw == scope.as_str())
     }
 }
 
@@ -638,6 +656,78 @@ mod tests {
     #[test]
     fn impersonated_and_direct_humans_are_not_equal() {
         assert_ne!(human(false, true), impersonated_human());
+    }
+
+    fn human_with_scopes(scopes: serde_json::Value) -> Passport {
+        Passport::Human {
+            user_id: Uuid::from_u128(1),
+            is_super_admin: false,
+            is_active: true,
+            auth_method: AuthMethod::Jwt,
+            impersonator: None,
+            claims: json!({ "scopes": scopes }),
+        }
+    }
+
+    #[test]
+    fn scopes_parses_claim_strings_into_typed_keys() {
+        let p = human_with_scopes(json!(["notifier:read", "notifier:write"]));
+        assert_eq!(
+            p.scopes(),
+            vec![
+                ScopeKey::new("notifier:read").unwrap(),
+                ScopeKey::new("notifier:write").unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn scopes_empty_when_claim_absent() {
+        assert!(human(false, true).scopes().is_empty());
+    }
+
+    #[test]
+    fn scopes_empty_for_service_without_claim() {
+        assert!(service().scopes().is_empty());
+    }
+
+    #[test]
+    fn scopes_skips_malformed_entries_keeping_valid_ones() {
+        let p = human_with_scopes(json!(["notifier:read", "Bad Scope", "a:b:c", ":empty"]));
+        assert_eq!(p.scopes(), vec![ScopeKey::new("notifier:read").unwrap()]);
+    }
+
+    #[test]
+    fn scopes_empty_when_claim_is_not_a_string_array() {
+        assert!(
+            human_with_scopes(json!("notifier:read"))
+                .scopes()
+                .is_empty()
+        );
+        assert!(human_with_scopes(json!([1, 2, 3])).scopes().is_empty());
+    }
+
+    #[test]
+    fn has_scope_true_when_granted() {
+        let p = human_with_scopes(json!(["notifier:read", "billing:manage"]));
+        assert!(p.has_scope(&ScopeKey::new("billing:manage").unwrap()));
+    }
+
+    #[test]
+    fn has_scope_false_when_not_granted() {
+        let p = human_with_scopes(json!(["notifier:read"]));
+        assert!(!p.has_scope(&ScopeKey::new("notifier:write").unwrap()));
+    }
+
+    #[test]
+    fn has_scope_false_when_claim_absent() {
+        assert!(!human(false, true).has_scope(&ScopeKey::new("notifier:read").unwrap()));
+    }
+
+    #[test]
+    fn has_scope_unaffected_by_malformed_neighbours() {
+        let p = human_with_scopes(json!(["Bad Scope", "notifier:read"]));
+        assert!(p.has_scope(&ScopeKey::new("notifier:read").unwrap()));
     }
 
     #[test]

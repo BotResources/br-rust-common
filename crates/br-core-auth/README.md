@@ -59,6 +59,35 @@ Accessors that work uniformly over both variants:
 | `impersonator_id()` | `Option<Uuid>` | The admin's UUID when impersonating, `None` otherwise. |
 | `claims()` | `&serde_json::Value` | Raw extra claims bag. |
 | `claim::<T>(key)` | `Option<T>` | Typed extraction of a single claim via `serde_json`. |
+| `scopes()` | `Vec<ScopeKey>` | The granted scopes, parsed from the `scopes` claim. |
+| `has_scope(&ScopeKey)` | `bool` | Whether a given scope is granted. |
+
+### Granted scopes (Passport ↔ `ScopeKey`)
+
+```rust
+pub const SCOPES_CLAIM_KEY: &str = "scopes";
+
+impl Passport {
+    pub fn scopes(&self) -> Vec<ScopeKey>;
+    pub fn has_scope(&self, scope: &ScopeKey) -> bool;
+}
+```
+
+The scope **grant** is the typed counterpart of the scope **declaration**
+(`br_core_scope::ScopeKey`, re-exported here). A service declares its scopes as
+`ScopeKey` and authorizes a request by reading the caller's grant as `ScopeKey`
+— no per-service `claim::<Vec<String>>("scopes")` convention.
+
+- **Serialized shape:** a JSON array of scope-key strings under the `scopes`
+  claim, e.g. `"claims": { "scopes": ["notifier:read", "notifier:write"] }`.
+  This is the existing platform convention, now a lib contract.
+- **`scopes()`** parses every entry through `ScopeKey::new` and **silently skips
+  any malformed string** — a bad entry never widens access, it simply is not a
+  grant. A `scopes` claim that is absent or not a string array yields an empty
+  `Vec`.
+- **`has_scope`** compares the requested `ScopeKey` against the raw claim
+  strings; since a `ScopeKey` is always well-formed, a malformed neighbouring
+  entry can never match. Fail-closed by construction.
 
 ### `AuthMethod` (enum)
 
@@ -145,6 +174,36 @@ Extraction is **fail-closed on anything ambiguous**:
   prefix-injection attempt) and `extract_session_id` returns `None` rather
   than picking a winner.
 
+### `PassportBuilder` (feature `test-support`)
+
+```rust
+let passport = PassportBuilder::new()
+    .user_id(user_uuid)
+    .super_admin(true)
+    .active(true)
+    .pat(token_id)
+    .impersonator(admin_uuid)
+    .claim("org_id", "acme")
+    .claims([("a", json!(1)), ("b", json!(2))])
+    .build();          // -> Passport::Human
+
+let service = PassportBuilder::new().claim("name", "ci-bot").build_service();
+```
+
+A fluent builder for forging a `Passport` in tests, e2e harnesses, and gateway
+examples. Co-located with `Passport` so it tracks every field change with zero
+drift. Defaults: a fresh UUIDv7 `user_id`, non-super-admin, active, `Jwt`. It is
+**policy-free** — claim keys (`scopes`, `org_id`, …) are set through the generic
+`claim` / `claims`, never baked in.
+
+Gated behind the **`test-support`** feature so it never reaches a production
+binary; enable it as a dev-dependency:
+
+```toml
+[dev-dependencies]
+br-core-auth = { git = "...", package = "br-core-auth", tag = "v0.11.0", features = ["test-support"] }
+```
+
 ## Usage
 
 ```rust
@@ -174,7 +233,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v0.10.0" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v0.11.0" }
 ```
 
 ---

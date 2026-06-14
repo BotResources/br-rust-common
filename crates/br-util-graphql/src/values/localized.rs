@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use async_graphql::InputObject;
+use async_graphql::{InputObject, SimpleObject};
 use br_core_values::{Localized, LocalizedEntry, ValueError};
 
 use crate::values::error::GqlValueError;
@@ -36,6 +36,33 @@ impl GqlLocalizedInput {
     }
 }
 
+#[derive(SimpleObject, Debug, Clone)]
+pub struct GqlLocalizedEntry {
+    pub locale: String,
+    pub content: String,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct GqlLocalized {
+    pub primary_locale: String,
+    pub entries: Vec<GqlLocalizedEntry>,
+}
+
+impl GqlLocalized {
+    pub fn from_localized<F, L: GqlLocale>(value: &Localized<F, L>) -> Self {
+        Self {
+            primary_locale: value.primary_locale().as_wire().to_owned(),
+            entries: value
+                .entries()
+                .map(|entry| GqlLocalizedEntry {
+                    locale: entry.locale.as_wire().to_owned(),
+                    content: entry.content.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
 fn map_localized_error(error: ValueError) -> GqlValueError {
     match error {
         ValueError::LocalizedPrimaryMissing => GqlValueError::PrimaryContentMissing,
@@ -62,6 +89,13 @@ mod tests {
                 _ => None,
             }
         }
+
+        fn as_wire(&self) -> &str {
+            match self {
+                Locale::En => "en",
+                Locale::Fr => "fr",
+            }
+        }
     }
 
     fn entry(locale: &str, content: &str) -> GqlLocalizedEntryInput {
@@ -76,6 +110,17 @@ mod tests {
         let input = GqlLocalizedInput {
             primary: "en".into(),
             entries: vec![entry("en", "Hello"), entry("fr", "Bonjour")],
+        };
+        let localized: Localized<Markdown, Locale> = input.into_localized().unwrap();
+        assert_eq!(localized.primary(), "Hello");
+        assert_eq!(localized.get(&Locale::Fr), Some("Bonjour"));
+    }
+
+    #[test]
+    fn input_bridge_trims_content_via_from_parts() {
+        let input = GqlLocalizedInput {
+            primary: "en".into(),
+            entries: vec![entry("en", "  Hello  \n"), entry("fr", "\nBonjour\n")],
         };
         let localized: Localized<Markdown, Locale> = input.into_localized().unwrap();
         assert_eq!(localized.primary(), "Hello");
@@ -131,5 +176,35 @@ mod tests {
         };
         let err = input.into_localized::<Markdown, Locale>().unwrap_err();
         assert_eq!(err.reason_code(), "localized_duplicate_locale");
+    }
+
+    #[test]
+    fn from_localized_carries_primary_wire_code_and_every_locale() {
+        let value = Localized::<Markdown, Locale>::from_parts(
+            Locale::Fr,
+            vec![
+                LocalizedEntry {
+                    locale: Locale::En,
+                    content: "Hello".into(),
+                },
+                LocalizedEntry {
+                    locale: Locale::Fr,
+                    content: "Bonjour".into(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let output = GqlLocalized::from_localized(&value);
+
+        assert_eq!(output.primary_locale, "fr");
+        assert_eq!(output.entries.len(), 2);
+        let by_locale: Vec<(&str, &str)> = output
+            .entries
+            .iter()
+            .map(|e| (e.locale.as_str(), e.content.as_str()))
+            .collect();
+        assert!(by_locale.contains(&("en", "Hello")));
+        assert!(by_locale.contains(&("fr", "Bonjour")));
     }
 }
