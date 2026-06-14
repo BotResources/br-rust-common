@@ -89,6 +89,13 @@ fn new_preserves_interior_whitespace_and_blank_lines() {
 }
 
 #[test]
+fn new_trims_html_content_preserving_interior_whitespace() {
+    let html = "\n  <pre>line1\n  line2</pre>  \n";
+    let h = LocalizedHtml::new(Locale::En, html.into());
+    assert_eq!(h.primary(), "<pre>line1\n  line2</pre>");
+}
+
+#[test]
 fn trailing_newline_does_not_break_equality() {
     let clean = LocalizedString::new(Locale::En, "Hello".into());
     let padded = LocalizedString::new(Locale::En, "Hello\n".into());
