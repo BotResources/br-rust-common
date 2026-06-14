@@ -9,6 +9,12 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
+## [Unreleased]
+
+### Changed
+
+- Relicensed from MIT to Apache-2.0.
+
 ## [0.10.0] — 2026-06-13
 
 ### Fixed
