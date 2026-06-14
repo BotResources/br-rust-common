@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/br-core-auth",
+    "crates/br-core-directory",
     "crates/br-core-events",
     "crates/br-core-integration",
     "crates/br-core-kernel",
@@ -29,6 +30,7 @@ repository = "https://github.com/BotResources/br-rust-common"
 
 [workspace.dependencies]
 br-core-auth = { path = "crates/br-core-auth", version = "0.11.0" }
+br-core-directory = { path = "crates/br-core-directory", version = "0.11.0" }
 br-core-events = { path = "crates/br-core-events", version = "0.11.0" }
 br-core-integration = { path = "crates/br-core-integration", version = "0.11.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.11.0" }
