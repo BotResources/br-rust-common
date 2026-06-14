@@ -13,6 +13,33 @@ release; they remain reachable through the historical per-crate tags
 
 ### Added
 
+- **`br-util-directory` — publisher + consumer kit for the identity Published
+  Language.** A single `util`-tier crate built on `br-core-directory`,
+  **feature-gated to honor the real dependency asymmetry**: `default = []`;
+  `publisher` touches NATS KV only (no Postgres); `consumer` additionally pulls
+  `br-util-postgres` + `sqlx` for the KV→PG projection. The kit **never
+  auto-creates the KV bucket or the PG schema** — it takes an already-bound
+  `kv::Store` / `PgPool` and fails loud if infra is absent. Each side
+  reconciles by **orphan-delete**, never wipe (the PII-deletion guarantee).
+  - *Publisher* — the project supplies its source of truth through the
+    `DirectorySource` seam (`manifest` + `desired_users` + `desired_groups`);
+    `DirectoryPublisher` provides the mechanism: `reconcile` (whole-bucket diff
+    + minimal put/delete + `_meta` write, degrading groups when the manifest
+    drops them) and the incremental `publish_user` / `retract_user` /
+    `publish_group` / `retract_group` / `write_meta`. The minimal diff is the
+    pure `reconcile_entries(desired, observed) -> Vec<KvOp>`.
+  - *Consumer* — `connect_pool` (a TLS-validated pool via
+    `br_util_postgres::init_pool`), `migrate` (`known_users` / `known_groups` /
+    the `known_user_group` junction) and `DirectoryProjector`, the KV→PG
+    projector (`reconcile` on boot + incremental `apply_*` / `remove_*`). The
+    **denormalized KV group wire (`member_ids`) is recomposed into the
+    normalized junction** via the pure `member_rows`, each group upsert applied
+    in one transaction. Typed readers **carry the key-derived id** —
+    `resolve_user` / `is_member` / `group_name` over `DirectorySnapshot` — and
+    **auto-degrade** (group readers return `None` / `false` when the manifest
+    omits `groups`). Pure logic (diff, orphan set, recompose, reader resolution
+    + auto-degrade) is unit-tested here; the real-PG / real-NATS Px/Cx suites
+    are out of scope (br-e2e-harness, a later work unit).
 - **`br-core-directory` — frozen read contract for the identity Published
   Language.** Pure `core`-tier serde DTOs for the identity directory roster
   published over NATS KV (display / enumeration, never authZ): `PublishedUser`

@@ -1,0 +1,40 @@
+[package]
+name = "br-util-directory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Publisher + consumer kit for the identity Published Language: reconcile/orphan-delete over NATS KV (publisher) and a KV->PG projector with typed readers over known_users/known_groups/known_user_group (consumer)"
+
+[features]
+default = []
+publisher = [
+    "dep:async-trait",
+    "dep:async-nats",
+    "dep:futures-util",
+    "dep:serde",
+    "dep:serde_json",
+]
+consumer = [
+    "dep:br-util-postgres",
+    "dep:sqlx",
+    "dep:async-nats",
+    "dep:futures-util",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tracing",
+]
+
+[dependencies]
+br-core-directory = { workspace = true }
+br-util-postgres = { workspace = true, optional = true }
+async-nats = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true, features = ["uuid"] }
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
+uuid = { workspace = true }
