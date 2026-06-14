@@ -325,6 +325,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-core-directory"
+version = "0.11.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "br-core-events"
 version = "0.11.0"
 dependencies = [

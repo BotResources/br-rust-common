@@ -13,6 +13,23 @@ release; they remain reachable through the historical per-crate tags
 
 ### Added
 
+- **`br-core-directory` — frozen read contract for the identity Published
+  Language.** Pure `core`-tier serde DTOs for the identity directory roster
+  published over NATS KV (display / enumeration, never authZ): `PublishedUser`
+  (typed core `email` / `first_name` / `last_name` + a flattened `extensions`
+  bag), `PublishedGroup` (typed core `name` / `member_ids` with
+  `has_member` + `extensions`), the `DirectoryMeta` (`identity/_meta`) manifest
+  with auto-degrade (`publishes_users` / `publishes_groups`), and the frozen KV
+  key conventions (`USERS_KEY_PREFIX` / `GROUPS_KEY_PREFIX` / `META_KEY`,
+  `user_kv_key` / `group_kv_key` + the reverse `*_id_from_kv_key` parsers). The
+  wire is **extracted and frozen from the live, already-consumed
+  be-botresources Published Language**, not invented. Core + extension model
+  like the Passport claims bag: the contract binds the kernel and stays
+  policy-free, while project-specific fields (`locale`, …) ride opaquely in the
+  flattened `extensions` bag — the contract never names them and a consumer
+  reads them entirely on its own side. No `sqlx` / `async-nats` deps so it
+  imports cleanly as a wire oracle. The publisher / consumer kits and the Px/Cx
+  conformance suites are out of scope (other work units).
 - **`br-util-graphql` — localized output bridge (`GqlLocalized` / `GqlLocalizedEntry`).**
   The crate now ships the **output** half of the localized-value bridge to match the
   existing input half (`GqlLocalizedInput`). Two `#[derive(SimpleObject)]` types and a
