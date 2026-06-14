@@ -11,6 +11,26 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Added
+
+- **`br-core-directory` — frozen read contract for the identity Published
+  Language.** Pure `core`-tier serde DTOs for the identity directory roster
+  published over NATS KV (display / enumeration, never authZ): `PublishedUser`
+  (typed core `email` / `first_name` / `last_name` + a flattened `extensions`
+  bag), `PublishedGroup` (typed core `name` / `member_ids` with
+  `has_member` + `extensions`), the `DirectoryMeta` (`identity/_meta`) manifest
+  with auto-degrade (`publishes_users` / `publishes_groups`), and the frozen KV
+  key conventions (`USERS_KEY_PREFIX` / `GROUPS_KEY_PREFIX` / `META_KEY`,
+  `user_kv_key` / `group_kv_key` + the reverse `*_id_from_kv_key` parsers). The
+  wire is **extracted and frozen from the live, already-consumed
+  be-botresources Published Language**, not invented. Core + extension model
+  like the Passport claims bag: generic services bind the kernel,
+  project-specific fields (`organization_id`, `locale`, `is_platform_member`, …)
+  ride in `extensions`; tenancy stays an extension, never core. No `sqlx` /
+  `async-nats` deps so it imports cleanly as a wire oracle. The publisher /
+  consumer kits and the Px/Cx conformance suites are out of scope (other work
+  units).
+
 ### Changed
 
 - Relicensed from MIT to Apache-2.0.
