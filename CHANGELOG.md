@@ -22,6 +22,24 @@ release; they remain reachable through the historical per-crate tags
   hand-rolling a local `SimpleObject`. The canonical-locale field is named
   **`primaryLocale`** (a wire locale code), never `primary` — it holds a code, not the
   text. `entries` carries **every** locale, the primary included.
+- **`br-core-auth` — `PassportBuilder` behind the `test-support` feature.** A
+  fluent builder for forging a `Passport` (`.user_id() .super_admin() .active()
+  .pat() .impersonator() .claim() .claims()` + `.build()` / `.build_service()`),
+  co-located with the type it builds so it tracks every field change with zero
+  drift. Policy-free: claim keys are set through the generic `claim` / `claims`,
+  never baked in. Gated behind `feature = "test-support"` so it never reaches a
+  production binary; enable it as a dev-dependency. Promotes the builder that
+  lived downstream in `br-test-harness`.
+- **`br-core-auth` — typed scopes claim binding (`Passport` ↔ `ScopeKey`).**
+  `pub const SCOPES_CLAIM_KEY = "scopes"`, `Passport::scopes() -> Vec<ScopeKey>`
+  and `Passport::has_scope(&ScopeKey) -> bool`, plus a re-export of
+  `br_core_scope::ScopeKey`. The scope grant carried in the Passport is now a
+  typed platform contract end-to-end (declared as `ScopeKey`, granted as
+  `ScopeKey`, read as `ScopeKey`), replacing the per-service
+  `claim::<Vec<String>>("scopes")` convention. Serialized shape: a JSON array of
+  scope-key strings under the `scopes` claim. `scopes()` skips malformed entries
+  and `has_scope` is fail-closed — a bad claim entry never widens access.
+  `br-core-auth` gains a (verified-acyclic) dependency on `br-core-scope`.
 
 ### Changed (breaking)
 
@@ -43,12 +61,15 @@ release; they remain reachable through the historical per-crate tags
 
 ### Changed
 
-- **Workspace internal-dependency requirements bumped `0.10.0 → 0.11.0`** to match the
-  `[workspace.package].version` raised when the `v0.11.0` integration branch opened. The
-  branch-open commit moved only the package version, leaving the `[workspace.dependencies]`
-  path requirements at `0.10.0`, so the workspace did not resolve (lockstep versioning:
-  one workspace version across every crate).
 - Relicensed from MIT to Apache-2.0.
+
+### Fixed
+
+- **Workspace internal version pins realigned to `0.11.0`.** Opening the
+  `0.11.0` integration branch bumped `[workspace.package] version` but left the
+  `[workspace.dependencies]` path-dep pins at `version = "0.10.0"`, so every
+  internal crate failed to resolve (`requirement br-core-* = "^0.10.0"` did not
+  match the `0.11.0` candidate). Bumped all internal pins to `0.11.0`.
 
 ## [0.10.0] — 2026-06-13
 

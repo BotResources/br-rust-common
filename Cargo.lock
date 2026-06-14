@@ -316,6 +316,7 @@ version = "0.11.0"
 dependencies = [
  "base64",
  "br-core-kernel",
+ "br-core-scope",
  "serde",
  "serde_json",
  "sha2",
