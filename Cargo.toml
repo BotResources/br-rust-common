@@ -15,6 +15,7 @@ members = [
     "crates/br-util-axum-auth",
     "crates/br-util-axum-readiness",
     "crates/br-util-broadcast",
+    "crates/br-util-directory",
     "crates/br-util-graphql",
     "crates/br-util-observability",
     "crates/br-util-postgres",
@@ -43,6 +44,7 @@ br-test-support = { path = "crates/br-test-support", version = "0.11.0" }
 br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.11.0" }
 br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.11.0" }
 br-util-broadcast = { path = "crates/br-util-broadcast", version = "0.11.0" }
+br-util-directory = { path = "crates/br-util-directory", version = "0.11.0" }
 br-util-graphql = { path = "crates/br-util-graphql", version = "0.11.0" }
 br-util-observability = { path = "crates/br-util-observability", version = "0.11.0" }
 br-util-postgres = { path = "crates/br-util-postgres", version = "0.11.0" }
