@@ -92,6 +92,14 @@ projection; the PG-backed readers share its semantics. **Auto-degrade**: a
 snapshot built from a manifest that does not declare `groups` returns `None` /
 `false` / empty from the group readers — driven by the manifest, never a flag.
 
+**Precondition — the publisher must reconcile before any consumer boots
+(Px-before-Cx).** When `identity/_meta` is absent, `reconcile()` treats the
+roster as empty and orphan-deletes every local `known_*` row (PII deletion
+stays a guarantee). A consumer that boots ahead of identity's first reconcile
+therefore flushes its projection; the absent-manifest branch emits
+`tracing::warn!` so the mis-ordered boot is observable, but the deploy must
+order identity's first reconcile before any reader.
+
 ## Tenancy-agnostic (hard rule)
 
 Like `br-core-directory`, the kit names **no** orgs / tenancy concept. It
@@ -123,3 +131,4 @@ reconnect-replay end to end) lives in **br-e2e-harness (WU9)**, not here.
 | The projector re-upserts every desired entry rather than diffing values | The local `known_*` row would have to be re-read to compare; an idempotent `ON CONFLICT … DO UPDATE` over the KV scan is cheaper to read and equally correct. Only deletes need the observed-vs-desired set difference. |
 | Group upsert replaces its junction rows in one transaction | Membership is derived from the denormalized `member_ids`; deleting then re-inserting inside one transaction makes a membership change atomic and idempotent under redelivery. |
 | Readers resolve over `DirectorySnapshot`, a pure projection | It makes resolution + auto-degrade unit-testable with no I/O; the PG-backed readers mirror the same semantics, proven end to end in WU9. |
+| `delete_group` | purges the junction via the `known_user_group` FK `ON DELETE CASCADE` — the contract relies on it |

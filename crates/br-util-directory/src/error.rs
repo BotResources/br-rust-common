@@ -14,6 +14,10 @@ pub enum DirectoryError {
     Persistence(#[from] sqlx::Error),
 
     #[cfg(feature = "consumer")]
+    #[error("directory migration error: {0}")]
+    Migrate(#[from] sqlx::migrate::MigrateError),
+
+    #[cfg(feature = "consumer")]
     #[error("directory pool initialization error: {0}")]
     Pool(String),
 }

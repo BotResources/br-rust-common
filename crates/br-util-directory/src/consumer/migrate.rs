@@ -9,8 +9,6 @@ pub async fn connect_pool(database_url: &str) -> Result<PgPool, DirectoryError> 
 }
 
 pub async fn migrate(pool: &PgPool) -> Result<(), DirectoryError> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await
-        .map_err(|e| DirectoryError::Persistence(sqlx::Error::from(e)))
+    sqlx::migrate!("./migrations").run(pool).await?;
+    Ok(())
 }

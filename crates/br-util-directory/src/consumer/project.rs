@@ -86,10 +86,16 @@ impl DirectoryProjector {
             Some(bytes) => {
                 serde_json::from_slice(&bytes).map_err(|e| DirectoryError::Wire(e.to_string()))
             }
-            None => Ok(DirectoryMeta {
-                version: br_core_directory::DIRECTORY_META_VERSION,
-                entities: Vec::new(),
-            }),
+            None => {
+                tracing::warn!(
+                    key = META_KEY,
+                    "directory manifest absent; treating roster as empty"
+                );
+                Ok(DirectoryMeta {
+                    version: br_core_directory::DIRECTORY_META_VERSION,
+                    entities: Vec::new(),
+                })
+            }
         }
     }
 
