@@ -33,11 +33,10 @@ pub async fn declare_scopes(
     let subjects = DeclarationSubjects::build();
     let correlation_id = Uuid::now_v7();
 
-    let mut awaiter = CorrelatedAwaiter::create_with(
+    let mut awaiter = CorrelatedAwaiter::create(
         jetstream,
         &config.stream_name,
         subjects.confirmation_filters(),
-        config.awaiter,
     )
     .await?;
 

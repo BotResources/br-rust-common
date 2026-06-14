@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 
 pub mod awaiter;
-mod awaiter_config;
 pub mod consumer;
 mod envelopes;
 mod error;
@@ -14,7 +13,6 @@ mod publisher;
 mod subject;
 
 pub use awaiter::{CorrelatedAwaiter, CorrelatedMatch};
-pub use awaiter_config::AwaiterConfig;
 pub use br_core_events::{Actor, ServiceAccountId, UserId};
 pub use consumer::{Delivery, DurableConsumer};
 pub use envelopes::{EventMetadata, IntegrationCommand, IntegrationEvent};

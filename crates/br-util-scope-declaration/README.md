@@ -65,9 +65,11 @@ match declare_scopes(
    `tracing::error` with the structured reason (codes, not prose), **no retry** —
    rejection is deterministic, so re-declaring would not change it.
 
-The awaiter stays armed across the re-publish gap up to its `inactive_threshold`
-(300s by default — far above the 10s default per-wait deadline, so no extra
-configuration is needed). Override the timing only for an unusual deployment.
+The awaiter is a core NATS push subscription, so it parks at zero CPU between
+waits and stays armed across the re-publish gap indefinitely — a confirmation
+that lands inside the very first wait window is delivered within it, so the happy
+path no longer pays a full `wait_timeout` of dead time. Override `wait_timeout`
+only for an unusual deployment.
 
 ## Disabled vs. scopeless — a deliberate distinction
 
@@ -92,9 +94,11 @@ the wire coordinates):
 - accepted: `identity.evt.service_scope.accepted.v1`
 - rejected: `identity.evt.service_scope.rejected.v1`
 
-The JetStream **stream is pre-declared** (Helm / operator). The awaiter binds it
-by name and **fails loud** with `IntegrationError::Consume { NoStream }` if it is
-missing — this helper **never** creates a stream or a durable consumer.
+The JetStream **stream is pre-declared** (Helm / operator). The awaiter asserts
+it exists by name and **fails loud** with `IntegrationError::Consume { NoStream }`
+if it is missing — this helper **never** creates a stream or a durable consumer.
+The confirmation itself is awaited over a core NATS push subscription on the two
+event subjects (a JetStream publish also reaches core subscribers).
 
 Subjects are built with `br_core_integration::integration_subject` (the single
 source of the subject convention) and pinned to the canonical contract strings
@@ -116,7 +120,7 @@ check in the contract.
 
 ```toml
 [dependencies]
-br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "v0.9.0" }
+br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "v0.10.0" }
 ```
 
 ---

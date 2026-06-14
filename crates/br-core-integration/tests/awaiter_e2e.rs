@@ -57,6 +57,59 @@ async fn awaiter_resolves_on_correlation_across_two_subjects() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn awaiter_resolves_when_reply_lands_inside_the_first_window() {
+    let Some(_) = common::nats_url() else { return };
+    let prefix = unique_prefix();
+    let accepted = format!("{prefix}.evt.service_scope.accepted.v1");
+    let rejected = format!("{prefix}.evt.service_scope.rejected.v1");
+    let js = jetstream().await;
+    let _stream = create_stream(&js, &prefix).await;
+
+    let mut awaiter = CorrelatedAwaiter::create(
+        &js,
+        format!("STREAM_{prefix}"),
+        vec![accepted.clone(), rejected.clone()],
+    )
+    .await
+    .expect("create awaiter");
+
+    let mine = Uuid::now_v7();
+    let publisher = NatsIntegrationPublisher::new(js.clone());
+    let publish_subject = accepted.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        publisher
+            .publish_event(
+                &publish_subject,
+                &event("service_scope.accepted", "in-window", mine),
+            )
+            .await
+            .expect("publish inside window");
+    });
+
+    let started = std::time::Instant::now();
+    let matched = awaiter
+        .await_correlation(mine, Duration::from_secs(5))
+        .await
+        .expect("await ok")
+        .expect("a reply that landed inside the first window");
+    let elapsed = started.elapsed();
+
+    assert_eq!(matched.subject, accepted);
+    assert_eq!(matched.metadata.correlation_id, mine);
+    let decoded: IntegrationEvent<TestPayload> =
+        serde_json::from_slice(&matched.payload).expect("decode in-window payload");
+    assert_eq!(decoded.payload.label, "in-window");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a reply inside the first window must resolve promptly, not after the full deadline; took {elapsed:?}"
+    );
+
+    teardown(&js, &prefix).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn awaiter_first_match_wins_duplicates_ignored() {
     let Some(_) = common::nats_url() else { return };
     let prefix = unique_prefix();

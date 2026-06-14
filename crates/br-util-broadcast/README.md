@@ -90,7 +90,7 @@ dependency. Unified workspace versioning, distributed by git tag.
 
 ```toml
 [dependencies]
-br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "v0.9.0" }
+br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "v0.10.0" }
 ```
 
 [`tokio::sync::broadcast`]: https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html

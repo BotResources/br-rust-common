@@ -20,6 +20,16 @@ pub fn nats_url() -> Option<String> {
     std::env::var("NATS_URL").ok()
 }
 
+static IDENTITY_STREAM_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+pub async fn serialize_identity_stream() -> tokio::sync::MutexGuard<'static, ()> {
+    IDENTITY_STREAM_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
 pub fn unique_stream() -> String {
     format!("SCOPE_DECL_{}", Uuid::now_v7().simple())
 }
@@ -51,7 +61,11 @@ pub async fn create_identity_stream(
     js: &async_nats::jetstream::Context,
     name: &str,
 ) -> async_nats::jetstream::stream::Stream {
-    let _ = js.delete_stream(name).await;
+    while let Ok(existing) = js.stream_by_subject(DECLARE_SUBJECT).await {
+        js.delete_stream(&existing)
+            .await
+            .expect("delete overlapping identity stream");
+    }
     js.create_stream(async_nats::jetstream::stream::Config {
         name: name.to_string(),
         subjects: vec!["identity.>".to_string()],
