@@ -13,6 +13,15 @@ release; they remain reachable through the historical per-crate tags
 
 ### Added
 
+- **`br-util-graphql` — localized output bridge (`GqlLocalized` / `GqlLocalizedEntry`).**
+  The crate now ships the **output** half of the localized-value bridge to match the
+  existing input half (`GqlLocalizedInput`). Two `#[derive(SimpleObject)]` types and a
+  converter `GqlLocalized::from_localized::<F, L: GqlLocale>(&Localized<F, L>)`, both
+  format-agnostic (`F` = `Markdown`/`Html`/`PlainText`) and locale-agnostic (generic
+  `L`), let a subgraph return a `Localized<F, L>` in a GraphQL response without
+  hand-rolling a local `SimpleObject`. The canonical-locale field is named
+  **`primaryLocale`** (a wire locale code), never `primary` — it holds a code, not the
+  text. `entries` carries **every** locale, the primary included.
 - **`br-core-auth` — `PassportBuilder` behind the `test-support` feature.** A
   fluent builder for forging a `Passport` (`.user_id() .super_admin() .active()
   .pat() .impersonator() .claim() .claims()` + `.build()` / `.build_service()`),
@@ -32,6 +41,28 @@ release; they remain reachable through the historical per-crate tags
   and `has_scope` is fail-closed — a bad claim entry never widens access.
   `br-core-auth` gains a (verified-acyclic) dependency on `br-core-scope`.
 
+### Changed (breaking)
+
+- **`br-util-graphql`: `GqlLocale` gains a required method `fn as_wire(&self) -> &str`.**
+  The trait now owns **both directions** of the wire↔locale mapping: `from_wire`
+  (string → locale) and `as_wire` (locale → string), the latter needed by
+  `GqlLocalized::from_localized` to emit a locale code on the wire. This is the
+  symmetric design (one trait, both directions) chosen over bounding the converter on
+  `L: AsRef<str>` — `AsRef<str>` would force every product locale to expose a `&str`
+  view that may not equal its wire code, whereas `as_wire` is the explicit, dedicated
+  inverse of `from_wire` and cannot diverge from it. Adding a required trait method is a
+  breaking change for external impls, but the lib has **no non-test `GqlLocale` impls**
+  and a `0.x → 0.x` minor bump may break per Cargo's semver rules; a product impl adds
+  one `as_wire` match arm per locale. (Note: `cargo-semver-checks` runs **0 checks** on
+  this crate because its entire surface sits behind a single crate-root
+  `#![cfg(feature = "graphql")]`, so the tool produces an empty comparison surface — its
+  "no semver update required" line reflects *nothing checked*, not *no break*; the
+  breaking change above is asserted by inspection, not by the tool.)
+
+### Changed
+
+- Relicensed from MIT to Apache-2.0.
+
 ### Fixed
 
 - **Workspace internal version pins realigned to `0.11.0`.** Opening the
@@ -39,10 +70,6 @@ release; they remain reachable through the historical per-crate tags
   `[workspace.dependencies]` path-dep pins at `version = "0.10.0"`, so every
   internal crate failed to resolve (`requirement br-core-* = "^0.10.0"` did not
   match the `0.11.0` candidate). Bumped all internal pins to `0.11.0`.
-
-### Changed
-
-- Relicensed from MIT to Apache-2.0.
 
 ## [0.10.0] — 2026-06-13
 
