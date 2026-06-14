@@ -73,6 +73,78 @@ fn empty_content_string_is_allowed() {
 }
 
 #[test]
+fn new_trims_leading_and_trailing_whitespace() {
+    let ls = LocalizedString::new(Locale::En, "  Hello  ".into());
+    assert_eq!(ls.primary(), "Hello");
+}
+
+#[test]
+fn new_preserves_interior_whitespace_and_blank_lines() {
+    let markdown = "\n# Title\n\nFirst paragraph.\n\n    indented code\n\nLast.\n";
+    let md = LocalizedMd::new(Locale::En, markdown.into());
+    assert_eq!(
+        md.primary(),
+        "# Title\n\nFirst paragraph.\n\n    indented code\n\nLast."
+    );
+}
+
+#[test]
+fn trailing_newline_does_not_break_equality() {
+    let clean = LocalizedString::new(Locale::En, "Hello".into());
+    let padded = LocalizedString::new(Locale::En, "Hello\n".into());
+    assert_eq!(clean, padded);
+}
+
+#[test]
+fn whitespace_only_content_trims_to_empty_and_is_allowed() {
+    let ls = LocalizedString::new(Locale::En, "   \n\t ".into());
+    assert_eq!(ls.primary(), "");
+}
+
+#[test]
+fn set_trims_content() {
+    let mut ls = LocalizedString::new(Locale::En, "Hello".into());
+    ls.set(Locale::Fr, "  Bonjour\n".into());
+    assert_eq!(ls.get(&Locale::Fr), Some("Bonjour"));
+    ls.set(Locale::En, "\tHi ".into());
+    assert_eq!(ls.get(&Locale::En), Some("Hi"));
+}
+
+#[test]
+fn from_parts_trims_every_entry() {
+    let v = Localized::<Markdown, Locale>::from_parts(
+        Locale::En,
+        vec![
+            LocalizedEntry {
+                locale: Locale::En,
+                content: "  # A  ".into(),
+            },
+            LocalizedEntry {
+                locale: Locale::Fr,
+                content: "\n# B\n".into(),
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(v.get(&Locale::En), Some("# A"));
+    assert_eq!(v.get(&Locale::Fr), Some("# B"));
+}
+
+#[test]
+fn deserialize_trims_content() {
+    let wire = r#"{"primary":"en","entries":[{"locale":"en","content":"  padded  \n"}]}"#;
+    let v: LocalizedMd<Locale> = serde_json::from_str(wire).unwrap();
+    assert_eq!(v.primary(), "padded");
+}
+
+#[test]
+fn deserialize_normalizes_trailing_newline_so_padded_wire_equals_clean_value() {
+    let padded = r#"{"primary":"en","entries":[{"locale":"en","content":"Hello\n"}]}"#;
+    let from_wire: LocalizedMd<Locale> = serde_json::from_str(padded).unwrap();
+    assert_eq!(from_wire, LocalizedMd::new(Locale::En, "Hello".into()));
+}
+
+#[test]
 fn from_parts_accepts_a_well_formed_value() {
     let v = Localized::<Markdown, Locale>::from_parts(
         Locale::En,

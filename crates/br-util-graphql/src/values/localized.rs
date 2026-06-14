@@ -117,6 +117,17 @@ mod tests {
     }
 
     #[test]
+    fn input_bridge_trims_content_via_from_parts() {
+        let input = GqlLocalizedInput {
+            primary: "en".into(),
+            entries: vec![entry("en", "  Hello  \n"), entry("fr", "\nBonjour\n")],
+        };
+        let localized: Localized<Markdown, Locale> = input.into_localized().unwrap();
+        assert_eq!(localized.primary(), "Hello");
+        assert_eq!(localized.get(&Locale::Fr), Some("Bonjour"));
+    }
+
+    #[test]
     fn refuses_unknown_primary_locale() {
         let input = GqlLocalizedInput {
             primary: "xx".into(),

@@ -61,6 +61,20 @@ release; they remain reachable through the historical per-crate tags
 
 ### Changed
 
+- **`br-core-values` — `Localized<F, L>` now trims leading/trailing whitespace
+  from content at construction.** Every construction path normalizes each
+  entry's content with `str::trim()`: `new`, `from_parts` (which covers both the
+  `Deserialize` path and the `br-util-graphql` `GqlLocalizedInput::into_localized`
+  bridge, since both route through it) and `set`. **Interior whitespace is
+  preserved** — Markdown indentation, blank lines between paragraphs and
+  code-block whitespace are semantic, so only the outer edges are stripped, never
+  collapsed. This removes equality/dedup/wire-roundtrip drift where two logically
+  equal contents differed only by a trailing newline. Whitespace-only content
+  trims to the empty string, which stays allowed (required-ness is a domain seam,
+  not the value object's job). **This is a behavior change with no public-API
+  signature change** — no type, function signature or serde shape moved, so
+  `cargo-semver-checks` does not (and should not) flag it; its silence here is
+  correct, not evidence the behavior is unchanged.
 - Relicensed from MIT to Apache-2.0.
 
 ### Fixed
