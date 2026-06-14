@@ -7,9 +7,13 @@ license.workspace = true
 repository.workspace = true
 description = "Passport identity DTO, X-Passport header codec, PAT bearer-token contract, and session-cookie contract shared across BotResources services"
 
+[features]
+test-support = []
+
 [dependencies]
 base64 = { workspace = true }
 br-core-kernel = { workspace = true }
+br-core-scope = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

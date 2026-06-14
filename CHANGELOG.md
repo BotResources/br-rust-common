@@ -24,16 +24,69 @@ release; they remain reachable through the historical per-crate tags
   `user_kv_key` / `group_kv_key` + the reverse `*_id_from_kv_key` parsers). The
   wire is **extracted and frozen from the live, already-consumed
   be-botresources Published Language**, not invented. Core + extension model
-  like the Passport claims bag: generic services bind the kernel,
-  project-specific fields (`organization_id`, `locale`, `is_platform_member`, …)
-  ride in `extensions`; tenancy stays an extension, never core. No `sqlx` /
-  `async-nats` deps so it imports cleanly as a wire oracle. The publisher /
-  consumer kits and the Px/Cx conformance suites are out of scope (other work
-  units).
+  like the Passport claims bag: the contract binds the kernel and stays
+  policy-free, while project-specific fields (`locale`, …) ride opaquely in the
+  flattened `extensions` bag — the contract never names them and a consumer
+  reads them entirely on its own side. No `sqlx` / `async-nats` deps so it
+  imports cleanly as a wire oracle. The publisher / consumer kits and the Px/Cx
+  conformance suites are out of scope (other work units).
+- **`br-util-graphql` — localized output bridge (`GqlLocalized` / `GqlLocalizedEntry`).**
+  The crate now ships the **output** half of the localized-value bridge to match the
+  existing input half (`GqlLocalizedInput`). Two `#[derive(SimpleObject)]` types and a
+  converter `GqlLocalized::from_localized::<F, L: GqlLocale>(&Localized<F, L>)`, both
+  format-agnostic (`F` = `Markdown`/`Html`/`PlainText`) and locale-agnostic (generic
+  `L`), let a subgraph return a `Localized<F, L>` in a GraphQL response without
+  hand-rolling a local `SimpleObject`. The canonical-locale field is named
+  **`primaryLocale`** (a wire locale code), never `primary` — it holds a code, not the
+  text. `entries` carries **every** locale, the primary included.
+- **`br-core-auth` — `PassportBuilder` behind the `test-support` feature.** A
+  fluent builder for forging a `Passport` (`.user_id() .super_admin() .active()
+  .pat() .impersonator() .claim() .claims()` + `.build()` / `.build_service()`),
+  co-located with the type it builds so it tracks every field change with zero
+  drift. Policy-free: claim keys are set through the generic `claim` / `claims`,
+  never baked in. Gated behind `feature = "test-support"` so it never reaches a
+  production binary; enable it as a dev-dependency. Promotes the builder that
+  lived downstream in `br-test-harness`.
+- **`br-core-auth` — typed scopes claim binding (`Passport` ↔ `ScopeKey`).**
+  `pub const SCOPES_CLAIM_KEY = "scopes"`, `Passport::scopes() -> Vec<ScopeKey>`
+  and `Passport::has_scope(&ScopeKey) -> bool`, plus a re-export of
+  `br_core_scope::ScopeKey`. The scope grant carried in the Passport is now a
+  typed platform contract end-to-end (declared as `ScopeKey`, granted as
+  `ScopeKey`, read as `ScopeKey`), replacing the per-service
+  `claim::<Vec<String>>("scopes")` convention. Serialized shape: a JSON array of
+  scope-key strings under the `scopes` claim. `scopes()` skips malformed entries
+  and `has_scope` is fail-closed — a bad claim entry never widens access.
+  `br-core-auth` gains a (verified-acyclic) dependency on `br-core-scope`.
+
+### Changed (breaking)
+
+- **`br-util-graphql`: `GqlLocale` gains a required method `fn as_wire(&self) -> &str`.**
+  The trait now owns **both directions** of the wire↔locale mapping: `from_wire`
+  (string → locale) and `as_wire` (locale → string), the latter needed by
+  `GqlLocalized::from_localized` to emit a locale code on the wire. This is the
+  symmetric design (one trait, both directions) chosen over bounding the converter on
+  `L: AsRef<str>` — `AsRef<str>` would force every product locale to expose a `&str`
+  view that may not equal its wire code, whereas `as_wire` is the explicit, dedicated
+  inverse of `from_wire` and cannot diverge from it. Adding a required trait method is a
+  breaking change for external impls, but the lib has **no non-test `GqlLocale` impls**
+  and a `0.x → 0.x` minor bump may break per Cargo's semver rules; a product impl adds
+  one `as_wire` match arm per locale. (Note: `cargo-semver-checks` runs **0 checks** on
+  this crate because its entire surface sits behind a single crate-root
+  `#![cfg(feature = "graphql")]`, so the tool produces an empty comparison surface — its
+  "no semver update required" line reflects *nothing checked*, not *no break*; the
+  breaking change above is asserted by inspection, not by the tool.)
 
 ### Changed
 
 - Relicensed from MIT to Apache-2.0.
+
+### Fixed
+
+- **Workspace internal version pins realigned to `0.11.0`.** Opening the
+  `0.11.0` integration branch bumped `[workspace.package] version` but left the
+  `[workspace.dependencies]` path-dep pins at `version = "0.10.0"`, so every
+  internal crate failed to resolve (`requirement br-core-* = "^0.10.0"` did not
+  match the `0.11.0` candidate). Bumped all internal pins to `0.11.0`.
 
 ## [0.10.0] — 2026-06-13
 
