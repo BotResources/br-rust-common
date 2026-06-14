@@ -11,6 +11,8 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-14
+
 ### Added
 
 - **`br-util-directory` — publisher + consumer kit for the identity Published

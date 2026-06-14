@@ -124,7 +124,7 @@ let payload = DeclareServiceScopes::new(declaration);
 
 ```toml
 [dependencies]
-br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "v0.10.0" }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "v0.11.0" }
 ```
 
 ---

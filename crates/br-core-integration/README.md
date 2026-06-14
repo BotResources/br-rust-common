@@ -353,11 +353,11 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v0.10.0" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v0.11.0" }
 
 # The transactional outbox (the `OutboxStore` + `OutboxRelay`) is behind an
 # opt-in feature that pulls `sqlx`; the base crate stays DB-free without it:
-# br-core-integration = { git = "...", package = "br-core-integration", tag = "v0.10.0", features = ["outbox"] }
+# br-core-integration = { git = "...", package = "br-core-integration", tag = "v0.11.0", features = ["outbox"] }
 ```
 
 ---
