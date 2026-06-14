@@ -1,9 +1,32 @@
 #![cfg(feature = "graphql")]
 
 use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema, SimpleObject, Union, Value};
-use br_core_values::{Currency, Money};
-use br_util_graphql::values::{GqlMoney, GqlMoneyInput};
+use br_core_values::{Currency, Localized, LocalizedEntry, Markdown, Money};
+use br_util_graphql::values::{GqlLocale, GqlLocalized, GqlMoney, GqlMoneyInput};
 use br_util_graphql::{Affordance, Connection, Edge, MutationResult, SubscriptionPayload};
+
+#[derive(Debug, PartialEq, Eq)]
+enum Locale {
+    En,
+    Fr,
+}
+
+impl GqlLocale for Locale {
+    fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "en" => Some(Locale::En),
+            "fr" => Some(Locale::Fr),
+            _ => None,
+        }
+    }
+
+    fn as_wire(&self) -> &str {
+        match self {
+            Locale::En => "en",
+            Locale::Fr => "fr",
+        }
+    }
+}
 
 #[derive(SimpleObject, Clone)]
 struct Doc {
@@ -84,6 +107,24 @@ impl Query {
     async fn echo_money(&self, input: GqlMoneyInput) -> GqlMoney {
         let money = Money::try_from(input).unwrap();
         GqlMoney::from(&money)
+    }
+
+    async fn description(&self) -> GqlLocalized {
+        let value = Localized::<Markdown, Locale>::from_parts(
+            Locale::Fr,
+            vec![
+                LocalizedEntry {
+                    locale: Locale::En,
+                    content: "# Hello".into(),
+                },
+                LocalizedEntry {
+                    locale: Locale::Fr,
+                    content: "# Bonjour".into(),
+                },
+            ],
+        )
+        .unwrap();
+        GqlLocalized::from_localized(&value)
     }
 }
 
@@ -191,6 +232,28 @@ async fn mutation_result_registers_and_resolves() {
 }
 
 #[tokio::test]
+async fn localized_output_registers_and_resolves() {
+    let query = "{ description { primaryLocale entries { locale content } } }";
+    let response = schema().execute(query).await;
+    assert!(response.errors.is_empty(), "errors: {:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(data["description"]["primaryLocale"], "fr");
+    let entries = data["description"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    let pairs: Vec<(&str, &str)> = entries
+        .iter()
+        .map(|e| {
+            (
+                e["locale"].as_str().unwrap(),
+                e["content"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert!(pairs.contains(&("en", "# Hello")));
+    assert!(pairs.contains(&("fr", "# Bonjour")));
+}
+
+#[tokio::test]
 async fn sdl_exposes_the_generic_types() {
     let sdl = schema().sdl();
     assert!(
@@ -222,5 +285,17 @@ async fn sdl_exposes_the_generic_types() {
     assert!(
         sdl.contains("amount: MoneyAmount!"),
         "GqlMoney.amount must be the MoneyAmount scalar, not Int:\n{sdl}"
+    );
+    assert!(
+        sdl.contains("type GqlLocalized"),
+        "missing GqlLocalized:\n{sdl}"
+    );
+    assert!(
+        sdl.contains("primaryLocale: String!"),
+        "GqlLocalized must expose primaryLocale (not primary):\n{sdl}"
+    );
+    assert!(
+        sdl.contains("type GqlLocalizedEntry"),
+        "missing GqlLocalizedEntry:\n{sdl}"
     );
 }
