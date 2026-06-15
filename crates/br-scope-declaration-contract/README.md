@@ -32,7 +32,7 @@ crates assert only their own composition logic.
 
 ```toml
 [dependencies]
-br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "v0.11.0" }
+br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "v0.11.1" }
 ```
 
 ---

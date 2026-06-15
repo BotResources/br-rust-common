@@ -91,6 +91,19 @@ impl Query {
         )
     }
 
+    async fn last_batch_change(&self) -> SubscriptionPayload<DocEvent, Vec<Doc>> {
+        SubscriptionPayload::new(
+            DocEvent::Renamed(DocRenamed {
+                new_name: "Beta".into(),
+            }),
+            vec![Doc {
+                id: "2".into(),
+                name: "Beta".into(),
+            }],
+            vec![Affordance::allow("rename")],
+        )
+    }
+
     async fn tags(&self) -> Connection<Tag> {
         Connection::forward(vec![Edge::new(Tag { label: "x".into() }, "tc-1")], false)
     }
@@ -273,6 +286,14 @@ async fn sdl_exposes_the_generic_types() {
     assert!(
         sdl.contains("type DocSubscriptionPayload"),
         "missing DocSubscriptionPayload:\n{sdl}"
+    );
+    assert!(
+        sdl.contains("type DocListSubscriptionPayload"),
+        "list payload must expose a valid identifier-named wrapper, not a bracketed one:\n{sdl}"
+    );
+    assert!(
+        sdl.contains("entity: [Doc!]!"),
+        "list payload entity must stay a list of Doc:\n{sdl}"
     );
     assert!(
         sdl.contains("type TagConnection"),
