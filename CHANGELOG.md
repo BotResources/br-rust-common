@@ -17,6 +17,22 @@ release; they remain reachable through the historical per-crate tags
   and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
   `LICENSE` file and crate manifests were already correct).
 
+## [0.11.1] — 2026-06-15
+
+### Fixed
+
+- **`br-util-graphql` — `SubscriptionPayload<E, T>` now derives a valid GraphQL
+  type name for a list entity `T`.** Previously the name was a verbatim
+  concatenation of `T::type_name()`, so a list entity (`Vec<_>`, whose
+  `type_name()` is `[Inner!]`) produced the invalid SDL identifier
+  `[Inner!]SubscriptionPayload`, which `grafbase compose` rejects — taking the
+  whole subgraph (and therefore the gateway) down. The wrapper type name now
+  strips the list/non-null punctuation and encodes list-ness as a `List` suffix
+  (`[OrgMembership!]` → `OrgMembershipListSubscriptionPayload`), so it can never
+  collide with the scalar payload of the same element (`UserSubscriptionPayload`
+  vs `UserListSubscriptionPayload`). Only the wrapper's type name changes; the
+  `entity` field stays a list, so the wire data shape is unchanged.
+
 ## [0.11.0] — 2026-06-14
 
 ### Added
