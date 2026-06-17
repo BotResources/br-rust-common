@@ -52,6 +52,24 @@ release; they remain reachable through the historical per-crate tags
   `service_account_id_from_kv_key`. Groups stay user-only; no
   `PublishedPrincipal` is introduced.
 
+- **`br-util-directory` — consumer-owned roster control + service-account
+  projection.** The consumer side gains a `DirectoryConsumerConfig` with three
+  seams (defaults preserve the prior behavior): `extract_user_extensions(Fn(&
+  PublishedUser) -> PersistedExtensions)` selects the extension payload persisted
+  into a new `jsonb extensions` column on `known_users` and exposed on
+  `KnownUser` / `DirectorySnapshot::user_extensions` (**default keeps nothing**);
+  `filter_users(Fn(&PublishedUser) -> bool)` scopes which users are copied, with
+  a user flipping pass→fail orphan-deleted on the next reconcile / watch
+  (**default keep-all**); and `scope(ConsumptionScope)` declares `UsersOnly` vs
+  `UsersAndGroups` (**default `UsersAndGroups`**) independent of the producer
+  manifest — `UsersOnly` projects and watches only `known_users`, touching no
+  group tables. `PublishedServiceAccount` is now projected into a new
+  `known_service_accounts` table (mirroring `known_users`) and exposed via
+  `DirectorySnapshot::resolve_service_account`, honored by reconcile / watch when
+  the manifest declares `service_accounts`. `DirectoryPublisher` gains
+  `publish_service_account` / `retract_service_account` and the `DirectorySource`
+  seam a `desired_service_accounts` method (default empty).
+
 ### Changed
 
 - **BREAKING — `br-util-graphql`: `SubscriptionPayload` now requires a
@@ -94,6 +112,18 @@ release; they remain reachable through the historical per-crate tags
   panics with a precise message (a zero-capacity broadcast channel buffers
   nothing and would drop every event); capacity is a composition-root config
   value, so a zero is a programming error rather than a runtime condition.
+- **BREAKING — `br-util-directory` is re-expressed on top of `br-util-nats-fabric`.**
+  Its own KV engine is **deleted** — the public `KvOp` / `reconcile_entries` and
+  every raw `async_nats` KV `Store` put/delete/observe/apply are gone; the kit
+  now holds only the directory *meaning* (keys, DTOs, schema, recompose) over the
+  fabric's generic publisher/consumer. `DirectoryPublisher::new(kv: Store)` /
+  `DirectoryProjector::new(kv: Store, pool)` are replaced by
+  `DirectoryPublisher::open(&fabric)` (async) and
+  `DirectoryProjector::new(fabric, pool)` / `with_config(fabric, pool, config)`.
+  The projector's imperative `apply_user` / `remove_user` / `apply_group` /
+  `remove_group` are removed — incremental projection is the fabric `watch()`.
+  `DirectoryError` drops the `Kv` / `Wire` string variants in favor of
+  `Fabric(FabricError)` / `KvKey(KvKeyError)`, and gains `ManifestAbsent`.
 
 ### Removed
 
@@ -131,6 +161,17 @@ release; they remain reachable through the historical per-crate tags
 
 ### Fixed
 
+- **`br-util-directory`: a missing identity manifest no longer purges the local
+  roster (PII-purge fix).** Previously an absent `identity/_meta` was treated as
+  an empty roster, so a consumer that merely booted ahead of identity's first
+  reconcile orphan-deleted every `known_*` row. `reconcile()` / `watch()` now
+  **fail closed** with `DirectoryError::ManifestAbsent` and leave the projection
+  untouched — a degraded/unready condition, never a delete-all.
+- **`br-util-directory`: `known_user_group.user_id` now has a foreign key to
+  `known_users` (`ON DELETE CASCADE`).** Membership rows are inserted only for
+  members already present in `known_users`, so a scoped roster (the `filter_users`
+  seam) keeps referential integrity without breaking group projection, and a
+  user deletion deterministically cascades its memberships.
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`
   and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
   `LICENSE` file and crate manifests were already correct).

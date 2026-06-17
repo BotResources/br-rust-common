@@ -5,36 +5,26 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Publisher + consumer kit for the identity Published Language: reconcile/orphan-delete over NATS KV (publisher) and a KV->PG projector with typed readers over known_users/known_groups/known_user_group (consumer)"
+description = "Publisher + consumer kit for the identity Published Language over the NATS Fabric: reconcile/orphan-delete (publisher) and a KV->PG projector with consumer-owned extension-extract, copy filter, and consumption scope over known_users/known_groups/known_user_group/known_service_accounts (consumer)"
 
 [features]
 default = []
-publisher = [
-    "dep:async-trait",
-    "dep:async-nats",
-    "dep:futures-util",
-    "dep:serde",
-    "dep:serde_json",
-]
+publisher = ["dep:async-trait"]
 consumer = [
     "dep:br-util-postgres",
     "dep:sqlx",
-    "dep:async-nats",
-    "dep:futures-util",
-    "dep:serde",
+    "dep:async-trait",
     "dep:serde_json",
-    "dep:tracing",
+    "dep:tokio",
 ]
 
 [dependencies]
 br-core-directory = { workspace = true }
+br-util-nats-fabric = { workspace = true }
 br-util-postgres = { workspace = true, optional = true }
-async-nats = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
-futures-util = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-sqlx = { workspace = true, optional = true, features = ["uuid"] }
+sqlx = { workspace = true, optional = true, features = ["uuid", "json"] }
 thiserror = { workspace = true }
-tracing = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 uuid = { workspace = true }
