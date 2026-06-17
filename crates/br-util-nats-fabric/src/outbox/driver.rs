@@ -85,7 +85,7 @@ impl OutboxRelay {
 
 fn schedule_after(report: &RelayReport, cap: usize) -> Option<Duration> {
     let saturated = report.picked >= cap;
-    let made_progress = report.published > 0;
+    let made_progress = report.published > 0 || report.failed > 0;
     if saturated && made_progress {
         return Some(Duration::ZERO);
     }
@@ -106,11 +106,13 @@ mod tests {
     fn report_with(
         picked: usize,
         published: usize,
+        failed: usize,
         min_retry_attempts: Option<u32>,
     ) -> RelayReport {
         RelayReport {
             picked,
             published,
+            failed,
             min_retry_attempts,
             ..RelayReport::default()
         }
@@ -121,7 +123,7 @@ mod tests {
     #[test]
     fn saturated_with_progress_redrains_immediately() {
         assert_eq!(
-            schedule_after(&report_with(CAP, CAP, None), CAP),
+            schedule_after(&report_with(CAP, CAP, 0, None), CAP),
             Some(Duration::ZERO)
         );
     }
@@ -129,33 +131,42 @@ mod tests {
     #[test]
     fn saturated_with_progress_and_a_retry_owed_still_redrains_immediately() {
         assert_eq!(
-            schedule_after(&report_with(CAP, CAP - 1, Some(1)), CAP),
+            schedule_after(&report_with(CAP, CAP - 1, 0, Some(1)), CAP),
+            Some(Duration::ZERO)
+        );
+    }
+
+    #[test]
+    fn saturated_with_terminal_failures_redrains_immediately() {
+        assert_eq!(
+            schedule_after(&report_with(CAP, 0, CAP, None), CAP),
             Some(Duration::ZERO)
         );
     }
 
     #[test]
     fn saturated_with_no_progress_does_not_redrain() {
-        assert_eq!(schedule_after(&report_with(CAP, 0, None), CAP), None);
+        assert_eq!(schedule_after(&report_with(CAP, 0, 0, None), CAP), None);
     }
 
     #[test]
     fn saturated_all_transient_honors_backoff() {
-        let delay = schedule_after(&report_with(CAP, 0, Some(1)), CAP).expect("a delay");
+        let delay = schedule_after(&report_with(CAP, 0, 0, Some(1)), CAP).expect("a delay");
         assert_eq!(delay, retry_backoff(1));
     }
 
     #[test]
     fn not_saturated_with_no_retry_owed_yields_no_delay() {
         assert_eq!(
-            schedule_after(&report_with(CAP - 1, CAP - 1, None), CAP),
+            schedule_after(&report_with(CAP - 1, CAP - 1, 0, None), CAP),
             None
         );
     }
 
     #[test]
     fn not_saturated_with_a_transient_retry_yields_its_backoff() {
-        let delay = schedule_after(&report_with(CAP - 1, CAP - 2, Some(1)), CAP).expect("a delay");
+        let delay =
+            schedule_after(&report_with(CAP - 1, CAP - 2, 0, Some(1)), CAP).expect("a delay");
         assert_eq!(delay, retry_backoff(1));
     }
 }
