@@ -5,36 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Typed integration-event/command envelopes, IntegrationPublisher trait, and a transactional outbox for cross-bounded-context messaging over NATS"
-
-[features]
-# The transactional outbox's Postgres store + relay. Off by default so the
-# base crate (publishers, consumers, the awaiter, the pure outbox state machine)
-# stays free of a `sqlx` dependency — only a service that stages outbox rows in
-# its own Postgres transaction enables it. The `OutboxStatus` state machine and
-# `OutboxRecord` are always available; this feature adds the DB-touching surface.
-# `sqlx/uuid` + `sqlx/json` supply the `Type`/`Encode`/`Decode` impls the store
-# binds (`Uuid` ids, `JSONB` payloads); they extend the workspace sqlx pin.
-outbox = ["dep:sqlx", "sqlx/uuid", "sqlx/json"]
+description = "Transport-independent integration contracts: message coordinates, typed event/command envelopes, the message outcome, and the pure outbox state machine"
 
 [dependencies]
 br-core-events = { workspace = true }
-async-nats = { workspace = true }
-async-trait = { workspace = true }
 chrono = { workspace = true }
-futures-util = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
-# sqlx: only the outbox store/relay touch Postgres; gated behind `outbox` so the
-# base crate carries no DB dependency. Inherits the workspace pin (postgres +
-# runtime-tokio + the rustls TLS backend) — the outbox store itself binds plain
-# queries and lets the caller supply the transaction/pool, but it shares the
-# workspace's single sqlx feature set so every consumer links the same build.
-sqlx = { workspace = true, optional = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
 br-core-kernel = { workspace = true }
+serde_json = { workspace = true }

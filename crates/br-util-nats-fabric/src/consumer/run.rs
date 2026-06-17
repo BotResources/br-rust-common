@@ -93,8 +93,16 @@ where
     Ok(())
 }
 
+fn ack_kind(outcome: MessageOutcome) -> async_nats::jetstream::AckKind {
+    match outcome {
+        MessageOutcome::Ack => async_nats::jetstream::AckKind::Ack,
+        MessageOutcome::Nak(delay) => async_nats::jetstream::AckKind::Nak(delay),
+        _ => async_nats::jetstream::AckKind::Term,
+    }
+}
+
 async fn apply_outcome(message: &async_nats::jetstream::Message, outcome: MessageOutcome) {
-    if let Err(err) = message.ack_with(outcome.into()).await {
+    if let Err(err) = message.ack_with(ack_kind(outcome)).await {
         tracing::warn!(
             error = %err,
             subject = %message.subject,

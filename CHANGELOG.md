@@ -37,9 +37,8 @@ release; they remain reachable through the historical per-crate tags
   constructed via `open(&fabric)` — the raw `async_nats` KV `Store` is never
   handed to a caller, so every key path goes through a validated `KvKey` /
   `KvPrefix`.
-  Builds on `br-core-integration` (envelopes, the pure outbox state machine);
-  the old `br-core-integration` transport APIs remain available until consumers
-  migrate.
+  Builds on `br-core-integration` (envelopes, coordinates, the pure outbox state
+  machine); it is now the **sole** owner of all NATS transport.
 
 - **`br-core-directory` — `PublishedServiceAccount` directory DTO + the
   `service_accounts` entity, key prefix and builders.** A separate, minimal
@@ -198,6 +197,25 @@ release; they remain reachable through the historical per-crate tags
   **only** `TRUSTED_NETWORK_HOSTS`; `TRUSTED_HOSTS` (deprecated since 0.6.0) is
   no longer honored and no longer warns. Services still setting the legacy name
   must rename it.
+- **BREAKING — `br-core-integration` reduced to pure, transport-independent
+  contracts; all NATS transport removed.** Now that `br-util-nats-fabric` owns
+  every NATS transport path and the scope-declaration + identity slices have
+  migrated onto it, the crate's `async_nats`-coupled transport is gone:
+  `NatsIntegrationPublisher`, the `IntegrationPublisher` / `IntegrationPublisherExt`
+  traits and `NoopIntegrationPublisher`, `DurableConsumer` / `Delivery`,
+  `CorrelatedAwaiter` / `CorrelatedMatch`, the freestyle `integration_subject` /
+  `MessageKind` / `SubjectError` subject builder, `verify_consumer`, the
+  transport-coupled `IntegrationError` / `PublishErrorKind` / `ConsumeErrorKind`
+  error types, and the `outbox` feature's Postgres store + relay
+  (`OutboxStore` / `OutboxRelay` / `RelayPolicy` / `RelayHealth` / `OutboxRecord` /
+  `stage` / `classify_failure` / `FailureClass`) — all removed. The crate **no
+  longer depends on `async-nats`** (nor on `sqlx`, `tokio`, `async-trait`,
+  `futures-util`); the `outbox` feature is gone. What remains is pure: the message
+  coordinates (`Bc` / `Aggregate` / `Verb` / `PastFact`, `CommandCoords` /
+  `EventCoords`, `CoordError`), the `IntegrationEvent` / `IntegrationCommand`
+  envelopes, `MessageOutcome` (minus its `async_nats::AckKind` conversion, now a
+  Fabric-local function), and the pure outbox state machine (`OutboxStatus` /
+  `Transition` / `next_after_attempt` / `retry_backoff`) the Fabric reuses.
 
 ### Other
 
