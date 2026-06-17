@@ -26,12 +26,12 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 |---|---|---|---|---|
 | `br-core-kernel` | core | Typed ID wrappers (`UserId`, `ServiceAccountId`) | [README](crates/br-core-kernel/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-auth` | core | `Passport` DTO, `X-Passport` header codec, PAT bearer-token contract | [README](crates/br-core-auth/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-core-events` | core | Shared event envelopes (`EventMetadata`, `RawEvent`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-events` | core | Shared event envelopes (`EventMetadata`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-integration` | core | Typed integration envelopes + `IntegrationPublisher` (NATS JetStream / noop) | [README](crates/br-core-integration/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | [README](crates/br-core-scope/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | [README](crates/br-core-values/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | [README](crates/br-scope-declaration-contract/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-util-postgres` | util | Postgres pools, TLS, RLS context, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | [README](crates/br-util-broadcast/README.md) | [CHANGELOG](CHANGELOG.md) |
