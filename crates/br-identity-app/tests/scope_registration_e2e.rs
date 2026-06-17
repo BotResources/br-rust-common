@@ -15,7 +15,7 @@ async fn spawn_consumer(pg: &PgEnv, nats: &NatsEnv) -> tokio::task::JoinHandle<(
     let durable = nats.durable.clone();
     tokio::spawn(async move {
         let coords = br_scope_declaration_contract::declare_command_coords().unwrap();
-        br_identity_app::run_scope_declarations(
+        let outcome = br_identity_app::run_scope_declarations(
             &fabric,
             &coords,
             &durable,
@@ -23,8 +23,10 @@ async fn spawn_consumer(pg: &PgEnv, nats: &NatsEnv) -> tokio::task::JoinHandle<(
             |poison| panic!("unexpected poison: {poison}"),
             |err| panic!("unexpected permanent (corrupt-store) failure: {err}"),
         )
-        .await
-        .ok();
+        .await;
+        if let Err(err) = outcome {
+            panic!("scope-declaration consumer failed to run (durable bind or stream): {err}");
+        }
     })
 }
 

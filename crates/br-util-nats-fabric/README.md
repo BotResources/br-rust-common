@@ -107,10 +107,9 @@ typed destination at publish time**, and applies the pure retry/transition state
 machine from `br-core-integration`; `RelayHealth` degrades on a structural
 (no-stream) failure. The table is assumed to exist — the relay never creates it.
 
-`br_util_nats_fabric::OutboxRecord` (typed `EventCoords` destination) is the
-preferred type. The legacy `br_core_integration::OutboxRecord` (raw
-`subject: String`) is the old path, removed later in the v1.0.0
-integration-reduction step.
+The legacy `br_core_integration::OutboxRecord` (raw `subject: String`) was
+removed in the v1.0.0 integration-reduction step; `br_util_nats_fabric::OutboxRecord`
+(typed `EventCoords` destination) is now the only outbox record type.
 
 ## Surface 2 — Published Language over KV
 

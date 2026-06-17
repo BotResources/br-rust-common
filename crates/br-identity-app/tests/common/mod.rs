@@ -11,7 +11,7 @@ use br_identity_app::{
 };
 pub use br_test_support::test_db_url;
 use br_test_support::{cleanup_role, open_pool_as, unique_suffix};
-use br_util_nats_fabric::{Fabric, INTEGRATION_CMD, INTEGRATION_EVT};
+use br_util_nats_fabric::{Fabric, INTEGRATION_CMD, INTEGRATION_EVT, command_subject};
 use chrono::Utc;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -149,6 +149,24 @@ impl NatsEnv {
 
         recreate(&js, INTEGRATION_CMD, "integration.cmd.>").await;
         recreate(&js, INTEGRATION_EVT, "integration.evt.>").await;
+
+        let coords = br_scope_declaration_contract::declare_command_coords()
+            .expect("declare command coords");
+        let declare_subject = command_subject(&coords);
+        let cmd_stream = js
+            .get_stream(INTEGRATION_CMD)
+            .await
+            .expect("get cmd stream");
+        cmd_stream
+            .create_consumer(async_nats::jetstream::consumer::pull::Config {
+                durable_name: Some(durable.clone()),
+                filter_subjects: vec![declare_subject],
+                ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+                ack_wait: std::time::Duration::from_secs(2),
+                ..Default::default()
+            })
+            .await
+            .expect("create durable declare consumer");
 
         Self {
             js: js.clone(),
