@@ -1,24 +1,12 @@
 use br_core_kernel::{Actor, ServiceAccountId, UserId};
 use br_core_scope::ScopeKey;
-use serde::de::Error as _;
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use crate::auth_method::AuthMethod;
+use crate::claims::PassportClaims;
 
 pub const SCOPES_CLAIM_KEY: &str = "scopes";
-
-fn deserialize_claims<'de, D>(deserializer: D) -> Result<serde_json::Value, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    if value.is_object() {
-        Ok(value)
-    } else {
-        Err(D::Error::custom("claims must be a JSON object"))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -30,23 +18,70 @@ pub enum Passport {
         auth_method: AuthMethod,
         #[serde(default)]
         impersonator: Option<Uuid>,
-        #[serde(deserialize_with = "deserialize_claims")]
-        claims: serde_json::Value,
+        claims: PassportClaims,
     },
     Service {
         service_account_id: Uuid,
-        #[serde(deserialize_with = "deserialize_claims")]
-        claims: serde_json::Value,
+        claims: PassportClaims,
     },
 }
 
 impl Passport {
+    pub fn human(
+        user_id: Uuid,
+        is_super_admin: bool,
+        is_active: bool,
+        auth_method: AuthMethod,
+        impersonator: Option<Uuid>,
+        claims: PassportClaims,
+    ) -> Self {
+        Passport::Human {
+            user_id,
+            is_super_admin,
+            is_active,
+            auth_method,
+            impersonator,
+            claims,
+        }
+    }
+
+    pub fn service(service_account_id: Uuid, claims: PassportClaims) -> Self {
+        Passport::Service {
+            service_account_id,
+            claims,
+        }
+    }
+
+    #[must_use]
+    pub fn with_impersonator(mut self, impersonator_id: Uuid) -> Self {
+        if let Passport::Human { impersonator, .. } = &mut self {
+            *impersonator = Some(impersonator_id);
+        }
+        self
+    }
+
     pub fn actor_id(&self) -> Uuid {
         match self {
             Passport::Human { user_id, .. } => *user_id,
             Passport::Service {
                 service_account_id, ..
             } => *service_account_id,
+        }
+    }
+
+    pub fn user_id(&self) -> Option<Uuid> {
+        match self {
+            Passport::Human { user_id, .. } => Some(*user_id),
+            Passport::Service { .. } => None,
+        }
+    }
+
+    pub fn service_account_id(&self) -> Option<Uuid> {
+        match self {
+            Passport::Service {
+                service_account_id, ..
+            } => Some(*service_account_id),
+            Passport::Human { .. } => None,
         }
     }
 
@@ -98,7 +133,7 @@ impl Passport {
         }
     }
 
-    pub fn claims(&self) -> &serde_json::Value {
+    pub fn claims(&self) -> &PassportClaims {
         match self {
             Passport::Human { claims, .. } | Passport::Service { claims, .. } => claims,
         }
@@ -131,70 +166,72 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn claims(value: serde_json::Value) -> PassportClaims {
+        PassportClaims::from_value(value).unwrap()
+    }
+
     fn human(admin: bool, active: bool) -> Passport {
-        Passport::Human {
-            user_id: Uuid::nil(),
-            is_super_admin: admin,
-            is_active: active,
-            auth_method: AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({"email": "alice@example.com", "role": "manager"}),
-        }
+        Passport::human(
+            Uuid::nil(),
+            admin,
+            active,
+            AuthMethod::Jwt,
+            None,
+            claims(json!({"email": "alice@example.com", "role": "manager"})),
+        )
     }
 
     fn pat_human() -> Passport {
-        Passport::Human {
-            user_id: Uuid::from_u128(1),
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Pat {
+        Passport::human(
+            Uuid::from_u128(1),
+            false,
+            true,
+            AuthMethod::Pat {
                 token_id: Uuid::from_u128(100),
             },
-            impersonator: None,
-            claims: json!({}),
-        }
+            None,
+            PassportClaims::new(),
+        )
     }
 
     fn impersonated_human() -> Passport {
-        Passport::Human {
-            user_id: Uuid::from_u128(1),
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Jwt,
-            impersonator: Some(Uuid::from_u128(999)),
-            claims: json!({}),
-        }
+        Passport::human(
+            Uuid::from_u128(1),
+            false,
+            true,
+            AuthMethod::Jwt,
+            Some(Uuid::from_u128(999)),
+            PassportClaims::new(),
+        )
     }
 
     fn service() -> Passport {
-        Passport::Service {
-            service_account_id: Uuid::from_u128(42),
-            claims: json!({"name": "ci-bot"}),
-        }
+        Passport::service(Uuid::from_u128(42), claims(json!({"name": "ci-bot"})))
     }
 
     #[test]
     fn actor_id_returns_user_id_for_human() {
         let uid = Uuid::from_u128(99);
-        let p = Passport::Human {
-            user_id: uid,
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({}),
-        };
+        let p = Passport::human(
+            uid,
+            false,
+            true,
+            AuthMethod::Jwt,
+            None,
+            PassportClaims::new(),
+        );
         assert_eq!(p.actor_id(), uid);
+        assert_eq!(p.user_id(), Some(uid));
+        assert_eq!(p.service_account_id(), None);
     }
 
     #[test]
     fn actor_id_returns_service_account_id_for_service() {
         let sid = Uuid::from_u128(77);
-        let p = Passport::Service {
-            service_account_id: sid,
-            claims: json!({}),
-        };
+        let p = Passport::service(sid, PassportClaims::new());
         assert_eq!(p.actor_id(), sid);
+        assert_eq!(p.service_account_id(), Some(sid));
+        assert_eq!(p.user_id(), None);
     }
 
     #[test]
@@ -207,24 +244,21 @@ mod tests {
     #[test]
     fn to_actor_maps_human_to_human_user_id() {
         let uid = Uuid::from_u128(99);
-        let p = Passport::Human {
-            user_id: uid,
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({}),
-        };
+        let p = Passport::human(
+            uid,
+            false,
+            true,
+            AuthMethod::Jwt,
+            None,
+            PassportClaims::new(),
+        );
         assert_eq!(p.to_actor(), Actor::Human(UserId::from(uid)));
     }
 
     #[test]
     fn to_actor_maps_service_to_service_account_id() {
         let sid = Uuid::from_u128(77);
-        let p = Passport::Service {
-            service_account_id: sid,
-            claims: json!({}),
-        };
+        let p = Passport::service(sid, PassportClaims::new());
         assert_eq!(p.to_actor(), Actor::Service(ServiceAccountId::from(sid)));
     }
 
@@ -323,15 +357,29 @@ mod tests {
     }
 
     #[test]
+    fn with_impersonator_sets_impersonator_on_human() {
+        let admin = Uuid::from_u128(500);
+        let p = human(false, true).with_impersonator(admin);
+        assert_eq!(p.impersonator_id(), Some(admin));
+        assert!(p.is_impersonating());
+    }
+
+    #[test]
+    fn with_impersonator_is_noop_on_service() {
+        let p = service().with_impersonator(Uuid::from_u128(500));
+        assert!(!p.is_impersonating());
+    }
+
+    #[test]
     fn claims_returns_human_claims() {
         let p = human(false, true);
-        assert_eq!(p.claims()["email"], "alice@example.com");
+        assert_eq!(p.claims().get("email"), Some(&json!("alice@example.com")));
     }
 
     #[test]
     fn claims_returns_service_claims() {
         let p = service();
-        assert_eq!(p.claims()["name"], "ci-bot");
+        assert_eq!(p.claims().get("name"), Some(&json!("ci-bot")));
     }
 
     #[test]
@@ -659,14 +707,14 @@ mod tests {
     }
 
     fn human_with_scopes(scopes: serde_json::Value) -> Passport {
-        Passport::Human {
-            user_id: Uuid::from_u128(1),
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({ "scopes": scopes }),
-        }
+        Passport::human(
+            Uuid::from_u128(1),
+            false,
+            true,
+            AuthMethod::Jwt,
+            None,
+            claims(json!({ "scopes": scopes })),
+        )
     }
 
     #[test]
@@ -732,15 +780,15 @@ mod tests {
 
     #[test]
     fn empty_claims_are_valid() {
-        let p = Passport::Human {
-            user_id: Uuid::nil(),
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({}),
-        };
-        assert_eq!(p.claims(), &json!({}));
+        let p = Passport::human(
+            Uuid::nil(),
+            false,
+            true,
+            AuthMethod::Jwt,
+            None,
+            PassportClaims::new(),
+        );
+        assert!(p.claims().is_empty());
         let nothing: Option<String> = p.claim("anything");
         assert!(nothing.is_none());
     }

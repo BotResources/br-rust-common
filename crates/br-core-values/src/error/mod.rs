@@ -18,8 +18,6 @@ pub enum ValueError {
     LocalizedPrimaryMissing,
     #[error("localized_duplicate_locale")]
     LocalizedDuplicateLocale,
-    #[error("{code}")]
-    Unknown { code: String },
 }
 
 #[cfg(test)]
@@ -93,27 +91,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_future_code_degrades_to_unknown_not_an_error() {
+    fn unknown_code_fails_deserialization() {
         let wire = r#"{"code":"some_future_rule","value":"x","extra":42}"#;
-        let back: ValueError = serde_json::from_str(wire).unwrap();
-        assert_eq!(
-            back,
-            ValueError::Unknown {
-                code: "some_future_rule".into()
-            }
-        );
+        assert!(serde_json::from_str::<ValueError>(wire).is_err());
     }
 
     #[test]
-    fn unknown_future_code_without_params_degrades() {
+    fn unknown_code_without_params_fails_deserialization() {
         let wire = r#"{"code":"future_bare"}"#;
-        let back: ValueError = serde_json::from_str(wire).unwrap();
-        assert_eq!(
-            back,
-            ValueError::Unknown {
-                code: "future_bare".into()
-            }
-        );
+        assert!(serde_json::from_str::<ValueError>(wire).is_err());
     }
 
     #[test]

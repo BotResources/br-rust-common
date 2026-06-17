@@ -1,9 +1,8 @@
-use br_core_auth::{AuthMethod, Passport};
+use br_core_auth::{AuthMethod, Passport, PassportClaims};
 use br_test_support::{
     cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
 };
 use br_util_postgres::{ensure_app_role, grant_app_access, set_rls_context};
-use serde_json::json;
 use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -11,14 +10,14 @@ use uuid::Uuid;
 const APP_PW: &str = "bootstrap_app_pw_e2e_only";
 
 fn passport_for(actor: Uuid) -> Passport {
-    Passport::Human {
-        user_id: actor,
-        is_super_admin: false,
-        is_active: true,
-        auth_method: AuthMethod::Jwt,
-        impersonator: None,
-        claims: json!({}),
-    }
+    Passport::human(
+        actor,
+        false,
+        true,
+        AuthMethod::Jwt,
+        None,
+        PassportClaims::new(),
+    )
 }
 
 #[tokio::test]

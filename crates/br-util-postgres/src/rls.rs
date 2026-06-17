@@ -55,11 +55,10 @@ mod live_tests {
     use super::*;
     use crate::grant::grant_app_access;
     use crate::role::ensure_app_role;
-    use br_core_auth::{AuthMethod, Passport};
+    use br_core_auth::{AuthMethod, Passport, PassportClaims};
     use br_test_support::{
         cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
     };
-    use serde_json::json;
     use sqlx::Row;
     use sqlx::postgres::PgPoolOptions;
     use uuid::Uuid;
@@ -67,14 +66,14 @@ mod live_tests {
     const APP_PW: &str = "rls_test_app_pw";
 
     fn passport_for(actor: Uuid) -> Passport {
-        Passport::Human {
-            user_id: actor,
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({}),
-        }
+        Passport::human(
+            actor,
+            false,
+            true,
+            AuthMethod::Jwt,
+            None,
+            PassportClaims::new(),
+        )
     }
 
     #[tokio::test]

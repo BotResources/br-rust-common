@@ -11,6 +11,38 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — `br-core-auth`: `Passport` variant fields are now private and
+  `claims` is a `PassportClaims` newtype.** `Passport::{Human,Service}` can no
+  longer be built from raw struct literals by outside crates; construct through
+  the new canonical constructors `Passport::human(user_id, is_super_admin,
+  is_active, auth_method, impersonator, claims)` and
+  `Passport::service(service_account_id, claims)`, plus the `with_impersonator`
+  helper. `claims()` now returns `&PassportClaims` (was `&serde_json::Value`).
+  The new `PassportClaims` newtype wraps a JSON **object** map (private inner),
+  serializes as an object, and **rejects any non-object** (null/array/scalar) on
+  deserialization — so a non-canonical passport (e.g. `claims: null`) is now
+  unrepresentable, not merely rejected on the wire. New read accessors
+  `user_id()` / `service_account_id()` (both `Option<Uuid>`). The valid-passport
+  wire format and the `X-Passport` base64 codec are unchanged.
+- **BREAKING — `br-core-events`: `DomainEvent.metadata` is now the typed
+  `EventMetadata`** instead of `serde_json::Value`, and `DomainEvent::new` takes
+  `metadata: EventMetadata`. An event can no longer persist a malformed metadata
+  bag. The JSON wire shape is unchanged (`EventMetadata` already serialized to
+  the same flat `actor_id`/`actor_kind`/`correlation_id` form).
+
+### Removed
+
+- **BREAKING — `br-core-values`: removed the `ValueError::Unknown { code }`
+  catch-all variant.** A non-canonical `code` on the wire now **fails
+  deserialization** (`unknown variant`) instead of degrading to a publicly
+  constructible `Unknown` state. Every `ValueError` is one of the fixed
+  canonical codes.
+- **BREAKING — `br-core-events`: removed `RawEvent`** (and its export). It was a
+  pre-persistence producer-side shape; aggregates lower their facts straight into
+  a `DomainEvent` envelope.
+
 ### Fixed
 
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`

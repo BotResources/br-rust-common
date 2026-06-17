@@ -175,7 +175,7 @@ consumer in this slice needs them (the integration-bus `accepted`/`rejected`
 confirmations are what the declarant binds to), and persisting current-state rows
 is the state-stored model's source of truth. This is an honest, documented
 decision, not a pretend-dispatch: a later slice that needs a domain-bus fan-out
-(e.g. a grant-admin projection) will lower them to a `RawEvent` envelope on the
+(e.g. a grant-admin projection) will lower them to a `DomainEvent` envelope on the
 unprefixed domain subject convention and publish them then.
 
 ## Outbound KV projection
