@@ -11,6 +11,8 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-17
+
 ### Added
 
 - **New crate `br-util-nats-fabric` — the Project NATS Fabric API.** The single,

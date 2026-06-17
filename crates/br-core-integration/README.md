@@ -126,7 +126,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v0.11.1", version = "0.11.1" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v1.0.0", version = "1.0.0" }
 ```
 
 ---

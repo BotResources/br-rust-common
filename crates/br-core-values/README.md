@@ -107,7 +107,7 @@ deserializes back from that lowercase form (round-trip):
 
 ```toml
 [dev-dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.11.1", features = ["conformance"] }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v1.0.0", features = ["conformance"] }
 ```
 
 ```rust,ignore
@@ -177,7 +177,7 @@ no `async`, no `br-util-*`. Unified workspace versioning, distributed by git tag
 
 ```toml
 [dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.11.1" }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v1.0.0" }
 ```
 
 ---
