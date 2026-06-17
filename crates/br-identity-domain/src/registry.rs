@@ -26,8 +26,12 @@ impl ScopeRegistry {
     ) -> Result<Self, RegistryHydrationError> {
         let mut registered = Vec::with_capacity(services.len());
         let mut seen: HashSet<ScopeKey> = HashSet::new();
+        let mut seen_services: HashSet<ServiceKey> = HashSet::new();
 
         for (manifest, scopes) in services {
+            if !seen_services.insert(manifest.key.clone()) {
+                return Err(RegistryHydrationError::DuplicateService { key: manifest.key });
+            }
             let mut service = RegisteredService::new(manifest.clone());
             for spec in scopes {
                 if !spec.key.is_owned_by(&manifest.key) {
@@ -434,6 +438,24 @@ mod tests {
             err,
             RegistryHydrationError::DuplicateScope {
                 key: ScopeKey::new("dup:read").unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn hydrate_rejects_duplicate_service_even_with_disjoint_scopes() {
+        let err = ScopeRegistry::hydrate(
+            1,
+            vec![
+                (manifest("notifier"), vec![spec("notifier:read", false)]),
+                (manifest("notifier"), vec![spec("notifier:write", false)]),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            RegistryHydrationError::DuplicateService {
+                key: service_key("notifier"),
             }
         );
     }

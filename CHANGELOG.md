@@ -69,6 +69,18 @@ release; they remain reachable through the historical per-crate tags
   the manifest declares `service_accounts`. `DirectoryPublisher` gains
   `publish_service_account` / `retract_service_account` and the `DirectorySource`
   seam a `desired_service_accounts` method (default empty).
+- **`br-core-integration` now owns the transport-independent integration
+  coordinate types.** The validated newtypes `Bc` / `Aggregate` / `Verb` /
+  `PastFact`, the `CommandCoords` / `EventCoords` structs and their `CoordError`
+  moved here from `br-util-nats-fabric`: they are contract types (segment
+  validation, no NATS coupling), so a core contract crate can build on them
+  without a core→util dependency. `br-util-nats-fabric` re-exports them and keeps
+  only the NATS-specific rendering (the `integration.…` subject assembly, now
+  also exposed as `command_subject` / `event_subject`), parsing, stream
+  constants and transport. `br-identity-domain` gains `RejectedIdentity`
+  (`Service(ServiceKey) | Unrepresentable { raw }`) so a declaration with an
+  invalid manifest key produces a typed rejection identity instead of an
+  unwrap-or-default placeholder.
 
 ### Changed
 
@@ -124,6 +136,45 @@ release; they remain reachable through the historical per-crate tags
   `remove_group` are removed — incremental projection is the fabric `watch()`.
   `DirectoryError` drops the `Kv` / `Wire` string variants in favor of
   `Fabric(FabricError)` / `KvKey(KvKeyError)`, and gains `ManifestAbsent`.
+- **BREAKING — the scope-declaration slice runs over the NATS Fabric.** The
+  handshake and the Identity receiver no longer touch the legacy
+  `br-core-integration` transport (`NatsIntegrationPublisher`,
+  `DurableConsumer::bind`, `CorrelatedAwaiter::create`, the freestyle
+  `integration_subject` builder) — they use `br-util-nats-fabric` over the fixed
+  `INTEGRATION_CMD` / `INTEGRATION_EVT` streams and the v1 grammar. The contract
+  subjects move from the old bc-prefixed grammar
+  (`identity.cmd.service_scope.declare.v1`) to the Fabric grammar
+  (`integration.cmd.identity.service_scope.declare.v1`,
+  `integration.evt.identity.service_scope.{accepted,rejected}.v1`).
+  - **`br-scope-declaration-contract`** replaces the freestyle subject builders
+    (`command_subject` / `event_subject` / `accepted_subject` /
+    `rejected_subject`) with the typed `declare_command_coords()` /
+    `accepted_event_coords()` / `rejected_event_coords()` returning the core
+    `CommandCoords` / `EventCoords`. Adds `UNREPRESENTABLE_SERVICE`.
+  - **`br-util-scope-declaration`**: `declare_scopes` now takes `&Fabric` (not a
+    raw JetStream `Context`) and awaits the two confirmation facts via the
+    Fabric correlated awaiter; `ScopeDeclarationConfig` drops `stream_name` (the
+    standard flow never names a stream). Readiness gating, timeout / correlation
+    / re-publish policy and the disabled-mode no-publish path are unchanged.
+  - **`br-util-nats-fabric`**: adds `Fabric::await_events(&[&EventCoords])` (the
+    correlated awaiter over more than one reply fact) and the public
+    `command_subject` / `event_subject` renderers.
+  - **`br-identity-app`**: `run_scope_declarations` takes `&Fabric` + the declare
+    `CommandCoords` + a durable name (the Fabric binds `INTEGRATION_CMD` and
+    verifies the durable filter so a misconfigured durable cannot widen
+    delivery); confirmations publish via the Fabric. `ConfirmationPublisher` /
+    `ScopeDeclarationPipeline` drop their `IntegrationPublisher` generic and hold
+    a concrete `Fabric`. `AppError::Publish` now wraps `FabricError`.
+- **BREAKING — `br-identity-domain`: registry-hydration and rejection audit
+  fixes.** `ScopeRegistry::hydrate` now rejects a duplicate `ServiceKey` even
+  when the services' scopes do not overlap
+  (`RegistryHydrationError::DuplicateService`). `DeclarationOutcome::Rejected`
+  carries a typed `RejectedIdentity` (`Service(ServiceKey) | Unrepresentable {
+  raw }`): the app maps `Unrepresentable` to the explicit `UNREPRESENTABLE_SERVICE`
+  sentinel rather than the previous silent `unwrap_or_else("unknown")`.
+  Re-declaration of an already-owned scope is documented as **label/description
+  immutable for v1** (a re-declare only touches `last_seen_at`; the existing
+  no-op behavior is now the explicit contract).
 
 ### Removed
 

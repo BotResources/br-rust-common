@@ -1,5 +1,5 @@
 use crate::consumer::bind::bind_durable;
-use crate::coords::{CommandCoords, EventCoords};
+use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::FabricError;
 use crate::fabric::Fabric;
 use crate::stream::{INTEGRATION_CMD, INTEGRATION_EVT};

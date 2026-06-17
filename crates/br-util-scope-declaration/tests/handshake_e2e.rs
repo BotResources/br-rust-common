@@ -3,15 +3,15 @@ mod common;
 use std::time::Duration;
 
 use br_util_axum_readiness::ReadinessHandle;
+use br_util_nats_fabric::{INTEGRATION_CMD, INTEGRATION_EVT};
 use br_util_scope_declaration::{ScopeDeclarationConfig, ScopeDeclarationOutcome, declare_scopes};
 use common::{
-    StubReceiver, StubReply, create_identity_stream, declare_message_count, jetstream,
-    notifier_declaration, serialize_identity_stream, spawn_delayed_accept_stub, teardown,
-    unique_stream,
+    StubReceiver, StubReply, create_fabric_streams, declare_message_count, fabric, jetstream,
+    notifier_declaration, serialize_fabric_streams, spawn_delayed_accept_stub, teardown,
 };
 
-fn fast_config(stream_name: &str) -> ScopeDeclarationConfig {
-    let mut config = ScopeDeclarationConfig::enabled(stream_name);
+fn fast_config() -> ScopeDeclarationConfig {
+    let mut config = ScopeDeclarationConfig::enabled();
     config.wait_timeout = Duration::from_millis(500);
     config
 }
@@ -20,20 +20,19 @@ fn fast_config(stream_name: &str) -> ScopeDeclarationConfig {
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn accepted_sets_readiness_up() {
     let Some(_) = common::nats_url() else { return };
-    let _guard = serialize_identity_stream().await;
+    let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
-    let stream = unique_stream();
-    let _s = create_identity_stream(&js, &stream).await;
-    let _stub = StubReceiver::spawn(&js, &stream, StubReply::Accept, 1).await;
+    create_fabric_streams(&js).await;
+    let _stub = StubReceiver::spawn(&js, StubReply::Accept, 1).await;
 
     let readiness = ReadinessHandle::not_ready("declaring scopes");
     let outcome = tokio::time::timeout(
         Duration::from_secs(15),
         declare_scopes(
-            &js,
+            &fabric().await,
             notifier_declaration(),
             readiness.clone(),
-            fast_config(&stream),
+            fast_config(),
         ),
     )
     .await
@@ -43,27 +42,26 @@ async fn accepted_sets_readiness_up() {
     assert!(matches!(outcome, ScopeDeclarationOutcome::Accepted));
     assert!(readiness.is_ready(), "accepted → readiness UP");
 
-    teardown(&js, &stream).await;
+    teardown(&js).await;
 }
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn rejected_sets_readiness_down_with_reason() {
     let Some(_) = common::nats_url() else { return };
-    let _guard = serialize_identity_stream().await;
+    let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
-    let stream = unique_stream();
-    let _s = create_identity_stream(&js, &stream).await;
-    let _stub = StubReceiver::spawn(&js, &stream, StubReply::Reject, 1).await;
+    create_fabric_streams(&js).await;
+    let _stub = StubReceiver::spawn(&js, StubReply::Reject, 1).await;
 
     let readiness = ReadinessHandle::not_ready("declaring scopes");
     let outcome = tokio::time::timeout(
         Duration::from_secs(15),
         declare_scopes(
-            &js,
+            &fabric().await,
             notifier_declaration(),
             readiness.clone(),
-            fast_config(&stream),
+            fast_config(),
         ),
     )
     .await
@@ -79,27 +77,26 @@ async fn rejected_sets_readiness_down_with_reason() {
     }
     assert!(!readiness.is_ready(), "rejected → readiness DOWN");
 
-    teardown(&js, &stream).await;
+    teardown(&js).await;
 }
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn timeout_then_republish_then_accepted() {
     let Some(_) = common::nats_url() else { return };
-    let _guard = serialize_identity_stream().await;
+    let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
-    let stream = unique_stream();
-    let _s = create_identity_stream(&js, &stream).await;
-    let _stub = spawn_delayed_accept_stub(&js, &stream, 1).await;
+    create_fabric_streams(&js).await;
+    let _stub = spawn_delayed_accept_stub(&js, 1).await;
 
     let readiness = ReadinessHandle::not_ready("declaring scopes");
     let outcome = tokio::time::timeout(
         Duration::from_secs(15),
         declare_scopes(
-            &js,
+            &fabric().await,
             notifier_declaration(),
             readiness.clone(),
-            fast_config(&stream),
+            fast_config(),
         ),
     )
     .await
@@ -112,27 +109,26 @@ async fn timeout_then_republish_then_accepted() {
         "accepted after re-publish → readiness UP"
     );
 
-    teardown(&js, &stream).await;
+    teardown(&js).await;
 }
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn duplicate_confirmations_first_match_wins() {
     let Some(_) = common::nats_url() else { return };
-    let _guard = serialize_identity_stream().await;
+    let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
-    let stream = unique_stream();
-    let _s = create_identity_stream(&js, &stream).await;
-    let _stub = StubReceiver::spawn(&js, &stream, StubReply::Accept, 2).await;
+    create_fabric_streams(&js).await;
+    let _stub = StubReceiver::spawn(&js, StubReply::Accept, 2).await;
 
     let readiness = ReadinessHandle::not_ready("declaring scopes");
     let outcome = tokio::time::timeout(
         Duration::from_secs(15),
         declare_scopes(
-            &js,
+            &fabric().await,
             notifier_declaration(),
             readiness.clone(),
-            fast_config(&stream),
+            fast_config(),
         ),
     )
     .await
@@ -142,24 +138,23 @@ async fn duplicate_confirmations_first_match_wins() {
     assert!(matches!(outcome, ScopeDeclarationOutcome::Accepted));
     assert!(readiness.is_ready(), "duplicate accepted → still just UP");
 
-    teardown(&js, &stream).await;
+    teardown(&js).await;
 }
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn disabled_mode_publishes_nothing_and_sets_ready() {
     let Some(_) = common::nats_url() else { return };
-    let _guard = serialize_identity_stream().await;
+    let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
-    let stream = unique_stream();
-    let _s = create_identity_stream(&js, &stream).await;
+    create_fabric_streams(&js).await;
 
     let readiness = ReadinessHandle::not_ready("declaring scopes");
     let outcome = declare_scopes(
-        &js,
+        &fabric().await,
         notifier_declaration(),
         readiness.clone(),
-        ScopeDeclarationConfig::disabled(&stream),
+        ScopeDeclarationConfig::disabled(),
     )
     .await
     .expect("disabled handshake ok");
@@ -168,33 +163,39 @@ async fn disabled_mode_publishes_nothing_and_sets_ready() {
     assert!(readiness.is_ready(), "disabled → readiness UP");
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let count = declare_message_count(&js, &stream).await;
+    let count = declare_message_count(&js).await;
     assert_eq!(count, 0, "disabled mode must publish NO declare command");
 
-    teardown(&js, &stream).await;
+    teardown(&js).await;
 }
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn missing_stream_fails_loud() {
     let Some(_) = common::nats_url() else { return };
-    let _guard = serialize_identity_stream().await;
+    let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
-    let absent = format!("{}_absent", unique_stream());
+    create_fabric_streams(&js).await;
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
 
     let readiness = ReadinessHandle::not_ready("declaring scopes");
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         declare_scopes(
-            &js,
+            &fabric().await,
             notifier_declaration(),
             readiness.clone(),
-            fast_config(&absent),
+            fast_config(),
         ),
     )
     .await
     .expect("returned without hanging");
 
-    assert!(result.is_err(), "missing stream → fail loud (Err)");
+    assert!(
+        result.is_err(),
+        "missing INTEGRATION_EVT stream → fail loud (Err)"
+    );
     assert!(!readiness.is_ready(), "fail-loud leaves readiness DOWN");
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
 }

@@ -5,6 +5,8 @@ use br_core_scope::{ScopeKey, ServiceKey};
 pub enum RegistryHydrationError {
     #[error("duplicate_scope_in_registry")]
     DuplicateScope { key: ScopeKey },
+    #[error("duplicate_service_in_registry")]
+    DuplicateService { key: ServiceKey },
     #[error("scope_owner_mismatch")]
     ScopeOwnerMismatch {
         key: ScopeKey,

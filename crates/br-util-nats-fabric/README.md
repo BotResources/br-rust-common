@@ -45,6 +45,13 @@ that accepts ASCII alphanumerics plus `-` and `_`, is non-empty, and rejects
 `CommandCoords { receiver, aggregate, verb, version }` and
 `EventCoords { producer, aggregate, fact, version }`.
 
+These coordinate types are **transport-independent contract types owned by
+`br-core-integration`** (so a core contract crate can build on them without a
+core→util dependency); this crate re-exports them and owns only the
+`integration.…` rendering. `command_subject(&CommandCoords)` /
+`event_subject(&EventCoords)` render a coordinate to its wire subject (for
+comparison/logging); there is no freestyle string subject builder.
+
 ### Fixed streams
 
 | Constant          | Stream name        | Binds                |
@@ -84,8 +91,10 @@ to the caller's poison handler — it is never silently dropped.
 ### Correlated awaiter
 
 `Fabric::await_event(&coords)` opens a subscription scoped to one `EventCoords`
-on the fixed event stream; `await_correlation(correlation_id, deadline)` returns
-the first matching envelope or `None` at the deadline. The caller passes
+on the fixed event stream; `Fabric::await_events(&[&EventCoords])` awaits **one
+of several** reply facts (e.g. a request/reply that resolves on either an
+`accepted` or a `rejected` event). `await_correlation(correlation_id, deadline)`
+returns the first matching envelope or `None` at the deadline. The caller passes
 coordinates, never a stream or filter string.
 
 ### Outbox (feature `outbox`)

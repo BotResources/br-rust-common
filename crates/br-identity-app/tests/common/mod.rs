@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use br_core_integration::NatsIntegrationPublisher;
 use br_core_integration::{Actor, EventMetadata, IntegrationCommand, UserId};
 use br_core_scope::{
     DeclareServiceScopes, ScopeDeclaration, ScopeKey, ScopeSpec, ServiceKey, ServiceManifest,
@@ -12,6 +11,7 @@ use br_identity_app::{
 };
 pub use br_test_support::test_db_url;
 use br_test_support::{cleanup_role, open_pool_as, unique_suffix};
+use br_util_nats_fabric::{Fabric, INTEGRATION_CMD, INTEGRATION_EVT};
 use chrono::Utc;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -130,14 +130,13 @@ fn swap_database(url: &str, db_name: &str) -> String {
     parsed.to_string()
 }
 
-pub const DECLARE_SUBJECT: &str = "identity.cmd.service_scope.declare.v1";
-pub const ACCEPTED_SUBJECT: &str = "identity.evt.service_scope.accepted.v1";
-pub const REJECTED_SUBJECT: &str = "identity.evt.service_scope.rejected.v1";
+pub const DECLARE_SUBJECT: &str = "integration.cmd.identity.service_scope.declare.v1";
+pub const ACCEPTED_SUBJECT: &str = "integration.evt.identity.service_scope.accepted.v1";
+pub const REJECTED_SUBJECT: &str = "integration.evt.identity.service_scope.rejected.v1";
 
 pub struct NatsEnv {
     pub js: async_nats::jetstream::Context,
-    pub cmd_stream: String,
-    pub evt_stream: String,
+    pub fabric: Fabric,
     pub durable: String,
 }
 
@@ -146,52 +145,21 @@ impl NatsEnv {
         let client = async_nats::connect(url).await.expect("connect to NATS");
         let js = async_nats::jetstream::new(client);
 
-        let cmd_stream = "IDENTITY_CMD_E2E".to_string();
-        let evt_stream = "IDENTITY_EVT_E2E".to_string();
         let durable = format!("declare_worker_{}", unique_suffix());
 
-        let _ = js.delete_stream(&cmd_stream).await;
-        let _ = js.delete_stream(&evt_stream).await;
-
-        js.create_stream(async_nats::jetstream::stream::Config {
-            name: cmd_stream.clone(),
-            subjects: vec![DECLARE_SUBJECT.to_string()],
-            ..Default::default()
-        })
-        .await
-        .expect("create command stream");
-
-        js.create_stream(async_nats::jetstream::stream::Config {
-            name: evt_stream.clone(),
-            subjects: vec!["identity.evt.service_scope.>".to_string()],
-            ..Default::default()
-        })
-        .await
-        .expect("create confirmations stream");
-
-        let stream = js.get_stream(&cmd_stream).await.expect("get cmd stream");
-        stream
-            .create_consumer(async_nats::jetstream::consumer::pull::Config {
-                durable_name: Some(durable.clone()),
-                filter_subject: DECLARE_SUBJECT.to_string(),
-                ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-                ack_wait: std::time::Duration::from_secs(2),
-                ..Default::default()
-            })
-            .await
-            .expect("create durable consumer");
+        recreate(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+        recreate(&js, INTEGRATION_EVT, "integration.evt.>").await;
 
         Self {
-            js,
-            cmd_stream,
-            evt_stream,
+            js: js.clone(),
+            fabric: Fabric::new(js),
             durable,
         }
     }
 
     pub async fn teardown(self) {
-        let _ = self.js.delete_stream(&self.cmd_stream).await;
-        let _ = self.js.delete_stream(&self.evt_stream).await;
+        let _ = self.js.delete_stream(INTEGRATION_CMD).await;
+        let _ = self.js.delete_stream(INTEGRATION_EVT).await;
     }
 
     pub async fn await_confirmation(
@@ -203,7 +171,7 @@ impl NatsEnv {
 
         let stream = self
             .js
-            .get_stream(&self.evt_stream)
+            .get_stream(INTEGRATION_EVT)
             .await
             .expect("evt stream");
         let consumer = stream
@@ -244,7 +212,7 @@ impl NatsEnv {
 
         let stream = self
             .js
-            .get_stream(&self.evt_stream)
+            .get_stream(INTEGRATION_EVT)
             .await
             .expect("evt stream");
         let consumer = stream
@@ -358,12 +326,19 @@ fn integration_command(
     )
 }
 
-pub fn pipeline(
-    pg: &PgEnv,
-    js: async_nats::jetstream::Context,
-) -> Arc<ScopeDeclarationPipeline<NatsIntegrationPublisher>> {
+pub fn pipeline(pg: &PgEnv, fabric: Fabric) -> Arc<ScopeDeclarationPipeline> {
     let repository = ScopeRegistryRepository::new(pg.app_pool.clone());
-    let publisher = Arc::new(NatsIntegrationPublisher::new(js));
-    let confirmations = ConfirmationPublisher::new(publisher);
+    let confirmations = ConfirmationPublisher::new(fabric);
     Arc::new(ScopeDeclarationPipeline::new(repository, confirmations))
+}
+
+async fn recreate(js: &async_nats::jetstream::Context, name: &str, bind: &str) {
+    let _ = js.delete_stream(name).await;
+    js.create_stream(async_nats::jetstream::stream::Config {
+        name: name.to_string(),
+        subjects: vec![bind.to_string()],
+        ..Default::default()
+    })
+    .await
+    .expect("create fixed fabric stream");
 }

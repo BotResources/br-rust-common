@@ -8,11 +8,11 @@ repository.workspace = true
 description = "Identity bounded context — application/adapter half. Scope-registration slice: Postgres persistence, durable NATS consumer, and the load → judge → save → dispatch pipeline"
 
 [dependencies]
-async-nats = { workspace = true }
 br-core-integration = { workspace = true }
 br-core-scope = { workspace = true }
 br-identity-domain = { workspace = true }
 br-scope-declaration-contract = { workspace = true }
+br-util-nats-fabric = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,6 +22,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+async-nats = { workspace = true }
 br-test-support = { workspace = true }
 br-util-postgres = { workspace = true }
 futures-util = { workspace = true }

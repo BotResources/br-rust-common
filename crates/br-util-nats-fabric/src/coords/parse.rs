@@ -1,6 +1,6 @@
-use crate::coords::newtypes::{Aggregate, Bc, PastFact};
-use crate::coords::render::{EVT_TOKEN, EventCoords, INTEGRATION_PREFIX};
-use crate::coords::segment::CoordError;
+use br_core_integration::{Aggregate, Bc, CoordError, EventCoords, PastFact};
+
+use crate::coords::render::{EVT_TOKEN, INTEGRATION_PREFIX};
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub enum EventSubjectParseError {
@@ -41,6 +41,7 @@ pub fn parse_event_subject(subject: &str) -> Result<EventCoords, EventSubjectPar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coords::render::IntegrationSubject;
 
     #[test]
     fn round_trips_a_rendered_event_subject() {

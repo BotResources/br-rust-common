@@ -14,7 +14,7 @@ pub use awaiter::{CorrelatedAwaiter, CorrelatedMatch};
 pub use consumer::Delivery;
 pub use coords::{
     Aggregate, Bc, CommandCoords, CoordError, EventCoords, EventSubjectParseError, PastFact, Verb,
-    parse_event_subject,
+    command_subject, event_subject, parse_event_subject,
 };
 pub use error::{ConsumeErrorKind, FabricError, PublishErrorKind};
 pub use fabric::Fabric;

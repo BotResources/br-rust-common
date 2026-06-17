@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use async_nats::Subscriber;
 use futures_util::StreamExt;
+use futures_util::stream::SelectAll;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use br_core_integration::EventMetadata;
 
 use crate::classify::classify_get_stream;
-use crate::coords::EventCoords;
+use crate::coords::{EventCoords, IntegrationSubject};
 use crate::error::{ConsumeErrorKind, FabricError};
 use crate::fabric::Fabric;
 use crate::stream::INTEGRATION_EVT;
@@ -26,7 +27,7 @@ struct CorrelationProbe {
 }
 
 pub struct CorrelatedAwaiter {
-    messages: Subscriber,
+    messages: SelectAll<Subscriber>,
 }
 
 impl Fabric {
@@ -34,17 +35,28 @@ impl Fabric {
         &self,
         coords: &EventCoords,
     ) -> Result<CorrelatedAwaiter, FabricError> {
+        self.await_events(std::slice::from_ref(&coords)).await
+    }
+
+    pub async fn await_events(
+        &self,
+        coords: &[&EventCoords],
+    ) -> Result<CorrelatedAwaiter, FabricError> {
         let jetstream = self.context();
         jetstream
             .get_stream(INTEGRATION_EVT)
             .await
             .map_err(|e| FabricError::consume(classify_get_stream(&e), e.to_string()))?;
 
-        let messages = jetstream
-            .client()
-            .subscribe(coords.subject())
-            .await
-            .map_err(|e| FabricError::consume(ConsumeErrorKind::Other, e.to_string()))?;
+        let mut messages = SelectAll::new();
+        for coord in coords {
+            let subscriber = jetstream
+                .client()
+                .subscribe(coord.subject())
+                .await
+                .map_err(|e| FabricError::consume(ConsumeErrorKind::Other, e.to_string()))?;
+            messages.push(subscriber);
+        }
 
         Ok(CorrelatedAwaiter { messages })
     }

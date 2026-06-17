@@ -1,9 +1,9 @@
-mod newtypes;
 mod parse;
 mod render;
-mod segment;
 
-pub use newtypes::{Aggregate, Bc, PastFact, Verb};
+pub use br_core_integration::{
+    Aggregate, Bc, CommandCoords, CoordError, EventCoords, PastFact, Verb,
+};
 pub use parse::{EventSubjectParseError, parse_event_subject};
-pub use render::{CommandCoords, EventCoords};
-pub use segment::CoordError;
+pub(crate) use render::IntegrationSubject;
+pub use render::{command_subject, event_subject};
