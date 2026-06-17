@@ -1,0 +1,30 @@
+[package]
+name = "br-util-nats-fabric"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Project NATS Fabric API: the restricted, typed application-facing way to use NATS in BR services — fixed v1 integration grammar, fixed streams/buckets, no runtime provisioning, plus generic Published-Language KV mechanics"
+
+[features]
+outbox = ["dep:sqlx"]
+
+[dependencies]
+br-core-integration = { workspace = true }
+br-core-events = { workspace = true }
+async-nats = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true, optional = true, features = ["uuid", "json"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+br-core-kernel = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
