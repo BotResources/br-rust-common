@@ -28,11 +28,12 @@ mod tests {
     }
 
     fn group(member_ns: &[u128]) -> PublishedGroup {
-        PublishedGroup {
-            name: "engineering".to_string(),
-            member_ids: member_ns.iter().map(|n| id(*n)).collect(),
-            extensions: BTreeMap::new(),
-        }
+        PublishedGroup::new(
+            "engineering".to_string(),
+            member_ns.iter().map(|n| id(*n)).collect(),
+            BTreeMap::new(),
+        )
+        .unwrap()
     }
 
     #[test]

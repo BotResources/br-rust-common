@@ -34,15 +34,34 @@ deserialize the Go-frozen wire (lib drift → the deser fails).
   `user_id` is **not** a body field — it is the KV key suffix.
 - **`PublishedGroup`** — typed **core/kernel** fields `name`, `member_ids`
   (member presence is derivable: `has_member(user_id)`); the rest rides in
-  `extensions`. The `group_id` is the KV key suffix, not a body field.
+  `extensions`. The `group_id` is the KV key suffix, not a body field. Groups are
+  **user-only** — there is no `PublishedPrincipal`.
+- **`PublishedServiceAccount`** — a separate, minimal DTO: the single typed
+  **core** field `name`; the rest rides in `extensions`. The
+  `service_account_id` is the KV key suffix, not a body field. Kept deliberately
+  minimal (no future principal/group modelling).
 - **`DirectoryMeta`** (`identity/_meta`) — declares the published `entities`
-  (`users` [+ `groups`]) and a `version`. Consumers self-configure from it and
-  **auto-degrade** — no `groups` declared ⇒ later group readers return empty. The
-  manifest is **inferred from the source**, never a deploy flag.
+  (`users` [+ `groups`] [+ `service_accounts`]) and a `version`. Consumers
+  self-configure from it and **auto-degrade** — no `groups` declared ⇒ later
+  group readers return empty; same for `service_accounts`. The manifest is
+  **inferred from the source**, never a deploy flag.
 - **KV keys, frozen** — `identity/users/{id}`, `identity/groups/{id}`,
-  `identity/_meta`, exposed as `USERS_KEY_PREFIX` / `GROUPS_KEY_PREFIX` /
-  `META_KEY` and the `user_kv_key` / `group_kv_key` builders + their reverse
-  `*_id_from_kv_key` parsers.
+  `identity/service_accounts/{id}`, `identity/_meta`, exposed as
+  `USERS_KEY_PREFIX` / `GROUPS_KEY_PREFIX` / `SERVICE_ACCOUNTS_KEY_PREFIX` /
+  `META_KEY` and the `user_kv_key` / `group_kv_key` / `service_account_kv_key`
+  builders + their reverse `*_id_from_kv_key` parsers.
+
+## Reserved-extension-key rejection (fail closed)
+
+Each DTO names its **core** field set as reserved keys
+(`PUBLISHED_USER_RESERVED_KEYS` = `email` / `first_name` / `last_name`;
+`PUBLISHED_GROUP_RESERVED_KEYS` = `name` / `member_ids`;
+`PUBLISHED_SERVICE_ACCOUNT_RESERVED_KEYS` = `name`). The `extensions` bag is
+**private**; the only ways to obtain a DTO are the validating `new(...)`
+constructor and `Deserialize` — both route through `new`, which rejects an
+`extensions` map that shadows a reserved key with `DirectoryError`. These types
+are **both read and write** DTOs for `KV_PUBLISHED_LANGUAGE`, so an accidental or
+malicious shadow must never be representable on either path.
 
 ## Core + extension (the kernel binds, the project rides alongside)
 
@@ -76,5 +95,6 @@ anchor and the Px/Cx conformance suites live in `br-e2e-harness`.
 | Core fields are `first_name` / `last_name`, not a single `name` | The frozen live wire splits the name; a single `name` core field could not deserialize a real be-botresources KV value, breaking the freeze. |
 | Project fields ride in `extensions`, though the live wire has some inline on the group | The typed core must work across projects; flatten keeps the wire byte-identical while the core stays a project-invariant kernel that names no project field. |
 | Round-trip tests assert `serde_json::Value` equality, not byte equality | `#[serde(flatten)]` re-emits typed fields before bag fields, so byte order differs from the live producer; semantic (Value) equality is the correct freeze invariant for a JSON KV wire. |
-| `PublishedEntity` has an `Other(String)` variant and hand-written serde, not `#[serde(other)]` | A future identity may publish a new entity; an old consumer must auto-degrade, not crash — so an unknown value is captured (not dropped) and round-trips, while adding a known variant still forces every match to be revisited. |
-| `_meta` is shipped here though it is not yet live in be-botresources | It is the designed auto-degrade manifest the consumer kit (WU4) and the P-suite conformance need frozen now; freezing the shape early is the point of the pre-freeze normalization. |
+| `PublishedEntity` has concrete `Users` / `Groups` / `ServiceAccounts` variants plus `Other(String)`, hand-written serde, not `#[serde(other)]` | A genuinely future entity must auto-degrade (captured, not dropped, and round-trips) on an old consumer; a *known* entity gets a concrete variant so adding it forces every match to be revisited and gives a `publishes_*` accessor. `service_accounts` is now known, so it is a variant — `Other` is reserved for the not-yet-modelled. |
+| The `extensions` bag is private with a validating `new` + custom `Deserialize`, not a `pub` `#[serde(flatten)]` field | The bag must never shadow a core key (these are write *and* read DTOs over KV). A `pub` flattened field can be mutated to insert a reserved key after construction; a private bag funnels every path through `new`'s `reject_reserved_keys`. The `Deserialize` impl is fail-closed **by construction** — it extracts the core keys out of the raw map, so the leftover bag structurally cannot contain one. |
+| `_meta` is shipped here though it is not yet live in be-botresources | It is the designed auto-degrade manifest the consumer kit and the P-suite conformance need frozen now; freezing the shape early is the point of the pre-freeze normalization. |

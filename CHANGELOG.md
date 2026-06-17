@@ -11,6 +11,44 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Added
+
+- **`br-core-directory` — `PublishedServiceAccount` directory DTO + the
+  `service_accounts` entity, key prefix and builders.** A separate, minimal
+  concrete DTO (single typed core field `name`, the rest in `extensions`) for
+  the identity Published Language's service-account roster. `PublishedEntity`
+  gains a concrete `ServiceAccounts` variant (not `Other("service_accounts")`)
+  with a `DirectoryMeta::publishes_service_accounts()` accessor, and the frozen
+  KV-key surface gains `SERVICE_ACCOUNTS_KEY_PREFIX`
+  (`identity/service_accounts/<id>`), `service_account_kv_key` and
+  `service_account_id_from_kv_key`. Groups stay user-only; no
+  `PublishedPrincipal` is introduced.
+
+### Changed
+
+- **BREAKING — `br-util-graphql`: `SubscriptionPayload` now requires a
+  caller-supplied type name.** The signature is `SubscriptionPayload<N, E, T>`
+  where `N: PayloadName` carries `const NAME: &'static str`. Previously the
+  GraphQL type name was derived from the entity `T` alone, so the same entity
+  paired with two different event unions silently produced the same SDL type
+  name and collided. The name is now explicit and per-pairing, so a collision is
+  unrepresentable. `PayloadName` is exported. The list-entity name fix from
+  0.11.1 is subsumed: the caller names the payload directly, list or scalar.
+- **BREAKING — `br-core-directory`: the `PublishedUser` / `PublishedGroup` /
+  `PublishedServiceAccount` `extensions` bag is now private behind a validating
+  constructor.** Each DTO exposes `new(...)` (and a public `extensions()`
+  accessor) and rejects, with the new `DirectoryError`, an `extensions` map whose
+  key shadows a reserved core field (`email` / `first_name` / `last_name` for
+  users, `name` / `member_ids` for groups, `name` for service accounts; surfaced
+  as the `PUBLISHED_*_RESERVED_KEYS` constants). `Deserialize` is hand-written and
+  routes through the same constructor, so the wire — which is both read **and**
+  written for `KV_PUBLISHED_LANGUAGE` — is fail closed against a shadowing key.
+  Direct struct construction of these DTOs is no longer possible; use `new`.
+- **`br-util-broadcast`: `EventBus::new` now rejects a zero capacity.** It
+  panics with a precise message (a zero-capacity broadcast channel buffers
+  nothing and would drop every event); capacity is a composition-root config
+  value, so a zero is a programming error rather than a runtime condition.
+
 ### Removed
 
 - **BREAKING — `br-util-postgres`: removed `set_rls_context`.** The exact shape
@@ -25,21 +63,6 @@ release; they remain reachable through the historical per-crate tags
   **only** `TRUSTED_NETWORK_HOSTS`; `TRUSTED_HOSTS` (deprecated since 0.6.0) is
   no longer honored and no longer warns. Services still setting the legacy name
   must rename it.
-
-### Changed
-
-- **BREAKING — `br-util-graphql`: `SubscriptionPayload` now requires a
-  caller-supplied type name.** The signature is `SubscriptionPayload<N, E, T>`
-  where `N: PayloadName` carries `const NAME: &'static str`. Previously the
-  GraphQL type name was derived from the entity `T` alone, so the same entity
-  paired with two different event unions silently produced the same SDL type
-  name and collided. The name is now explicit and per-pairing, so a collision is
-  unrepresentable. `PayloadName` is exported. The list-entity name fix from
-  0.11.1 is subsumed: the caller names the payload directly, list or scalar.
-- **`br-util-broadcast`: `EventBus::new` now rejects a zero capacity.** It
-  panics with a precise message (a zero-capacity broadcast channel buffers
-  nothing and would drop every event); capacity is a composition-root config
-  value, so a zero is a programming error rather than a runtime condition.
 
 ### Other
 
