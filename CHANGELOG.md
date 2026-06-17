@@ -11,6 +11,32 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Added
+
+- **`br-core-directory` — `PublishedServiceAccount` directory DTO + the
+  `service_accounts` entity, key prefix and builders.** A separate, minimal
+  concrete DTO (single typed core field `name`, the rest in `extensions`) for
+  the identity Published Language's service-account roster. `PublishedEntity`
+  gains a concrete `ServiceAccounts` variant (not `Other("service_accounts")`)
+  with a `DirectoryMeta::publishes_service_accounts()` accessor, and the frozen
+  KV-key surface gains `SERVICE_ACCOUNTS_KEY_PREFIX`
+  (`identity/service_accounts/<id>`), `service_account_kv_key` and
+  `service_account_id_from_kv_key`. Groups stay user-only; no
+  `PublishedPrincipal` is introduced.
+
+### Changed
+
+- **`br-core-directory` (breaking) — the `PublishedUser` / `PublishedGroup`
+  `extensions` bag is now private behind a validating constructor.** Each DTO
+  exposes `new(...)` (and a public `extensions()` accessor) and rejects, with the
+  new `DirectoryError`, an `extensions` map whose key shadows a reserved core
+  field (`email` / `first_name` / `last_name` for users, `name` / `member_ids`
+  for groups, `name` for service accounts; surfaced as the
+  `PUBLISHED_*_RESERVED_KEYS` constants). `Deserialize` is hand-written and routes
+  through the same constructor, so the wire — which is both read **and** written
+  for `KV_PUBLISHED_LANGUAGE` — is fail closed against a shadowing key. Direct
+  struct construction of these DTOs is no longer possible; use `new`.
+
 ### Fixed
 
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`

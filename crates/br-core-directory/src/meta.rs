@@ -6,6 +6,7 @@ pub const DIRECTORY_META_VERSION: u8 = 1;
 pub enum PublishedEntity {
     Users,
     Groups,
+    ServiceAccounts,
     Other(String),
 }
 
@@ -14,6 +15,7 @@ impl PublishedEntity {
         match self {
             PublishedEntity::Users => "users",
             PublishedEntity::Groups => "groups",
+            PublishedEntity::ServiceAccounts => "service_accounts",
             PublishedEntity::Other(raw) => raw,
         }
     }
@@ -22,6 +24,7 @@ impl PublishedEntity {
         match raw {
             "users" => PublishedEntity::Users,
             "groups" => PublishedEntity::Groups,
+            "service_accounts" => PublishedEntity::ServiceAccounts,
             other => PublishedEntity::Other(other.to_string()),
         }
     }
@@ -57,6 +60,10 @@ impl DirectoryMeta {
 
     pub fn publishes_groups(&self) -> bool {
         self.publishes(&PublishedEntity::Groups)
+    }
+
+    pub fn publishes_service_accounts(&self) -> bool {
+        self.publishes(&PublishedEntity::ServiceAccounts)
     }
 }
 
@@ -99,15 +106,27 @@ mod tests {
 
     #[test]
     fn unknown_future_entity_is_captured_not_dropped() {
-        let wire = json!({ "version": 2, "entities": ["users", "service_accounts"] });
+        let wire = json!({ "version": 2, "entities": ["users", "robots"] });
         let meta: DirectoryMeta = serde_json::from_value(wire).unwrap();
         assert!(meta.publishes_users());
         assert!(!meta.publishes_groups());
-        assert!(meta.publishes(&PublishedEntity::Other("service_accounts".to_string())));
+        assert!(meta.publishes(&PublishedEntity::Other("robots".to_string())));
         let back = serde_json::to_value(&meta).unwrap();
         assert_eq!(
             back,
-            json!({ "version": 2, "entities": ["users", "service_accounts"] })
+            json!({ "version": 2, "entities": ["users", "robots"] })
         );
+    }
+
+    #[test]
+    fn service_accounts_entity_round_trips_as_a_concrete_variant() {
+        let wire = json!({ "version": 1, "entities": ["users", "service_accounts"] });
+        let meta: DirectoryMeta = serde_json::from_value(wire.clone()).unwrap();
+        assert!(meta.publishes_users());
+        assert!(!meta.publishes_groups());
+        assert!(meta.publishes_service_accounts());
+        assert!(meta.publishes(&PublishedEntity::ServiceAccounts));
+        let back = serde_json::to_value(&meta).unwrap();
+        assert_eq!(wire, back);
     }
 }
