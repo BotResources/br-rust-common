@@ -1,22 +1,27 @@
 # br-util-postgres
 
 Postgres helpers shared by every BotResources service that uses sqlx:
-pools with TLS validation, the two-role app/owner provisioning, RLS
-context injection, and post-migration grants.
+pools with TLS validation, the two-role app/owner provisioning, and
+post-migration grants.
 
 **Purpose.** Standardize the wiring around Postgres so every service makes
-the same secure choices: a deliberate TLS posture for remote hosts, a
-low-privilege runtime role enforced by RLS, transaction-local identity
-injection that can't leak across pooled connections.
+the same secure choices: a deliberate TLS posture for remote hosts and a
+low-privilege runtime role.
 
-**When to use.** A service uses sqlx + Postgres + RLS and wants the
-BotResources wiring (two-role model, TLS validation, transaction-local RLS
-via `set_config(..., true)`, automatic GRANTs on future tables).
+**When to use.** A service uses sqlx + Postgres and wants the BotResources
+wiring (two-role model, TLS validation, automatic GRANTs on future tables).
 
-**When not to use.** The service does not use Postgres, or needs a
-fundamentally different RLS strategy. There is no blanket TLS bypass: a host
-reached over plaintext because it sits on a trusted network segment is declared,
-per-host, in `TRUSTED_NETWORK_HOSTS` — every other remote host requires TLS.
+**RLS-context injection is the service's job, not this crate's.** The shape of
+the `app.*` session variables an RLS policy reads (which fields, which names) is
+project-specific — it depends on the service's Passport claims and its policy
+model. Each service injects its own transaction-local context with
+`set_config(..., true)`; this crate provides the pool and role wiring underneath,
+not the context shape.
+
+**When not to use.** The service does not use Postgres. There is no blanket TLS
+bypass: a host reached over plaintext because it sits on a trusted network
+segment is declared, per-host, in `TRUSTED_NETWORK_HOSTS` — every other remote
+host requires TLS.
 
 ## The deployment model, and what TLS actually buys here
 
@@ -85,12 +90,6 @@ equals the host extracted from the URL, exactly:
 | `ensure_app_role(pool, role_name, password)` | Idempotent `CREATE ROLE … LOGIN` (guarded by an `IF NOT EXISTS` `DO` block) + `ALTER ROLE … PASSWORD`. Call at startup via the **owner** pool, before `sqlx::migrate`. Validates `role_name` against `^[a-z][a-z0-9_]*$` (≤63 bytes). The role inherits Postgres's no-privilege defaults from `CREATE ROLE … LOGIN` (NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT) — there is **no** explicit hardening `ALTER`, because on PG 16+ asserting those flags requires SUPERUSER. The password is embedded as a **dollar-quoted literal** with a per-call random UUIDv7 tag, not a bind parameter — Postgres rejects bind params in DDL (`ALTER ROLE … PASSWORD $1` is a syntax error), so dollar-quoting is used instead. The generated SQL is never logged. |
 | `grant_app_access(pool, app_role)` | Post-migration GRANTs on schema `public` (USAGE, full CRUD on tables, USAGE+SELECT on sequences) **plus** `ALTER DEFAULT PRIVILEGES` so tables created by future migrations are GRANTed automatically. Must run via the same role that owns subsequent migrations. |
 
-### RLS
-
-| Item | Role |
-|---|---|
-| `set_rls_context(tx, passport)` | Inside an explicit transaction, injects five `app.*` session variables via `set_config(..., true)` (transaction-local). Variables: `current_user_id`, `is_super_admin`, `is_active`, `is_pat`, `impersonator_id`. **Requires a transaction**; outside one the values are discarded immediately. |
-
 ### Errors
 
 `PostgresError`: `Config(String)`, `InvalidRoleName(String)`,
@@ -102,15 +101,13 @@ equals the host extracted from the URL, exactly:
 |---|---|
 | `DATABASE_URL` | App runtime pool URL. |
 | `DATABASE_URL_OWNER` | Migration pool URL (falls back to `DATABASE_URL`). |
-| `TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass — and the **only** way to reach a remote host without TLS. |
-| `TRUSTED_HOSTS` | **Deprecated** (removal targeted for v1.0.0). Former name of `TRUSTED_NETWORK_HOSTS`; still honored as a fallback when the new name is unset, and warns on use. Rename it. |
+| `TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass — and the **only** way to reach a remote host without TLS. The legacy `TRUSTED_HOSTS` name is **no longer read** — use this name only. |
 
 ## Two-role startup recipe
 
 ```rust
 use br_util_postgres::{
     ensure_app_role, grant_app_access, init_pool, init_migration_pool,
-    set_rls_context,
 };
 
 // 1. Owner pool — provisions the runtime role and runs migrations.
@@ -123,9 +120,13 @@ drop(owner);
 // 2. App pool — used for the rest of the process lifetime.
 let pool = init_pool(&app_database_url).await?;
 
-// 3. Per-request: open a transaction, inject identity, query.
+// 3. Per-request: open a transaction, inject the service's own RLS context
+//    via set_config(..., true), query, commit.
 let mut tx = pool.begin().await?;
-set_rls_context(&mut tx, &passport).await?;
+sqlx::query("SELECT set_config('app.current_user_id', $1, true)")
+    .bind(actor_id.to_string())
+    .execute(&mut *tx)
+    .await?;
 let rows = sqlx::query("SELECT id FROM orders").fetch_all(&mut *tx).await?;
 tx.commit().await?;
 ```
@@ -151,15 +152,15 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v0.11.1" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.0.0" }
 ```
 
 ## sqlx is part of the public contract
 
 This crate's public API exposes sqlx 0.8 types directly: `init_pool` returns a
-`PgPool`, `set_rls_context` takes a `Transaction`, and `PostgresError::Db`
-wraps `sqlx::Error`. A sqlx **major** bump is therefore a **breaking release of
-this crate** and a coordinated migration across consumers — never a silent
+`PgPool` and `PostgresError::Db` wraps `sqlx::Error`. A sqlx **major** bump is
+therefore a **breaking release of this crate** and a coordinated migration
+across consumers — never a silent
 dependency bump. Let this crate's pin drive your sqlx version rather than
 pinning sqlx independently.
 

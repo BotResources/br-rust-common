@@ -1,37 +1,30 @@
 #![allow(dead_code)]
 
-use br_core_integration::{
-    EventMetadata, IntegrationEvent, IntegrationPublisherExt, NatsIntegrationPublisher,
-};
+use br_core_integration::{EventMetadata, IntegrationEvent};
 use br_core_kernel::{Actor, UserId};
 use br_core_scope::{
     ScopeDeclaration, ScopeKey, ScopeSpec, ServiceKey, ServiceManifest, ServiceScopesAccepted,
     ServiceScopesRejected,
 };
+use br_scope_declaration_contract::{accepted_event_coords, rejected_event_coords};
+use br_util_nats_fabric::{Fabric, INTEGRATION_CMD, INTEGRATION_EVT};
 use chrono::Utc;
 use futures_util::StreamExt;
 use uuid::Uuid;
 
-pub const DECLARE_SUBJECT: &str = "identity.cmd.service_scope.declare.v1";
-pub const ACCEPTED_SUBJECT: &str = "identity.evt.service_scope.accepted.v1";
-pub const REJECTED_SUBJECT: &str = "identity.evt.service_scope.rejected.v1";
+pub const DECLARE_SUBJECT: &str = "integration.cmd.identity.service_scope.declare.v1";
 
 pub fn nats_url() -> Option<String> {
     std::env::var("NATS_URL").ok()
 }
 
-static IDENTITY_STREAM_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
-    std::sync::OnceLock::new();
+static FABRIC_STREAM_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 
-pub async fn serialize_identity_stream() -> tokio::sync::MutexGuard<'static, ()> {
-    IDENTITY_STREAM_LOCK
+pub async fn serialize_fabric_streams() -> tokio::sync::MutexGuard<'static, ()> {
+    FABRIC_STREAM_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await
-}
-
-pub fn unique_stream() -> String {
-    format!("SCOPE_DECL_{}", Uuid::now_v7().simple())
 }
 
 pub fn notifier_declaration() -> ScopeDeclaration {
@@ -57,28 +50,29 @@ pub async fn jetstream() -> async_nats::jetstream::Context {
     async_nats::jetstream::new(client)
 }
 
-pub async fn create_identity_stream(
-    js: &async_nats::jetstream::Context,
-    name: &str,
-) -> async_nats::jetstream::stream::Stream {
-    while let Ok(existing) = js.stream_by_subject(DECLARE_SUBJECT).await {
-        js.delete_stream(&existing)
-            .await
-            .expect("delete overlapping identity stream");
-    }
+pub async fn fabric() -> Fabric {
+    Fabric::new(jetstream().await)
+}
+
+pub async fn create_fabric_streams(js: &async_nats::jetstream::Context) {
+    recreate(js, INTEGRATION_CMD, "integration.cmd.>").await;
+    recreate(js, INTEGRATION_EVT, "integration.evt.>").await;
+}
+
+async fn recreate(js: &async_nats::jetstream::Context, name: &str, bind: &str) {
+    let _ = js.delete_stream(name).await;
     js.create_stream(async_nats::jetstream::stream::Config {
         name: name.to_string(),
-        subjects: vec!["identity.>".to_string()],
+        subjects: vec![bind.to_string()],
         ..Default::default()
     })
     .await
-    .expect("create identity stream")
+    .expect("create fixed fabric stream");
 }
 
-pub async fn teardown(js: &async_nats::jetstream::Context, name: &str) {
-    if let Err(e) = js.delete_stream(name).await {
-        eprintln!("teardown: failed to delete stream {name}: {e}");
-    }
+pub async fn teardown(js: &async_nats::jetstream::Context) {
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
 }
 
 #[derive(Clone, Copy)]
@@ -100,52 +94,20 @@ impl Drop for StubReceiver {
 impl StubReceiver {
     pub async fn spawn(
         js: &async_nats::jetstream::Context,
-        stream_name: &str,
         reply: StubReply,
         duplicates: usize,
     ) -> Self {
-        let stream = js.get_stream(stream_name).await.expect("stub: get stream");
-        let consumer = stream
-            .create_consumer(async_nats::jetstream::consumer::pull::Config {
-                durable_name: None,
-                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
-                ack_policy: async_nats::jetstream::consumer::AckPolicy::None,
-                filter_subject: DECLARE_SUBJECT.to_string(),
-                ..Default::default()
-            })
-            .await
-            .expect("stub: create consumer");
-        let mut messages = consumer.messages().await.expect("stub: messages");
-
-        let publisher = NatsIntegrationPublisher::new(js.clone());
+        let mut messages = declare_consumer(js).await;
+        let fabric = Fabric::new(js.clone());
         let duplicates = duplicates.max(1);
 
         let handle = tokio::spawn(async move {
             while let Some(Ok(msg)) = messages.next().await {
-                let probe: serde_json::Value = match serde_json::from_slice(&msg.payload) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let correlation_id = probe
-                    .get("metadata")
-                    .and_then(|m| m.get("correlation_id"))
-                    .and_then(|c| c.as_str())
-                    .and_then(|s| s.parse::<Uuid>().ok());
-                let Some(correlation_id) = correlation_id else {
+                let Some(correlation_id) = correlation_of(&msg.payload) else {
                     continue;
                 };
-
                 for _ in 0..duplicates {
-                    match reply {
-                        StubReply::Accept => {
-                            let event = accepted_event(correlation_id);
-                            let _ = publisher.publish_event(ACCEPTED_SUBJECT, &event).await;
-                        }
-                        StubReply::Reject => {
-                            let event = rejected_event(correlation_id);
-                            let _ = publisher.publish_event(REJECTED_SUBJECT, &event).await;
-                        }
-                    }
+                    publish_reply(&fabric, reply, correlation_id).await;
                 }
             }
         });
@@ -156,10 +118,34 @@ impl StubReceiver {
 
 pub async fn spawn_delayed_accept_stub(
     js: &async_nats::jetstream::Context,
-    stream_name: &str,
     ignore_first: usize,
 ) -> StubReceiver {
-    let stream = js.get_stream(stream_name).await.expect("stub: get stream");
+    let mut messages = declare_consumer(js).await;
+    let fabric = Fabric::new(js.clone());
+
+    let handle = tokio::spawn(async move {
+        let mut seen = 0usize;
+        while let Some(Ok(msg)) = messages.next().await {
+            seen += 1;
+            if seen <= ignore_first {
+                continue;
+            }
+            if let Some(correlation_id) = correlation_of(&msg.payload) {
+                publish_reply(&fabric, StubReply::Accept, correlation_id).await;
+            }
+        }
+    });
+
+    StubReceiver { handle }
+}
+
+async fn declare_consumer(
+    js: &async_nats::jetstream::Context,
+) -> async_nats::jetstream::consumer::pull::Stream {
+    let stream = js
+        .get_stream(INTEGRATION_CMD)
+        .await
+        .expect("stub: get stream");
     let consumer = stream
         .create_consumer(async_nats::jetstream::consumer::pull::Config {
             durable_name: None,
@@ -170,37 +156,37 @@ pub async fn spawn_delayed_accept_stub(
         })
         .await
         .expect("stub: create consumer");
-    let mut messages = consumer.messages().await.expect("stub: messages");
-    let publisher = NatsIntegrationPublisher::new(js.clone());
-
-    let handle = tokio::spawn(async move {
-        let mut seen = 0usize;
-        while let Some(Ok(msg)) = messages.next().await {
-            seen += 1;
-            if seen <= ignore_first {
-                continue;
-            }
-            let probe: serde_json::Value = match serde_json::from_slice(&msg.payload) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let correlation_id = probe
-                .get("metadata")
-                .and_then(|m| m.get("correlation_id"))
-                .and_then(|c| c.as_str())
-                .and_then(|s| s.parse::<Uuid>().ok());
-            if let Some(correlation_id) = correlation_id {
-                let event = accepted_event(correlation_id);
-                let _ = publisher.publish_event(ACCEPTED_SUBJECT, &event).await;
-            }
-        }
-    });
-
-    StubReceiver { handle }
+    consumer.messages().await.expect("stub: messages")
 }
 
-pub async fn declare_message_count(js: &async_nats::jetstream::Context, stream_name: &str) -> u64 {
-    let mut stream = js.get_stream(stream_name).await.expect("get stream");
+async fn publish_reply(fabric: &Fabric, reply: StubReply, correlation_id: Uuid) {
+    match reply {
+        StubReply::Accept => {
+            let coords = accepted_event_coords().unwrap();
+            let _ = fabric
+                .publish_event(&coords, &accepted_event(correlation_id))
+                .await;
+        }
+        StubReply::Reject => {
+            let coords = rejected_event_coords().unwrap();
+            let _ = fabric
+                .publish_event(&coords, &rejected_event(correlation_id))
+                .await;
+        }
+    }
+}
+
+fn correlation_of(payload: &[u8]) -> Option<Uuid> {
+    let probe: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    probe
+        .get("metadata")
+        .and_then(|m| m.get("correlation_id"))
+        .and_then(|c| c.as_str())
+        .and_then(|s| s.parse::<Uuid>().ok())
+}
+
+pub async fn declare_message_count(js: &async_nats::jetstream::Context) -> u64 {
+    let mut stream = js.get_stream(INTEGRATION_CMD).await.expect("get stream");
     let info = stream.info().await.expect("stream info");
     info.state.messages
 }

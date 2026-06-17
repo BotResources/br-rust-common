@@ -1,250 +1,143 @@
-use std::collections::{BTreeMap, BTreeSet};
-
-use async_nats::jetstream::kv::Store;
-use br_core_directory::{
-    DirectoryMeta, META_KEY, PublishedGroup, PublishedUser, group_id_from_kv_key,
-    user_id_from_kv_key,
-};
-use futures_util::StreamExt;
-use serde::de::DeserializeOwned;
+use br_core_directory::{DirectoryMeta, PublishedGroup, PublishedServiceAccount, PublishedUser};
+use br_util_nats_fabric::{Fabric, PublishedLanguageConsumer};
 use sqlx::PgPool;
-use uuid::Uuid;
 
-use crate::consumer::recompose::member_rows;
+use crate::consumer::config::DirectoryConsumerConfig;
+use crate::consumer::manifest::{ManifestState, read_manifest};
+use crate::consumer::sink::{GroupSink, ServiceAccountSink, UserSink};
 use crate::error::DirectoryError;
+use crate::keys::{groups_prefix, service_accounts_prefix, users_prefix};
 
 pub struct DirectoryProjector {
-    kv: Store,
+    fabric: Fabric,
     pool: PgPool,
+    config: DirectoryConsumerConfig,
 }
 
 impl DirectoryProjector {
-    pub fn new(kv: Store, pool: PgPool) -> Self {
-        Self { kv, pool }
+    pub fn new(fabric: Fabric, pool: PgPool) -> Self {
+        Self::with_config(fabric, pool, DirectoryConsumerConfig::default())
+    }
+
+    pub fn with_config(fabric: Fabric, pool: PgPool, config: DirectoryConsumerConfig) -> Self {
+        Self {
+            fabric,
+            pool,
+            config,
+        }
     }
 
     pub async fn reconcile(&self) -> Result<DirectoryMeta, DirectoryError> {
-        let manifest = self.read_manifest().await?;
+        let manifest = self.present_manifest().await?;
 
-        let desired_users = self
-            .kv_entries::<PublishedUser>(user_id_from_kv_key)
-            .await?;
-        for (user_id, user) in &desired_users {
-            self.upsert_user(*user_id, user).await?;
-        }
-        for user_id in orphans(self.known_user_ids().await?, desired_users.keys()) {
-            self.delete_user(user_id).await?;
+        self.user_consumer().await?.bootstrap().await?;
+
+        if self.config.consumption_scope().consumes_groups() {
+            self.group_consumer().await?.bootstrap().await?;
         }
 
-        let desired_groups = if manifest.publishes_groups() {
-            self.kv_entries::<PublishedGroup>(group_id_from_kv_key)
-                .await?
-        } else {
-            BTreeMap::new()
-        };
-        for (group_id, group) in &desired_groups {
-            self.upsert_group(*group_id, group).await?;
-        }
-        for group_id in orphans(self.known_group_ids().await?, desired_groups.keys()) {
-            self.delete_group(group_id).await?;
+        if manifest.publishes_service_accounts() {
+            self.service_account_consumer().await?.bootstrap().await?;
         }
 
         Ok(manifest)
     }
 
-    pub async fn apply_user(
-        &self,
-        user_id: Uuid,
-        user: &PublishedUser,
-    ) -> Result<(), DirectoryError> {
-        self.upsert_user(user_id, user).await
-    }
+    pub async fn watch(&self) -> Result<(), DirectoryError> {
+        let manifest = self.present_manifest().await?;
+        let watch_groups = self.config.consumption_scope().consumes_groups();
+        let watch_service_accounts = manifest.publishes_service_accounts();
 
-    pub async fn remove_user(&self, user_id: Uuid) -> Result<(), DirectoryError> {
-        self.delete_user(user_id).await
-    }
+        let users = self.user_consumer().await?;
+        let users_watch = async { users.watch().await.map_err(DirectoryError::from) };
 
-    pub async fn apply_group(
-        &self,
-        group_id: Uuid,
-        group: &PublishedGroup,
-    ) -> Result<(), DirectoryError> {
-        self.upsert_group(group_id, group).await
-    }
-
-    pub async fn remove_group(&self, group_id: Uuid) -> Result<(), DirectoryError> {
-        self.delete_group(group_id).await
-    }
-
-    async fn read_manifest(&self) -> Result<DirectoryMeta, DirectoryError> {
-        match self
-            .kv
-            .get(META_KEY)
-            .await
-            .map_err(|e| DirectoryError::Kv(e.to_string()))?
-        {
-            Some(bytes) => {
-                serde_json::from_slice(&bytes).map_err(|e| DirectoryError::Wire(e.to_string()))
+        let groups_watch = async {
+            if watch_groups {
+                self.group_consumer().await?.watch().await?;
             }
-            None => {
-                tracing::warn!(
-                    key = META_KEY,
-                    "directory manifest absent; treating roster as empty"
-                );
-                Ok(DirectoryMeta {
-                    version: br_core_directory::DIRECTORY_META_VERSION,
-                    entities: Vec::new(),
-                })
+            Ok::<(), DirectoryError>(())
+        };
+
+        let service_accounts_watch = async {
+            if watch_service_accounts {
+                self.service_account_consumer().await?.watch().await?;
             }
+            Ok::<(), DirectoryError>(())
+        };
+
+        tokio::try_join!(users_watch, groups_watch, service_accounts_watch)?;
+        Ok(())
+    }
+
+    async fn present_manifest(&self) -> Result<DirectoryMeta, DirectoryError> {
+        match read_manifest(&self.fabric).await? {
+            ManifestState::Present(meta) => Ok(meta),
+            ManifestState::Absent => Err(DirectoryError::ManifestAbsent),
         }
     }
 
-    async fn kv_entries<T: DeserializeOwned>(
+    async fn user_consumer(
         &self,
-        id_from_key: fn(&str) -> Option<Uuid>,
-    ) -> Result<BTreeMap<Uuid, T>, DirectoryError> {
-        let mut keys = self
-            .kv
-            .keys()
-            .await
-            .map_err(|e| DirectoryError::Kv(e.to_string()))?;
-
-        let mut entries = BTreeMap::new();
-        while let Some(key) = keys.next().await {
-            let key = key.map_err(|e| DirectoryError::Kv(e.to_string()))?;
-            let Some(id) = id_from_key(&key) else {
-                continue;
-            };
-            let Some(bytes) = self
-                .kv
-                .get(&key)
-                .await
-                .map_err(|e| DirectoryError::Kv(e.to_string()))?
-            else {
-                continue;
-            };
-            let value =
-                serde_json::from_slice(&bytes).map_err(|e| DirectoryError::Wire(e.to_string()))?;
-            entries.insert(id, value);
-        }
-        Ok(entries)
-    }
-
-    async fn known_user_ids(&self) -> Result<BTreeSet<Uuid>, DirectoryError> {
-        let ids: Vec<(Uuid,)> = sqlx::query_as("SELECT user_id FROM known_users")
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(ids.into_iter().map(|(id,)| id).collect())
-    }
-
-    async fn known_group_ids(&self) -> Result<BTreeSet<Uuid>, DirectoryError> {
-        let ids: Vec<(Uuid,)> = sqlx::query_as("SELECT group_id FROM known_groups")
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(ids.into_iter().map(|(id,)| id).collect())
-    }
-
-    async fn upsert_user(&self, user_id: Uuid, user: &PublishedUser) -> Result<(), DirectoryError> {
-        sqlx::query(
-            "INSERT INTO known_users (user_id, email, first_name, last_name) \
-             VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (user_id) DO UPDATE \
-             SET email = EXCLUDED.email, \
-                 first_name = EXCLUDED.first_name, \
-                 last_name = EXCLUDED.last_name",
+    ) -> Result<
+        PublishedLanguageConsumer<
+            PublishedUser,
+            impl Fn(&PublishedUser) -> bool + Send + Sync,
+            UserSink,
+        >,
+        DirectoryError,
+    > {
+        let filter = self.config.user_copy_filter();
+        let sink = UserSink::new(self.pool.clone(), self.config.clone());
+        Ok(PublishedLanguageConsumer::open(
+            &self.fabric,
+            vec![users_prefix()],
+            move |user: &PublishedUser| (filter)(user),
+            sink,
         )
-        .bind(user_id)
-        .bind(&user.email)
-        .bind(&user.first_name)
-        .bind(&user.last_name)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        .await?)
     }
 
-    async fn delete_user(&self, user_id: Uuid) -> Result<(), DirectoryError> {
-        sqlx::query("DELETE FROM known_users WHERE user_id = $1")
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn upsert_group(
+    async fn group_consumer(
         &self,
-        group_id: Uuid,
-        group: &PublishedGroup,
-    ) -> Result<(), DirectoryError> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            "INSERT INTO known_groups (group_id, name) VALUES ($1, $2) \
-             ON CONFLICT (group_id) DO UPDATE SET name = EXCLUDED.name",
+    ) -> Result<
+        PublishedLanguageConsumer<PublishedGroup, fn(&PublishedGroup) -> bool, GroupSink>,
+        DirectoryError,
+    > {
+        let sink = GroupSink::new(self.pool.clone());
+        Ok(PublishedLanguageConsumer::open(
+            &self.fabric,
+            vec![groups_prefix()],
+            keep_all_group as fn(&PublishedGroup) -> bool,
+            sink,
         )
-        .bind(group_id)
-        .bind(&group.name)
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query("DELETE FROM known_user_group WHERE group_id = $1")
-            .bind(group_id)
-            .execute(&mut *tx)
-            .await?;
-
-        for row in member_rows(group_id, group) {
-            sqlx::query(
-                "INSERT INTO known_user_group (group_id, user_id) VALUES ($1, $2) \
-                 ON CONFLICT (group_id, user_id) DO NOTHING",
-            )
-            .bind(row.group_id)
-            .bind(row.user_id)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
-        Ok(())
+        .await?)
     }
 
-    async fn delete_group(&self, group_id: Uuid) -> Result<(), DirectoryError> {
-        sqlx::query("DELETE FROM known_groups WHERE group_id = $1")
-            .bind(group_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+    async fn service_account_consumer(
+        &self,
+    ) -> Result<
+        PublishedLanguageConsumer<
+            PublishedServiceAccount,
+            fn(&PublishedServiceAccount) -> bool,
+            ServiceAccountSink,
+        >,
+        DirectoryError,
+    > {
+        let sink = ServiceAccountSink::new(self.pool.clone());
+        Ok(PublishedLanguageConsumer::open(
+            &self.fabric,
+            vec![service_accounts_prefix()],
+            keep_all_service_account as fn(&PublishedServiceAccount) -> bool,
+            sink,
+        )
+        .await?)
     }
 }
 
-fn orphans<'a>(observed: BTreeSet<Uuid>, desired: impl IntoIterator<Item = &'a Uuid>) -> Vec<Uuid> {
-    let desired: BTreeSet<Uuid> = desired.into_iter().copied().collect();
-    observed.difference(&desired).copied().collect()
+fn keep_all_group(_group: &PublishedGroup) -> bool {
+    true
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn id(n: u128) -> Uuid {
-        Uuid::from_u128(n)
-    }
-
-    #[test]
-    fn orphans_are_observed_ids_absent_from_desired() {
-        let observed = BTreeSet::from([id(1), id(2), id(3)]);
-        let desired = [id(2), id(3), id(4)];
-        assert_eq!(orphans(observed, desired.iter()), vec![id(1)]);
-    }
-
-    #[test]
-    fn no_orphans_when_observed_is_a_subset_of_desired() {
-        let observed = BTreeSet::from([id(2)]);
-        let desired = [id(1), id(2)];
-        assert!(orphans(observed, desired.iter()).is_empty());
-    }
-
-    #[test]
-    fn empty_desired_orphans_every_observed_id() {
-        let observed = BTreeSet::from([id(1), id(2)]);
-        assert_eq!(orphans(observed, [].iter()), vec![id(1), id(2)]);
-    }
+fn keep_all_service_account(_service_account: &PublishedServiceAccount) -> bool {
+    true
 }

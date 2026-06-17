@@ -3,7 +3,9 @@
 use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema, SimpleObject, Union, Value};
 use br_core_values::{Currency, Localized, LocalizedEntry, Markdown, Money};
 use br_util_graphql::values::{GqlLocale, GqlLocalized, GqlMoney, GqlMoneyInput};
-use br_util_graphql::{Affordance, Connection, Edge, MutationResult, SubscriptionPayload};
+use br_util_graphql::{
+    Affordance, Connection, Edge, MutationResult, PayloadName, SubscriptionPayload,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Locale {
@@ -49,6 +51,16 @@ enum DocEvent {
     Renamed(DocRenamed),
 }
 
+struct DocPayloadName;
+impl PayloadName for DocPayloadName {
+    const NAME: &'static str = "DocSubscriptionPayload";
+}
+
+struct DocBatchPayloadName;
+impl PayloadName for DocBatchPayloadName {
+    const NAME: &'static str = "DocBatchSubscriptionPayload";
+}
+
 struct Query;
 
 #[Object]
@@ -75,7 +87,7 @@ impl Query {
         )
     }
 
-    async fn last_change(&self) -> SubscriptionPayload<DocEvent, Doc> {
+    async fn last_change(&self) -> SubscriptionPayload<DocPayloadName, DocEvent, Doc> {
         SubscriptionPayload::new(
             DocEvent::Renamed(DocRenamed {
                 new_name: "Beta".into(),
@@ -91,7 +103,9 @@ impl Query {
         )
     }
 
-    async fn last_batch_change(&self) -> SubscriptionPayload<DocEvent, Vec<Doc>> {
+    async fn last_batch_change(
+        &self,
+    ) -> SubscriptionPayload<DocBatchPayloadName, DocEvent, Vec<Doc>> {
         SubscriptionPayload::new(
             DocEvent::Renamed(DocRenamed {
                 new_name: "Beta".into(),
@@ -288,8 +302,8 @@ async fn sdl_exposes_the_generic_types() {
         "missing DocSubscriptionPayload:\n{sdl}"
     );
     assert!(
-        sdl.contains("type DocListSubscriptionPayload"),
-        "list payload must expose a valid identifier-named wrapper, not a bracketed one:\n{sdl}"
+        sdl.contains("type DocBatchSubscriptionPayload"),
+        "list payload must expose its caller-supplied identifier name:\n{sdl}"
     );
     assert!(
         sdl.contains("entity: [Doc!]!"),

@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use br_core_directory::DirectoryMeta;
+use serde_json::Value;
 use uuid::Uuid;
+
+use crate::consumer::config::PersistedExtensions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownUser {
@@ -9,23 +12,34 @@ pub struct KnownUser {
     pub email: String,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
+    pub extensions: PersistedExtensions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownServiceAccount {
+    pub service_account_id: Uuid,
+    pub name: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct DirectorySnapshot {
     groups_published: bool,
+    service_accounts_published: bool,
     users: BTreeMap<Uuid, KnownUser>,
     group_names: BTreeMap<Uuid, String>,
     memberships: BTreeSet<(Uuid, Uuid)>,
+    service_accounts: BTreeMap<Uuid, KnownServiceAccount>,
 }
 
 impl DirectorySnapshot {
     pub fn new(manifest: &DirectoryMeta) -> Self {
         Self {
             groups_published: manifest.publishes_groups(),
+            service_accounts_published: manifest.publishes_service_accounts(),
             users: BTreeMap::new(),
             group_names: BTreeMap::new(),
             memberships: BTreeSet::new(),
+            service_accounts: BTreeMap::new(),
         }
     }
 
@@ -44,8 +58,19 @@ impl DirectorySnapshot {
         }
     }
 
+    pub fn upsert_service_account(&mut self, account: KnownServiceAccount) {
+        self.service_accounts
+            .insert(account.service_account_id, account);
+    }
+
     pub fn resolve_user(&self, user_id: Uuid) -> Option<&KnownUser> {
         self.users.get(&user_id)
+    }
+
+    pub fn user_extensions(&self, user_id: Uuid) -> Option<&Value> {
+        self.users
+            .get(&user_id)
+            .map(|user| user.extensions.as_value())
     }
 
     pub fn is_member(&self, group_id: Uuid, user_id: Uuid) -> bool {
@@ -57,6 +82,16 @@ impl DirectorySnapshot {
             return None;
         }
         self.group_names.get(&group_id).map(String::as_str)
+    }
+
+    pub fn resolve_service_account(
+        &self,
+        service_account_id: Uuid,
+    ) -> Option<&KnownServiceAccount> {
+        if !self.service_accounts_published {
+            return None;
+        }
+        self.service_accounts.get(&service_account_id)
     }
 }
 
@@ -82,6 +117,7 @@ mod tests {
             email: "ada@example.com".to_string(),
             first_name: Some("Ada".to_string()),
             last_name: Some("Lovelace".to_string()),
+            extensions: PersistedExtensions::from_value(serde_json::json!({ "locale": "en" })),
         }
     }
 
@@ -94,6 +130,17 @@ mod tests {
         assert_eq!(user.email, "ada@example.com");
         assert_eq!(user.first_name.as_deref(), Some("Ada"));
         assert!(snap.resolve_user(id(99)).is_none());
+    }
+
+    #[test]
+    fn extracted_extensions_survive_into_the_snapshot() {
+        let mut snap = DirectorySnapshot::new(&meta(&[PublishedEntity::Users]));
+        snap.upsert_user(ada());
+        assert_eq!(
+            snap.user_extensions(id(1)),
+            Some(&serde_json::json!({ "locale": "en" }))
+        );
+        assert!(snap.user_extensions(id(99)).is_none());
     }
 
     #[test]
@@ -118,6 +165,19 @@ mod tests {
     }
 
     #[test]
+    fn membership_converges_when_the_group_projects_before_its_member_user() {
+        let mut snap =
+            DirectorySnapshot::new(&meta(&[PublishedEntity::Users, PublishedEntity::Groups]));
+        snap.set_members(id(10), [id(1)]);
+        assert!(snap.is_member(id(10), id(1)));
+        assert!(snap.resolve_user(id(1)).is_none());
+
+        snap.upsert_user(ada());
+        assert!(snap.is_member(id(10), id(1)));
+        assert!(snap.resolve_user(id(1)).is_some());
+    }
+
+    #[test]
     fn set_members_replaces_the_prior_membership_set_for_the_group() {
         let mut snap =
             DirectorySnapshot::new(&meta(&[PublishedEntity::Users, PublishedEntity::Groups]));
@@ -126,5 +186,29 @@ mod tests {
         assert!(!snap.is_member(id(10), id(1)));
         assert!(!snap.is_member(id(10), id(2)));
         assert!(snap.is_member(id(10), id(3)));
+    }
+
+    #[test]
+    fn service_account_readers_work_when_declared() {
+        let mut snap = DirectorySnapshot::new(&meta(&[
+            PublishedEntity::Users,
+            PublishedEntity::ServiceAccounts,
+        ]));
+        snap.upsert_service_account(KnownServiceAccount {
+            service_account_id: id(20),
+            name: "ci-runner".to_string(),
+        });
+        let account = snap.resolve_service_account(id(20)).unwrap();
+        assert_eq!(account.name, "ci-runner");
+    }
+
+    #[test]
+    fn service_account_readers_auto_degrade_when_absent_from_manifest() {
+        let mut snap = DirectorySnapshot::new(&meta(&[PublishedEntity::Users]));
+        snap.upsert_service_account(KnownServiceAccount {
+            service_account_id: id(20),
+            name: "ci-runner".to_string(),
+        });
+        assert!(snap.resolve_service_account(id(20)).is_none());
     }
 }

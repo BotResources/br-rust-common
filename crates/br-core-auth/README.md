@@ -31,36 +31,65 @@ pub enum Passport {
         is_active: bool,
         auth_method: AuthMethod,
         impersonator: Option<Uuid>, // serde(default)
-        claims: serde_json::Value,
+        claims: PassportClaims,
     },
     Service {
         service_account_id: Uuid,
-        claims: serde_json::Value,
+        claims: PassportClaims,
     },
 }
 ```
 
-Deserialization is **strict**: an unknown top-level field is rejected, and
-`claims` must be a JSON object (an explicit `null` or a non-object value is
-rejected). `AuthMethod` and `BearerTokenEntry` reject unknown fields too. This
-is a security DTO shared by every service, so a contract mismatch fails loud;
-the wire format of a *valid* passport is unchanged.
+The variant fields are **private** — outside crates cannot build a `Passport`
+from raw fields, so a non-canonical passport (e.g. `claims: null`) is
+unrepresentable. Construct only through the canonical constructors:
+
+| Constructor | Builds |
+|---|---|
+| `Passport::human(user_id, is_super_admin, is_active, auth_method, impersonator, claims)` | a `Human` passport |
+| `Passport::service(service_account_id, claims)` | a `Service` passport |
+| `.with_impersonator(admin_id)` | sets the impersonator on a `Human` (no-op on `Service`) |
+
+`claims` is a `PassportClaims` — a newtype over a JSON **object** (see below);
+it cannot hold a scalar, array, or null. Deserialization is **strict**: an
+unknown top-level field is rejected, and `claims` must deserialize from a JSON
+object (an explicit `null` or a non-object value is rejected). `AuthMethod` and
+`BearerTokenEntry` reject unknown fields too. This is a security DTO shared by
+every service, so a contract mismatch fails loud; the wire format of a *valid*
+passport is unchanged.
 
 Accessors that work uniformly over both variants:
 
 | Method | Returns | Notes |
 |---|---|---|
 | `actor_id()` | `Uuid` | `user_id` (Human) or `service_account_id` (Service). For an impersonated Human, this is the impersonated user — use `impersonator_id()` for the real admin. |
+| `user_id()` | `Option<Uuid>` | `Some` for `Human`, `None` for `Service`. |
+| `service_account_id()` | `Option<Uuid>` | `Some` for `Service`, `None` for `Human`. |
 | `is_super_admin()` | `bool` | Always `false` for `Service`. |
 | `is_active()` | `bool` | Always `true` for `Service`. |
 | `auth_method()` | `Option<&AuthMethod>` | `None` for `Service`. |
 | `is_pat()` | `bool` | True only for `Human` with `AuthMethod::Pat { .. }`. |
 | `is_impersonating()` | `bool` | True only for `Human` with `impersonator: Some(_)`. |
 | `impersonator_id()` | `Option<Uuid>` | The admin's UUID when impersonating, `None` otherwise. |
-| `claims()` | `&serde_json::Value` | Raw extra claims bag. |
+| `claims()` | `&PassportClaims` | The extra claims bag (a JSON object). |
 | `claim::<T>(key)` | `Option<T>` | Typed extraction of a single claim via `serde_json`. |
 | `scopes()` | `Vec<ScopeKey>` | The granted scopes, parsed from the `scopes` claim. |
 | `has_scope(&ScopeKey)` | `bool` | Whether a given scope is granted. |
+
+### `PassportClaims` (newtype)
+
+A newtype wrapping a private `serde_json::Map<String, Value>`. It serializes as
+a JSON object and **rejects any non-object** on deserialization (null, array,
+scalar → error), so the variants can never carry a non-object claims bag.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `PassportClaims::new()` | `Self` | Empty claims. |
+| `PassportClaims::from_map(map)` | `Self` | Wrap an existing object map. |
+| `PassportClaims::from_value(value)` | `Result<Self, Value>` | Fallible: `Err(value)` if not a JSON object. |
+| `get(&str)` | `Option<&Value>` | Read one claim. |
+| `iter()` | `serde_json::map::Iter` | Iterate entries. |
+| `is_empty()` / `len()` | `bool` / `usize` | Size. |
 
 ### Granted scopes (Passport ↔ `ScopeKey`)
 
@@ -201,24 +230,24 @@ binary; enable it as a dev-dependency:
 
 ```toml
 [dev-dependencies]
-br-core-auth = { git = "...", package = "br-core-auth", tag = "v0.11.1", features = ["test-support"] }
+br-core-auth = { git = "...", package = "br-core-auth", tag = "v1.0.0", features = ["test-support"] }
 ```
 
 ## Usage
 
 ```rust
-use br_core_auth::{AuthMethod, Passport, PassportHeader};
+use br_core_auth::{AuthMethod, Passport, PassportClaims, PassportHeader};
 use uuid::Uuid;
 
 // Producing side (e.g. svc-identity):
-let passport = Passport::Human {
-    user_id: Uuid::new_v4(),
-    is_super_admin: false,
-    is_active: true,
-    auth_method: AuthMethod::Jwt,
-    impersonator: None,
-    claims: serde_json::json!({ "org_id": "..." }),
-};
+let passport = Passport::human(
+    Uuid::new_v4(),
+    false,
+    true,
+    AuthMethod::Jwt,
+    None,
+    PassportClaims::from_value(serde_json::json!({ "org_id": "..." })).unwrap(),
+);
 let header_value: String = passport.to_header();
 
 // Consuming side (gateway, middleware, or service):
@@ -233,7 +262,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v0.11.1" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v1.0.0" }
 ```
 
 ---

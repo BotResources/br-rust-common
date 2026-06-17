@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "base64",
  "br-core-kernel",
@@ -326,16 +326,17 @@ dependencies = [
 
 [[package]]
 name = "br-core-directory"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
 [[package]]
 name = "br-core-events"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "br-core-kernel",
  "chrono",
@@ -346,26 +347,20 @@ dependencies = [
 
 [[package]]
 name = "br-core-integration"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
- "async-nats",
- "async-trait",
  "br-core-events",
  "br-core-kernel",
  "chrono",
- "futures-util",
  "serde",
  "serde_json",
- "sqlx",
  "thiserror 2.0.18",
- "tokio",
- "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "br-core-kernel"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -374,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-scope"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -383,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-values"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -392,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "br-identity-app"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "async-nats",
  "br-core-integration",
@@ -401,6 +396,7 @@ dependencies = [
  "br-scope-declaration-contract",
  "br-test-support",
  "br-util-axum-readiness",
+ "br-util-nats-fabric",
  "br-util-postgres",
  "chrono",
  "futures-util",
@@ -416,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "br-identity-domain"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "br-core-scope",
  "serde",
@@ -426,14 +422,14 @@ dependencies = [
 
 [[package]]
 name = "br-scope-declaration-contract"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "br-core-integration",
 ]
 
 [[package]]
 name = "br-test-support"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "sqlx",
  "uuid",
@@ -441,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "axum",
  "br-core-auth",
@@ -454,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-readiness"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "axum",
  "tokio",
@@ -464,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-broadcast"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "thiserror 2.0.18",
  "tokio",
@@ -472,24 +468,22 @@ dependencies = [
 
 [[package]]
 name = "br-util-directory"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
- "async-nats",
  "async-trait",
  "br-core-directory",
+ "br-util-nats-fabric",
  "br-util-postgres",
- "futures-util",
- "serde",
  "serde_json",
  "sqlx",
  "thiserror 2.0.18",
- "tracing",
+ "tokio",
  "uuid",
 ]
 
 [[package]]
 name = "br-util-graphql"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "async-graphql",
  "axum",
@@ -501,8 +495,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-util-nats-fabric"
+version = "1.0.0"
+dependencies = [
+ "async-nats",
+ "async-trait",
+ "br-core-events",
+ "br-core-integration",
+ "br-core-kernel",
+ "chrono",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "br-util-observability"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "axum",
  "chrono",
@@ -519,22 +533,19 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
- "br-core-auth",
  "br-test-support",
- "serde_json",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
  "url",
  "uuid",
 ]
 
 [[package]]
 name = "br-util-scope-declaration"
-version = "0.11.1"
+version = "1.0.0"
 dependencies = [
  "async-nats",
  "br-core-integration",
@@ -542,6 +553,7 @@ dependencies = [
  "br-core-scope",
  "br-scope-declaration-contract",
  "br-util-axum-readiness",
+ "br-util-nats-fabric",
  "chrono",
  "futures-util",
  "serde_json",

@@ -155,12 +155,6 @@ jobs:
           fi
           for toml in crates/*/Cargo.toml; do
             crate=$(basename "$(dirname "$toml")")
-            case "$crate" in
-              br-core-integration|br-identity-app|br-util-scope-declaration)
-                echo "::warning::skipping semver-checks for ${crate}: async-nats 0.48 fails to compile under time 0.3.48 (E0119); fresh resolution ignores Cargo.lock (cargo-semver-checks#167). Remove when async-nats>=0.50 or time>=0.3.49."
-                continue
-                ;;
-            esac
             if ! git cat-file -e "${baseline}:crates/${crate}/Cargo.toml" 2>/dev/null; then
               echo "::notice::${crate} did not exist at ${baseline}, skipping semver-checks (new crate)"
               continue
@@ -304,7 +298,7 @@ jobs:
         run: docker rm -f pg-tls || true
 
   e2e-nats:
-    name: e2e (br-core-integration vs NATS JetStream)
+    name: e2e (br-util-nats-fabric vs NATS JetStream)
     runs-on: ubuntu-latest
     # GHA `services:` cannot override an image's CMD, but NATS needs
     # `-js` (enable JetStream) and `-m 8222` (monitoring for healthcheck).
@@ -345,7 +339,7 @@ jobs:
         # each one creates/deletes its own stream; sequential execution
         # avoids racy create/delete ordering. Same reasoning as the
         # e2e-postgres job.
-        run: cargo test -p br-core-integration --locked -- --ignored --test-threads=1
+        run: cargo test -p br-util-nats-fabric --locked -- --ignored --test-threads=1
       - name: stop NATS
         if: always()
         run: docker rm -f nats-jetstream || true
@@ -462,7 +456,7 @@ jobs:
         run: docker rm -f nats-jetstream || true
 
   e2e-outbox:
-    name: e2e (br-core-integration outbox vs PG 16 + NATS JetStream)
+    name: e2e (br-util-nats-fabric outbox vs PG 16 + NATS JetStream)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -505,7 +499,7 @@ jobs:
           docker logs nats-jetstream >&2
           exit 1
       - name: cargo test (live outbox tests)
-        run: cargo test -p br-core-integration --features outbox --locked -- --ignored --test-threads=1
+        run: cargo test -p br-util-nats-fabric --features outbox --locked -- --ignored --test-threads=1
       - name: stop NATS
         if: always()
         run: docker rm -f nats-jetstream || true

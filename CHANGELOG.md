@@ -11,11 +11,305 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-17
+
+### Added
+
+- **New crate `br-util-nats-fabric` — the Project NATS Fabric API.** The single,
+  restricted, typed application-facing way a BR service touches NATS; it owns all
+  `async_nats` coupling. Two surfaces: **integration messaging** over a fixed v1
+  grammar (`integration.cmd.{receiver}.{aggregate}.{verb}.v{N}` /
+  `integration.evt.{producer}.{aggregate}.{fact}.v{N}`) on fixed streams
+  (`INTEGRATION_CMD` / `INTEGRATION_EVT`), and the **Published-Language KV**
+  generic mechanics over the fixed `PUBLISHED_LANGUAGE` bucket. The `Fabric`
+  handle is built from an existing JetStream `Context` and **never provisions**
+  (no stream/bucket creation; binds and fails loud when a declared object is
+  absent). Callers supply only business coordinates — validated `Bc` /
+  `Aggregate` / `Verb` / `PastFact` newtypes and `CommandCoords` / `EventCoords`
+  — never stream names, the `integration` prefix, or the grammar; there is no
+  freestyle string subject builder. Command/event durable consumers verify the
+  durable's configured filter matches the requested coordinates
+  (`FabricError::FilterMismatch`) so a misconfigured durable cannot silently
+  widen its delivery. Includes the correlated awaiter, a transactional outbox
+  (feature `outbox`) whose record destination is a typed `EventCoords` rendered
+  at publish time, and generic Published-Language publisher (semantic upsert /
+  retract / reconcile / drift-repair) and consumer (bootstrap scan + watch with
+  consumer-selected prefixes, a copy-filter `Fn(&V) -> bool` that orphan-deletes
+  pass→fail entries, and a caller-owned lossless projection sink) mechanics, both
+  constructed via `open(&fabric)` — the raw `async_nats` KV `Store` is never
+  handed to a caller, so every key path goes through a validated `KvKey` /
+  `KvPrefix`.
+  Builds on `br-core-integration` (envelopes, coordinates, the pure outbox state
+  machine); it is now the **sole** owner of all NATS transport.
+
+- **`br-util-nats-fabric` — typed single-key Published-Language read
+  (`PublishedLanguageReader<V>`).** `PublishedLanguageReader::<V>::open(&fabric)
+  .get(&key) -> Result<Option<V>, FabricError>` reads exactly one entry by its
+  validated `KvKey` — for the consumer that needs one known key (e.g. the
+  directory manifest `identity/_meta`) rather than a prefix scan with a capturing
+  sink. **Exact-key** (a prefix sibling is never matched), **fail-closed decode**
+  (an undecodable value is an explicit `FabricError::Decode` naming the key, never
+  a silent `None`), `Ok(None)` only for a genuinely absent key, and
+  **bind-existing** (the fixed `PUBLISHED_LANGUAGE` bucket, fail loud if absent;
+  no provisioning) — like the rest of Surface 2, no raw `Store` escape hatch.
+
+- **`br-core-directory` — `PublishedServiceAccount` directory DTO + the
+  `service_accounts` entity, key prefix and builders.** A separate, minimal
+  concrete DTO (single typed core field `name`, the rest in `extensions`) for
+  the identity Published Language's service-account roster. `PublishedEntity`
+  gains a concrete `ServiceAccounts` variant (not `Other("service_accounts")`)
+  with a `DirectoryMeta::publishes_service_accounts()` accessor, and the frozen
+  KV-key surface gains `SERVICE_ACCOUNTS_KEY_PREFIX`
+  (`identity/service_accounts/<id>`), `service_account_kv_key` and
+  `service_account_id_from_kv_key`. Groups stay user-only; no
+  `PublishedPrincipal` is introduced.
+
+- **`br-util-directory` — consumer-owned roster control + service-account
+  projection.** The consumer side gains a `DirectoryConsumerConfig` with three
+  seams (defaults preserve the prior behavior): `extract_user_extensions(Fn(&
+  PublishedUser) -> PersistedExtensions)` selects the extension payload persisted
+  into a new `jsonb extensions` column on `known_users` and exposed on
+  `KnownUser` / `DirectorySnapshot::user_extensions` (**default keeps nothing**);
+  `filter_users(Fn(&PublishedUser) -> bool)` scopes which users are copied, with
+  a user flipping pass→fail orphan-deleted on the next reconcile / watch
+  (**default keep-all**); and `scope(ConsumptionScope)` declares `UsersOnly` vs
+  `UsersAndGroups` (**default `UsersAndGroups`**) independent of the producer
+  manifest — `UsersOnly` projects and watches only `known_users`, touching no
+  group tables. `PublishedServiceAccount` is now projected into a new
+  `known_service_accounts` table (mirroring `known_users`) and exposed via
+  `DirectorySnapshot::resolve_service_account`, honored by reconcile / watch when
+  the manifest declares `service_accounts`. `DirectoryPublisher` gains
+  `publish_service_account` / `retract_service_account` and the `DirectorySource`
+  seam a `desired_service_accounts` method (default empty).
+- **`br-core-integration` now owns the transport-independent integration
+  coordinate types.** The validated newtypes `Bc` / `Aggregate` / `Verb` /
+  `PastFact`, the `CommandCoords` / `EventCoords` structs and their `CoordError`
+  moved here from `br-util-nats-fabric`: they are contract types (segment
+  validation, no NATS coupling), so a core contract crate can build on them
+  without a core→util dependency. `br-util-nats-fabric` re-exports them and keeps
+  only the NATS-specific rendering (the `integration.…` subject assembly, now
+  also exposed as `command_subject` / `event_subject`), parsing, stream
+  constants and transport. `br-identity-domain` gains `RejectedIdentity`
+  (`Service(ServiceKey) | Unrepresentable { raw }`) so a declaration with an
+  invalid manifest key produces a typed rejection identity instead of an
+  unwrap-or-default placeholder.
+
+- **`br-core-values`: new `LocaleCodec` trait — the featureless locale↔wire
+  codec.** `LocaleCodec { from_wire(&str) -> Option<Self> / as_wire(&self) ->
+  &str / parse_wire(&str) -> Result<Self, ValueError> }` sits next to
+  `Localized<F, L>` in the pure value crate (no `async-graphql`, no `axum`), so a
+  serde-only `contract-*` crate can `impl LocaleCodec for Locale` at ~zero cost —
+  the locale codec is a value concern, not a transport one, and no longer drags
+  the GraphQL/HTTP edge stack into the published-language layer. `parse_wire`
+  returns the new `ValueError::LocaleUnknown { value }` (code `locale_unknown`).
+
+### Changed
+
+- **`br-core-directory`: `PublishedUser` omits absent names on re-serialization.**
+  `first_name` / `last_name` now carry `skip_serializing_if = "Option::is_none"`,
+  so a wire with a name absent round-trips identically (`{"email":"x"}` →
+  `{"email":"x"}`) instead of re-emitting explicit `first_name: null` /
+  `last_name: null`. `email` stays always present. A wire-shape refinement on the
+  read-and-written `KV_PUBLISHED_LANGUAGE` DTO; absent and explicit-null remain
+  equivalent on deserialization.
+- **BREAKING — `br-util-graphql`: the locale wire-codec is pushed down to
+  `br-core-values`.** `GqlLocale` is now a re-export of
+  `br_core_values::LocaleCodec` (it no longer defines its own
+  `from_wire`/`as_wire`/`parse_wire`); `GqlLocalizedInput::into_localized` and
+  `GqlLocalized::from_localized` are re-bound on the **core** `LocaleCodec`
+  instead of the former local `GqlLocale` trait. A locale type now implements the
+  codec without depending on `br-util-graphql` (so without `async-graphql` /
+  `axum`); the edge keeps mapping the core's `locale_unknown` to the
+  `LOCALE_UNKNOWN` reason code via `GqlValueError`. Existing `impl GqlLocale for
+  Locale` blocks compile unchanged (the trait is the same item under a new home).
+- **BREAKING — `br-util-graphql`: `SubscriptionPayload` now requires a
+  caller-supplied type name.** The signature is `SubscriptionPayload<N, E, T>`
+  where `N: PayloadName` carries `const NAME: &'static str`. Previously the
+  GraphQL type name was derived from the entity `T` alone, so the same entity
+  paired with two different event unions silently produced the same SDL type
+  name and collided. The name is now explicit and per-pairing, so a collision is
+  unrepresentable. `PayloadName` is exported. The list-entity name fix from
+  0.11.1 is subsumed: the caller names the payload directly, list or scalar.
+- **BREAKING — `br-core-auth`: `Passport` variant fields are now private and
+  `claims` is a `PassportClaims` newtype.** `Passport::{Human,Service}` can no
+  longer be built from raw struct literals by outside crates; construct through
+  the new canonical constructors `Passport::human(user_id, is_super_admin,
+  is_active, auth_method, impersonator, claims)` and
+  `Passport::service(service_account_id, claims)`, plus the `with_impersonator`
+  helper. `claims()` now returns `&PassportClaims` (was `&serde_json::Value`).
+  The new `PassportClaims` newtype wraps a JSON **object** map (private inner),
+  serializes as an object, and **rejects any non-object** (null/array/scalar) on
+  deserialization — so a non-canonical passport (e.g. `claims: null`) is now
+  unrepresentable, not merely rejected on the wire. New read accessors
+  `user_id()` / `service_account_id()` (both `Option<Uuid>`). The valid-passport
+  wire format and the `X-Passport` base64 codec are unchanged.
+- **BREAKING — `br-core-events`: `DomainEvent.metadata` is now the typed
+  `EventMetadata`** instead of `serde_json::Value`, and `DomainEvent::new` takes
+  `metadata: EventMetadata`. An event can no longer persist a malformed metadata
+  bag. The JSON wire shape is unchanged (`EventMetadata` already serialized to
+  the same flat `actor_id`/`actor_kind`/`correlation_id` form).
+- **BREAKING — `br-core-directory`: the `PublishedUser` / `PublishedGroup` /
+  `PublishedServiceAccount` `extensions` bag is now private behind a validating
+  constructor.** Each DTO exposes `new(...)` (and a public `extensions()`
+  accessor) and rejects, with the new `DirectoryError`, an `extensions` map whose
+  key shadows a reserved core field (`email` / `first_name` / `last_name` for
+  users, `name` / `member_ids` for groups, `name` for service accounts; surfaced
+  as the `PUBLISHED_*_RESERVED_KEYS` constants). `Deserialize` is hand-written and
+  routes through the same constructor, so the wire — which is both read **and**
+  written for `KV_PUBLISHED_LANGUAGE` — is fail closed against a shadowing key.
+  Direct struct construction of these DTOs is no longer possible; use `new`.
+- **`br-util-broadcast`: `EventBus::new` now rejects a zero capacity.** It
+  panics with a precise message (a zero-capacity broadcast channel buffers
+  nothing and would drop every event); capacity is a composition-root config
+  value, so a zero is a programming error rather than a runtime condition.
+- **BREAKING — `br-util-directory` is re-expressed on top of `br-util-nats-fabric`.**
+  Its own KV engine is **deleted** — the public `KvOp` / `reconcile_entries` and
+  every raw `async_nats` KV `Store` put/delete/observe/apply are gone; the kit
+  now holds only the directory *meaning* (keys, DTOs, schema, recompose) over the
+  fabric's generic publisher/consumer. `DirectoryPublisher::new(kv: Store)` /
+  `DirectoryProjector::new(kv: Store, pool)` are replaced by
+  `DirectoryPublisher::open(&fabric)` (async) and
+  `DirectoryProjector::new(fabric, pool)` / `with_config(fabric, pool, config)`.
+  The projector's imperative `apply_user` / `remove_user` / `apply_group` /
+  `remove_group` are removed — incremental projection is the fabric `watch()`.
+  `DirectoryError` drops the `Kv` / `Wire` string variants in favor of
+  `Fabric(FabricError)` / `KvKey(KvKeyError)`, and gains `ManifestAbsent`.
+- **`br-util-directory` — `read_manifest` reads `identity/_meta` via the new
+  single-key `PublishedLanguageReader::get`** instead of opening a prefix-scoped
+  consumer with a capturing one-shot sink and filtering on exact-key equality.
+  This drops the workaround and closes the prefix over-matching it carried (the
+  old `identity/_meta` *prefix* would also match `identity/_metadata`); the
+  observable fail-closed / absent-as-`ManifestAbsent` behavior is unchanged.
+- **BREAKING — the scope-declaration slice runs over the NATS Fabric.** The
+  handshake and the Identity receiver no longer touch the legacy
+  `br-core-integration` transport (`NatsIntegrationPublisher`,
+  `DurableConsumer::bind`, `CorrelatedAwaiter::create`, the freestyle
+  `integration_subject` builder) — they use `br-util-nats-fabric` over the fixed
+  `INTEGRATION_CMD` / `INTEGRATION_EVT` streams and the v1 grammar. The contract
+  subjects move from the old bc-prefixed grammar
+  (`identity.cmd.service_scope.declare.v1`) to the Fabric grammar
+  (`integration.cmd.identity.service_scope.declare.v1`,
+  `integration.evt.identity.service_scope.{accepted,rejected}.v1`).
+  - **`br-scope-declaration-contract`** replaces the freestyle subject builders
+    (`command_subject` / `event_subject` / `accepted_subject` /
+    `rejected_subject`) with the typed `declare_command_coords()` /
+    `accepted_event_coords()` / `rejected_event_coords()` returning the core
+    `CommandCoords` / `EventCoords`. Adds `UNREPRESENTABLE_SERVICE`.
+  - **`br-util-scope-declaration`**: `declare_scopes` now takes `&Fabric` (not a
+    raw JetStream `Context`) and awaits the two confirmation facts via the
+    Fabric correlated awaiter; `ScopeDeclarationConfig` drops `stream_name` (the
+    standard flow never names a stream). Readiness gating, timeout / correlation
+    / re-publish policy and the disabled-mode no-publish path are unchanged.
+  - **`br-util-nats-fabric`**: adds `Fabric::await_events(&[&EventCoords])` (the
+    correlated awaiter over more than one reply fact) and the public
+    `command_subject` / `event_subject` renderers.
+  - **`br-identity-app`**: `run_scope_declarations` takes `&Fabric` + the declare
+    `CommandCoords` + a durable name (the Fabric binds `INTEGRATION_CMD` and
+    verifies the durable filter so a misconfigured durable cannot widen
+    delivery); confirmations publish via the Fabric. `ConfirmationPublisher` /
+    `ScopeDeclarationPipeline` drop their `IntegrationPublisher` generic and hold
+    a concrete `Fabric`. `AppError::Publish` now wraps `FabricError`.
+- **BREAKING — `br-identity-domain`: registry-hydration and rejection audit
+  fixes.** `ScopeRegistry::hydrate` now rejects a duplicate `ServiceKey` even
+  when the services' scopes do not overlap
+  (`RegistryHydrationError::DuplicateService`). `DeclarationOutcome::Rejected`
+  carries a typed `RejectedIdentity` (`Service(ServiceKey) | Unrepresentable {
+  raw }`): the app maps `Unrepresentable` to the explicit `UNREPRESENTABLE_SERVICE`
+  sentinel rather than the previous silent `unwrap_or_else("unknown")`.
+  Re-declaration of an already-owned scope is documented as **label/description
+  immutable for v1** (a re-declare only touches `last_seen_at`; the existing
+  no-op behavior is now the explicit contract).
+
+### Removed
+
+- **BREAKING — `br-core-values`: removed the `ValueError::Unknown { code }`
+  catch-all variant.** A non-canonical `code` on the wire now **fails
+  deserialization** (`unknown variant`) instead of degrading to a publicly
+  constructible `Unknown` state. Every `ValueError` is one of the fixed
+  canonical codes.
+- **BREAKING — `br-core-events`: removed `RawEvent`** (and its export). It was a
+  pre-persistence producer-side shape; aggregates lower their facts straight into
+  a `DomainEvent` envelope.
+- **BREAKING — `br-util-postgres`: removed `set_rls_context`.** The exact shape
+  of the `app.*` RLS session variables (which fields, which names) is
+  project-specific — it depends on a service's Passport claims and its policy
+  model — so it does not belong in the shared lib. Each service now injects its
+  own transaction-local RLS context with `set_config(..., true)`; this crate
+  keeps the pool/TLS/role/grant wiring underneath. `br-core-auth` and `tracing`
+  are no longer dependencies of `br-util-postgres`.
+- **BREAKING — `br-util-postgres`: removed the deprecated `TRUSTED_HOSTS`
+  environment-variable fallback.** `resolve_trusted_network_hosts` now reads
+  **only** `TRUSTED_NETWORK_HOSTS`; `TRUSTED_HOSTS` (deprecated since 0.6.0) is
+  no longer honored and no longer warns. Services still setting the legacy name
+  must rename it.
+- **BREAKING — `br-core-integration` reduced to pure, transport-independent
+  contracts; all NATS transport removed.** Now that `br-util-nats-fabric` owns
+  every NATS transport path and the scope-declaration + identity slices have
+  migrated onto it, the crate's `async_nats`-coupled transport is gone:
+  `NatsIntegrationPublisher`, the `IntegrationPublisher` / `IntegrationPublisherExt`
+  traits and `NoopIntegrationPublisher`, `DurableConsumer` / `Delivery`,
+  `CorrelatedAwaiter` / `CorrelatedMatch`, the freestyle `integration_subject` /
+  `MessageKind` / `SubjectError` subject builder, `verify_consumer`, the
+  transport-coupled `IntegrationError` / `PublishErrorKind` / `ConsumeErrorKind`
+  error types, and the `outbox` feature's Postgres store + relay
+  (`OutboxStore` / `OutboxRelay` / `RelayPolicy` / `RelayHealth` / `OutboxRecord` /
+  `stage` / `classify_failure` / `FailureClass`) — all removed. The crate **no
+  longer depends on `async-nats`** (nor on `sqlx`, `tokio`, `async-trait`,
+  `futures-util`); the `outbox` feature is gone. What remains is pure: the message
+  coordinates (`Bc` / `Aggregate` / `Verb` / `PastFact`, `CommandCoords` /
+  `EventCoords`, `CoordError`), the `IntegrationEvent` / `IntegrationCommand`
+  envelopes, `MessageOutcome` (minus its `async_nats::AckKind` conversion, now a
+  Fabric-local function), and the pure outbox state machine (`OutboxStatus` /
+  `Transition` / `next_after_attempt` / `retry_backoff`) the Fabric reuses.
+
+### Other
+
+- **`br-test-support` is marked `publish = false`** so it can never be released
+  to a registry or mistaken for a normal public surface (it was already
+  dev-dependency-only and workspace-internal).
+- **`br-util-observability` README** documents that the crate is a BR platform
+  observability **convention** (opinionated Axum + `tracing`-JSON + Prometheus +
+  liveness + process/HTTP collectors), not a vendor-neutral utility, and that
+  `MetricsHandle::prometheus() -> &PrometheusHandle` is an **intentional** part
+  of the public contract.
+
 ### Fixed
 
+- **`br-util-directory`: a missing identity manifest no longer purges the local
+  roster (PII-purge fix).** Previously an absent `identity/_meta` was treated as
+  an empty roster, so a consumer that merely booted ahead of identity's first
+  reconcile orphan-deleted every `known_*` row. `reconcile()` / `watch()` now
+  **fail closed** with `DirectoryError::ManifestAbsent` and leave the projection
+  untouched — a degraded/unready condition, never a delete-all.
+- **`br-util-directory`: membership projection now converges regardless of
+  user-vs-group projection order.** `known_user_group.user_id` carries **no**
+  foreign key, and the group sink records **every** `(group_id, user_id)` pair
+  straight from the group's `member_ids` (delete-then-insert per group), dropping
+  the prior member-existence guard. The user, group and service-account watches
+  are independent streams with no inter-entity re-trigger, so a group could
+  project before one of its members' user entry (watch reordering, or a member
+  published after the group); the FK + existence guard silently skipped that
+  membership row and never re-projected the group when the user later arrived, so
+  `is_member` stayed wrong. Under this read-only roster a membership referencing a
+  not-(yet/ever)-projected user is **legitimate**, not corruption — `is_member` is
+  correct from the group projection, while `resolve_user` returns `None` for a
+  filtered/not-yet-projected user (the expected scoped behavior). Group deletion
+  still CASCADEs the junction via the retained `group_id` FK (#69's "FK **or**
+  deterministic orphan cleanup").
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`
   and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
   `LICENSE` file and crate manifests were already correct).
+- **`br-util-nats-fabric`: the outbox relay re-drains immediately after a
+  saturated batch that made forward progress, instead of parking until the next
+  `pg_notify`.** When a drain filled its `max_messages` budget and rows left the
+  `PENDING` set, no retry was owed, so the relay slept until the next insert —
+  committed integration events left in the backlog could starve indefinitely. A
+  saturated batch that made forward progress — a row left `PENDING`, whether it
+  was **published or terminally failed** (exhausted `max_attempts`) — now
+  schedules an immediate re-drain (still racing the shutdown signal in the select
+  loop); a saturated batch where no row left `PENDING` (all-structural /
+  all-transient) keeps its existing backoff or parks, so a down dependency is not
+  hot-looped.
 
 ## [0.11.1] — 2026-06-15
 

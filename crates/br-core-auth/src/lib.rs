@@ -2,6 +2,7 @@ mod auth_method;
 mod bearer_token;
 #[cfg(feature = "test-support")]
 mod builder;
+mod claims;
 mod error;
 mod header;
 mod passport;
@@ -12,6 +13,7 @@ pub use bearer_token::{BearerTokenEntry, bearer_token_key};
 pub use br_core_scope::ScopeKey;
 #[cfg(feature = "test-support")]
 pub use builder::PassportBuilder;
+pub use claims::PassportClaims;
 pub use error::PassportError;
 pub use header::PassportHeader;
 pub use passport::{Passport, SCOPES_CLAIM_KEY};

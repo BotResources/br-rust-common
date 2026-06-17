@@ -10,6 +10,10 @@ pub struct EventBus<T> {
 impl<T: Clone> EventBus<T> {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
+        assert!(
+            capacity > 0,
+            "EventBus capacity must be > 0 (a zero-capacity broadcast channel can buffer nothing); got {capacity}"
+        );
         let (sender, _) = broadcast::channel(capacity);
         Self { sender }
     }

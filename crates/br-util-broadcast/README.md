@@ -74,6 +74,28 @@ data loss. `publish_after_commit` returns the single `BroadcastError`
 may log/meter or ignore — it is never a persistence failure (the events are
 already committed when it is called).
 
+### Batch-publish semantics when subscribers disappear mid-batch
+
+`publish_after_commit` sends a `PendingBroadcast`'s events **one at a time, in
+order**, and stops at the **first** send that finds no live receiver. The
+`unheard` count in `NoSubscribers` is the number of events **from the offending
+one onward that were not sent** (`total - already-sent`), not a count of
+receivers. So if the last receiver drops after the 2nd of 5 events lands,
+`publish_after_commit` returns `NoSubscribers { unheard: 3 }`: the first two were
+fanned out, the remaining three were not. The already-sent events are **not**
+rolled back — fan-out is fire-and-forget per event. An empty buffer is a legal
+no-op and returns `Ok`. Because all events are already committed before this is
+called, a non-zero `unheard` never threatens durability; clients that missed it
+recover by reconnect/replay.
+
+### Capacity must be positive
+
+`EventBus::new(capacity)` **panics** if `capacity == 0` — a zero-capacity
+broadcast channel can buffer nothing and would drop every event before any
+subscriber could see it. Capacity is a composition-root configuration value, so a
+zero is a programming error, not a runtime condition; the panic carries a precise
+message rather than failing opaquely deep inside `tokio`.
+
 ## Errors — codes, not language
 
 `BroadcastError`'s `Display` is a **stable code** (`no_subscribers unheard=N`),
@@ -90,7 +112,7 @@ dependency. Unified workspace versioning, distributed by git tag.
 
 ```toml
 [dependencies]
-br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "v0.11.1" }
+br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "v1.0.0" }
 ```
 
 [`tokio::sync::broadcast`]: https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html

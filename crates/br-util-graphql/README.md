@@ -89,11 +89,15 @@ resolver / handler / endpoint becomes uniform.
   an **opaque String** the server mints and the client echoes via `after`; this
   crate does not prescribe its encoding. `Connection::forward(edges,
   has_next_page)` builds a forward page and derives the boundary cursors.
-- **`SubscriptionPayload<E, T>`** — the collaborative-pure push: the **event**
+- **`SubscriptionPayload<N, E, T>`** — the collaborative-pure push: the **event**
   that happened (the near-unfiltered domain-event union), the **fresh entity** it
   produced, and the **recalculated affordances** for *this* subscriber — so a
-  client folds it into state without a refetch. Generic over the event union `E`
-  and the entity `T`, both `async_graphql::OutputType`.
+  client folds it into state without a refetch. Generic over a `PayloadName` `N`
+  and the event union `E` and entity `T`, both `async_graphql::OutputType`. `N`
+  supplies the wire type name via `PayloadName::NAME`: that string **must be a
+  valid GraphQL identifier and unique per `(event-union, entity)` pairing** — a
+  malformed or duplicated name fails schema composition at boot (fail-loud), so
+  keeping each `PayloadName::NAME` distinct is the caller's contract.
 
 ## Fallible value-object wrappers (`values`)
 
@@ -108,7 +112,7 @@ missing primary content, and truncated `Money` i64→i32):
 | `GqlMoneyInput` (input) | `TryFrom<GqlMoneyInput> for Money` | `MONEY_OUT_OF_RANGE` if the inbound `MoneyAmount` string is non-numeric or overflows `i64`; the currency's own code (e.g. `unknown_currency`) if the ISO code is unknown — **never coerced, never truncated** |
 | `GqlLocalizedInput` (input) | `into_localized::<F, L>()` | `LOCALE_UNKNOWN` (any unknown locale) / `PRIMARY_CONTENT_MISSING` (no entry for the primary) / the value object's own code (empty, duplicate) |
 | `GqlLocalized` (output) | `from_localized::<F, L>(&Localized<F, L>)` | **infallible** — projects the domain value to a `SimpleObject` carrying `primaryLocale` (the canonical locale's wire code) and `entries` (every locale, the primary included) |
-| `GqlLocale` (trait) | `parse_wire(&str)` / `as_wire(&self)` | `LOCALE_UNKNOWN` on parse — the product-supplied seam that owns **both directions** of the wire↔locale mapping: `from_wire` (string → locale, fallible) and `as_wire` (locale → string, total) |
+| `GqlLocale` (trait — re-export of `br_core_values::LocaleCodec`) | `parse_wire(&str)` / `as_wire(&self)` | `locale_unknown` on parse (mapped to `LOCALE_UNKNOWN` at the edge) — the product-supplied seam that owns **both directions** of the wire↔locale mapping: `from_wire` (string → locale, fallible) and `as_wire` (locale → string, total) |
 
 `GqlValueError` carries the rejection (`LOCALE_UNKNOWN`, `MONEY_OUT_OF_RANGE`,
 `PRIMARY_CONTENT_MISSING`, or a wrapped value-object code) and converts to an
@@ -165,6 +169,16 @@ method over an `L: AsRef<str>` bound on `from_localized` keeps the wire code the
 *explicit dedicated inverse* of `from_wire` — an `AsRef<str>` view could differ
 from the wire code and silently desync the two directions.
 
+`GqlLocale` is a **re-export of the featureless `br_core_values::LocaleCodec`** —
+the codec is a value concern, not a transport concern, so it lives in the value
+crate (no `async-graphql`, no `axum`). `into_localized` and `from_localized` bind
+on `LocaleCodec` directly. The consequence is that a **serde-only `contract-*`
+crate** can `impl GqlLocale (= LocaleCodec) for Locale` and reuse
+`GqlLocalized::from_localized` **without** pulling the GraphQL/HTTP stack into the
+published-language layer; the per-service `locale → wire` mapper collapses into
+this one canonical codec. The edge keeps mapping the core's `locale_unknown` to
+the `LOCALE_UNKNOWN` reason code (see `GqlValueError`).
+
 **Field-naming.** `GqlLocalized.primaryLocale` holds a **locale code** (e.g.
 `"en"`), not the primary text — named so deliberately, after a review surfaced
 that a field literally named `primary` carrying a code misleads consumers. The
@@ -187,7 +201,7 @@ this crate even when its own public surface is unchanged.
 
 ```toml
 [dependencies]
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v0.11.1", version = "0.11.1", features = ["graphql"] }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.0.0", version = "1.0.0", features = ["graphql"] }
 ```
 
 ---

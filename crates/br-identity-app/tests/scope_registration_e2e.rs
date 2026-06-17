@@ -10,22 +10,35 @@ use sqlx::Row;
 use uuid::Uuid;
 
 async fn spawn_consumer(pg: &PgEnv, nats: &NatsEnv) -> tokio::task::JoinHandle<()> {
-    let pipeline = pipeline(pg, nats.js.clone());
-    let js = nats.js.clone();
-    let cmd_stream = nats.cmd_stream.clone();
+    let pipeline = pipeline(pg, nats.fabric.clone());
+    let fabric = nats.fabric.clone();
     let durable = nats.durable.clone();
     tokio::spawn(async move {
-        br_identity_app::run_scope_declarations(
-            &js,
-            &cmd_stream,
+        let coords = br_scope_declaration_contract::declare_command_coords().unwrap();
+        let outcome = br_identity_app::run_scope_declarations(
+            &fabric,
+            &coords,
             &durable,
             pipeline,
             |poison| panic!("unexpected poison: {poison}"),
             |err| panic!("unexpected permanent (corrupt-store) failure: {err}"),
         )
-        .await
-        .ok();
+        .await;
+        if let Err(err) = outcome {
+            panic!("scope-declaration consumer failed to run (durable bind or stream): {err}");
+        }
     })
+}
+
+async fn publish_declare(
+    nats: &NatsEnv,
+    cmd: &br_core_integration::IntegrationCommand<br_core_scope::DeclareServiceScopes>,
+) {
+    let coords = br_scope_declaration_contract::declare_command_coords().unwrap();
+    nats.fabric
+        .publish_command(&coords, cmd)
+        .await
+        .expect("publish declare");
 }
 
 async fn count(pool: &sqlx::PgPool, table: &str) -> i64 {
@@ -62,12 +75,7 @@ async fn declare_persists_rows_and_publishes_accepted() {
     );
     let command_id = cmd.command_id;
 
-    let publisher = br_core_integration::NatsIntegrationPublisher::new(nats.js.clone());
-    use br_core_integration::IntegrationPublisherExt;
-    publisher
-        .publish_command(common::DECLARE_SUBJECT, &cmd)
-        .await
-        .expect("publish declare");
+    publish_declare(&nats, &cmd).await;
 
     let confirmation = nats
         .await_confirmation(correlation, Duration::from_secs(10))
@@ -117,15 +125,9 @@ async fn idempotent_redeclare_no_dup_rows_and_reemits_accepted() {
     let nats = NatsEnv::bootstrap(&nats_url).await;
     let consumer = spawn_consumer(&pg, &nats).await;
 
-    let publisher = br_core_integration::NatsIntegrationPublisher::new(nats.js.clone());
-    use br_core_integration::IntegrationPublisherExt;
-
     let c1 = Uuid::now_v7();
     let cmd1 = declare_command("notifier", &[("notifier:read", false)], c1, Uuid::now_v7());
-    publisher
-        .publish_command(common::DECLARE_SUBJECT, &cmd1)
-        .await
-        .unwrap();
+    publish_declare(&nats, &cmd1).await;
     let conf1 = nats.await_confirmation(c1, Duration::from_secs(10)).await;
     assert!(conf1.is_accepted());
     assert_eq!(head_version(&pg.app_pool).await, 1);
@@ -133,10 +135,7 @@ async fn idempotent_redeclare_no_dup_rows_and_reemits_accepted() {
     let c2 = Uuid::now_v7();
     let cmd2 = declare_command("notifier", &[("notifier:read", false)], c2, Uuid::now_v7());
     let command_id2 = cmd2.command_id;
-    publisher
-        .publish_command(common::DECLARE_SUBJECT, &cmd2)
-        .await
-        .unwrap();
+    publish_declare(&nats, &cmd2).await;
     let conf2 = nats.await_confirmation(c2, Duration::from_secs(10)).await;
 
     assert!(
@@ -179,9 +178,6 @@ async fn invalid_declaration_is_rejected_registry_untouched_and_acked() {
     let nats = NatsEnv::bootstrap(&nats_url).await;
     let consumer = spawn_consumer(&pg, &nats).await;
 
-    let publisher = br_core_integration::NatsIntegrationPublisher::new(nats.js.clone());
-    use br_core_integration::IntegrationPublisherExt;
-
     let correlation = Uuid::now_v7();
     let cmd = declare_command_from_json(
         r#"{"declaration":{
@@ -192,10 +188,7 @@ async fn invalid_declaration_is_rejected_registry_untouched_and_acked() {
         Uuid::now_v7(),
     );
     let command_id = cmd.command_id;
-    publisher
-        .publish_command(common::DECLARE_SUBJECT, &cmd)
-        .await
-        .unwrap();
+    publish_declare(&nats, &cmd).await;
 
     let confirmation = nats
         .await_confirmation(correlation, Duration::from_secs(10))
@@ -288,7 +281,7 @@ async fn scope_conflict_yields_rejected_confirmation_without_redelivery() {
     let pg = PgEnv::bootstrap(&db).await;
     let nats = NatsEnv::bootstrap(&nats_url).await;
 
-    let pipeline = pipeline(&pg, nats.js.clone());
+    let pipeline = pipeline(&pg, nats.fabric.clone());
 
     let correlation = Uuid::now_v7();
     let cmd = declare_command(
@@ -316,7 +309,7 @@ async fn scope_conflict_yields_rejected_confirmation_without_redelivery() {
     racer.await.ok();
 
     match outcome {
-        Ok(DeclarationOutcome::Rejected { reason }) => {
+        Ok(DeclarationOutcome::Rejected { reason, .. }) => {
             assert_eq!(reason.to_string(), "scope_owned_by_another_service");
             let confirmation = nats
                 .await_confirmation(correlation, Duration::from_secs(10))

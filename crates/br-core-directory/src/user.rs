@@ -3,18 +3,56 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+use crate::error::{DirectoryError, reject_reserved_keys};
+
+pub const PUBLISHED_USER_RESERVED_KEYS: [&str; 3] = ["email", "first_name", "last_name"];
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct PublishedUser {
     pub email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_name: Option<String>,
     #[serde(flatten)]
-    pub extensions: BTreeMap<String, Value>,
+    extensions: BTreeMap<String, Value>,
 }
 
 impl PublishedUser {
+    pub fn new(
+        email: String,
+        first_name: Option<String>,
+        last_name: Option<String>,
+        extensions: BTreeMap<String, Value>,
+    ) -> Result<Self, DirectoryError> {
+        reject_reserved_keys("PublishedUser", PUBLISHED_USER_RESERVED_KEYS, &extensions)?;
+        Ok(Self {
+            email,
+            first_name,
+            last_name,
+            extensions,
+        })
+    }
+
+    pub fn extensions(&self) -> &BTreeMap<String, Value> {
+        &self.extensions
+    }
+
     pub fn extension(&self, key: &str) -> Option<&Value> {
         self.extensions.get(key)
+    }
+}
+
+impl<'de> Deserialize<'de> for PublishedUser {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut bag = BTreeMap::<String, Value>::deserialize(deserializer)?;
+        let email = crate::flatten::take_required_string(&mut bag, "email")
+            .map_err(serde::de::Error::custom)?;
+        let first_name = crate::flatten::take_optional_string(&mut bag, "first_name")
+            .map_err(serde::de::Error::custom)?;
+        let last_name = crate::flatten::take_optional_string(&mut bag, "last_name")
+            .map_err(serde::de::Error::custom)?;
+        PublishedUser::new(email, first_name, last_name, bag).map_err(serde::de::Error::custom)
     }
 }
 
@@ -73,7 +111,7 @@ mod tests {
         let user: PublishedUser = serde_json::from_value(core).unwrap();
         assert_eq!(user.email, "solo@example.com");
         assert!(user.first_name.is_none());
-        assert!(user.extensions.is_empty());
+        assert!(user.extensions().is_empty());
     }
 
     #[test]
@@ -82,5 +120,45 @@ mod tests {
         let user: PublishedUser = serde_json::from_value(wire).unwrap();
         assert!(user.first_name.is_none());
         assert!(user.last_name.is_none());
+    }
+
+    #[test]
+    fn absent_names_round_trip_without_explicit_null() {
+        let wire = serde_json::json!({ "email": "x@y" });
+        let user: PublishedUser = serde_json::from_value(wire.clone()).unwrap();
+        let back = serde_json::to_value(&user).unwrap();
+        assert_eq!(back, wire);
+        assert!(back.get("first_name").is_none());
+        assert!(back.get("last_name").is_none());
+    }
+
+    #[test]
+    fn deser_fails_closed_on_first_name_typed_as_non_string() {
+        let wire = serde_json::json!({ "email": "x", "first_name": 123 });
+        let result: Result<PublishedUser, _> = serde_json::from_value(wire);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn new_rejects_extension_shadowing_a_reserved_key() {
+        let mut extensions = BTreeMap::new();
+        extensions.insert("last_name".to_string(), Value::from("Shadow"));
+        let err =
+            PublishedUser::new("a@example.com".to_string(), None, None, extensions).unwrap_err();
+        assert_eq!(
+            err,
+            DirectoryError::ReservedExtensionKey {
+                entity: "PublishedUser",
+                key: "last_name".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn new_accepts_a_non_reserved_extension() {
+        let mut extensions = BTreeMap::new();
+        extensions.insert("locale".to_string(), Value::from("fr"));
+        let user = PublishedUser::new("a@example.com".to_string(), None, None, extensions).unwrap();
+        assert_eq!(user.extension("locale"), Some(&Value::from("fr")));
     }
 }

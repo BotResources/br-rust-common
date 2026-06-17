@@ -11,4 +11,4 @@ pub use affordance::Affordance;
 pub use error::{EdgeError, ErrorCode};
 pub use mutation::MutationResult;
 pub use pagination::{Connection, Edge, PageInfo};
-pub use subscription::SubscriptionPayload;
+pub use subscription::{PayloadName, SubscriptionPayload};

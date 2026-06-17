@@ -1,6 +1,7 @@
 use br_core_integration::IntegrationCommand;
 use br_core_scope::{DeclareServiceScopes, ScopeDeclarationError, ServiceKey};
-use br_identity_domain::{DeclarationOutcome, judge_declaration};
+use br_identity_domain::{DeclarationOutcome, RejectedIdentity, judge_declaration};
+use br_scope_declaration_contract::UNREPRESENTABLE_SERVICE;
 
 use crate::conflict::SaveOutcome;
 use crate::error::AppError;
@@ -9,16 +10,13 @@ use crate::repository::ScopeRegistryRepository;
 
 const MAX_ATTEMPTS: u32 = 5;
 
-pub struct ScopeDeclarationPipeline<P: br_core_integration::IntegrationPublisher + ?Sized> {
+pub struct ScopeDeclarationPipeline {
     repository: ScopeRegistryRepository,
-    confirmations: ConfirmationPublisher<P>,
+    confirmations: ConfirmationPublisher,
 }
 
-impl<P: br_core_integration::IntegrationPublisher + ?Sized> ScopeDeclarationPipeline<P> {
-    pub fn new(
-        repository: ScopeRegistryRepository,
-        confirmations: ConfirmationPublisher<P>,
-    ) -> Self {
+impl ScopeDeclarationPipeline {
+    pub fn new(repository: ScopeRegistryRepository, confirmations: ConfirmationPublisher) -> Self {
         Self {
             repository,
             confirmations,
@@ -33,8 +31,8 @@ impl<P: br_core_integration::IntegrationPublisher + ?Sized> ScopeDeclarationPipe
             let (mut registry, loaded_version) = self.repository.load().await?;
 
             match judge_declaration(&mut registry, command.payload.clone()) {
-                DeclarationOutcome::Rejected { reason } => {
-                    return self.reject(command, reason).await;
+                DeclarationOutcome::Rejected { identity, reason } => {
+                    return self.reject(command, identity, reason).await;
                 }
                 DeclarationOutcome::Accepted { service, result } => {
                     match self.repository.save(&registry, loaded_version).await? {
@@ -50,7 +48,9 @@ impl<P: br_core_integration::IntegrationPublisher + ?Sized> ScopeDeclarationPipe
                                 key: scope_key,
                                 owner,
                             };
-                            return self.reject(command, reason).await;
+                            return self
+                                .reject(command, RejectedIdentity::Service(service), reason)
+                                .await;
                         }
                     }
                 }
@@ -65,62 +65,46 @@ impl<P: br_core_integration::IntegrationPublisher + ?Sized> ScopeDeclarationPipe
     async fn reject(
         &self,
         command: &IntegrationCommand<DeclareServiceScopes>,
+        identity: RejectedIdentity,
         reason: ScopeDeclarationError,
     ) -> Result<DeclarationOutcome, AppError> {
-        let service = rejected_reply_service(command);
+        let service = reply_service(&identity);
         self.confirmations
             .publish_rejected(command, service, reason.clone())
             .await?;
-        Ok(DeclarationOutcome::Rejected { reason })
+        Ok(DeclarationOutcome::Rejected { identity, reason })
     }
 }
 
-fn rejected_reply_service(command: &IntegrationCommand<DeclareServiceScopes>) -> ServiceKey {
-    let raw_key = command.payload.raw().manifest.key.as_str();
-    ServiceKey::new(raw_key).unwrap_or_else(|_| {
-        ServiceKey::new("unknown").expect("static placeholder service key is valid")
-    })
+fn reply_service(identity: &RejectedIdentity) -> ServiceKey {
+    match identity {
+        RejectedIdentity::Service(service) => service.clone(),
+        RejectedIdentity::Unrepresentable { .. } => ServiceKey::new(UNREPRESENTABLE_SERVICE)
+            .expect("UNREPRESENTABLE_SERVICE is a valid service key"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use br_core_integration::{Actor, EventMetadata, UserId};
-    use chrono::Utc;
-    use uuid::Uuid;
-
-    fn command(json: &str) -> IntegrationCommand<DeclareServiceScopes> {
-        let metadata =
-            EventMetadata::new(Actor::Human(UserId::from(Uuid::now_v7())), Uuid::now_v7());
-        IntegrationCommand::new(
-            Uuid::now_v7(),
-            "service_scope.declare",
-            1,
-            Utc::now(),
-            metadata,
-            serde_json::from_str(json).expect("valid declare payload json"),
-        )
-    }
 
     #[test]
-    fn rejected_reply_echoes_a_valid_manifest_key() {
-        let cmd = command(
-            r#"{"declaration":{"manifest":{"key":"notifier","label_key":"l","description_key":"d"},"scopes":[]}}"#,
-        );
+    fn reply_service_echoes_a_representable_identity() {
+        let identity = RejectedIdentity::Service(ServiceKey::new("notifier").unwrap());
         assert_eq!(
-            rejected_reply_service(&cmd),
+            reply_service(&identity),
             ServiceKey::new("notifier").unwrap()
         );
     }
 
     #[test]
-    fn rejected_reply_falls_back_when_manifest_key_is_malformed() {
-        let cmd = command(
-            r#"{"declaration":{"manifest":{"key":"NOPE","label_key":"l","description_key":"d"},"scopes":[]}}"#,
-        );
+    fn reply_service_maps_an_unrepresentable_identity_to_the_named_sentinel() {
+        let identity = RejectedIdentity::Unrepresentable {
+            raw: "NOPE".to_string(),
+        };
         assert_eq!(
-            rejected_reply_service(&cmd),
-            ServiceKey::new("unknown").unwrap()
+            reply_service(&identity),
+            ServiceKey::new(UNREPRESENTABLE_SERVICE).unwrap()
         );
     }
 }

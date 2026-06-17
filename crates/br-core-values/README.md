@@ -107,7 +107,7 @@ deserializes back from that lowercase form (round-trip):
 
 ```toml
 [dev-dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.11.1", features = ["conformance"] }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v1.0.0", features = ["conformance"] }
 ```
 
 ```rust,ignore
@@ -120,6 +120,32 @@ fn locale_is_lowercase_conformant() {
 ```
 
 The feature is **off by default** so the helper never bloats the prod surface.
+
+### The locale wire-codec — `LocaleCodec`
+
+`LocaleCodec` is the **featureless** locale↔wire codec a product's `Locale` enum
+implements to map to and from its stable string form:
+
+```rust,ignore
+pub trait LocaleCodec: Sized {
+    fn from_wire(s: &str) -> Option<Self>;
+    fn as_wire(&self) -> &str;
+    fn parse_wire(s: &str) -> Result<Self, ValueError>; // default: from_wire().ok_or(LocaleUnknown)
+}
+```
+
+It lives here, next to `Localized<F, L>`, because **the locale codec is a value
+concern, not a transport concern** — there is nothing GraphQL or HTTP about
+mapping `Locale::Fr ↔ "fr"`. A **serde-only `contract-*` crate** (the published
+language that crosses BC boundaries over NATS) can therefore
+`impl LocaleCodec for Locale` at **~zero cost** — no `async-graphql`, no `axum`,
+no edge stack dragged into the most-stable layer. `parse_wire` returns this
+crate's own `ValueError::LocaleUnknown { value }` (code `locale_unknown`),
+carrying the offending input.
+
+The GraphQL edge re-exports this trait as `br_util_graphql::GqlLocale` and binds
+its `GqlLocalized::from_localized` on it, so the **same** codec serves the serde
+side and the GraphQL edge — one canonical implementation, no per-service mapper.
 
 `LocalizedContent<L>` wraps the inner body and adds a `format` discriminator:
 
@@ -156,21 +182,18 @@ ValueError>`); deserialization re-runs the constructor and fails closed.
 
 Every constructor returns this crate's own `ValueError`. Per the
 codes-not-language rule its `Display` strings are **stable codes**
-(`malformed_code`, `unknown_currency`, `unknown_country`, `localized_empty`,
-`localized_primary_missing`, `localized_duplicate_locale`) carrying structured
+(`malformed_code`, `unknown_currency`, `unknown_country`, `locale_unknown`,
+`localized_empty`, `localized_primary_missing`, `localized_duplicate_locale`)
+carrying structured
 params — **never UI prose**. The human text and its i18n live at the edge.
 `ValueError` is `#[non_exhaustive]` (match with a wildcard) and (de)serializes
 (internally tagged on `code`) so a rejection reason can travel on the wire.
 
-**Forward-compat on the wire.** `ValueError` travels nested in other envelopes
-(domain errors, affordance reasons). A newer producer crate may emit a `code`
-this (older) crate does not know yet. Rather than fail the deserialization of the
-**whole** enclosing envelope, an unrecognized `code` degrades to
-`ValueError::Unknown { code }` carrying the raw `code` string — the envelope
-still parses, and the original code is preserved verbatim for logging /
-pass-through. Every code this version knows stays strongly typed; only a genuinely
-unknown future code degrades. (`Unknown` is produced **only** on deserialization,
-never by a rejecting constructor here.)
+**A non-canonical `code` fails deserialization.** `ValueError` travels nested in
+other envelopes (domain errors, affordance reasons). Every variant is one of the
+fixed, canonical codes listed above; deserializing a `code` this crate does not
+know is a hard error (`unknown variant`), never a degraded publicly-constructible
+state. A non-canonical wire must not parse — there is no catch-all variant.
 
 ## Tier & dependencies
 
@@ -181,7 +204,7 @@ no `async`, no `br-util-*`. Unified workspace versioning, distributed by git tag
 
 ```toml
 [dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v0.11.1" }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v1.0.0" }
 ```
 
 ---

@@ -37,6 +37,14 @@ fn golden_unknown_country() {
 }
 
 #[test]
+fn golden_locale_unknown() {
+    assert_golden(
+        ValueError::LocaleUnknown { value: "xx".into() },
+        r#"{"code":"locale_unknown","value":"xx"}"#,
+    );
+}
+
+#[test]
 fn golden_localized_empty() {
     assert_golden(ValueError::LocalizedEmpty, r#"{"code":"localized_empty"}"#);
 }
@@ -58,32 +66,10 @@ fn golden_localized_duplicate_locale() {
 }
 
 #[test]
-fn golden_unknown_future_code() {
-    assert_golden(
-        ValueError::Unknown {
-            code: "some_future_rule".into(),
-        },
-        r#"{"code":"some_future_rule"}"#,
-    );
-}
-
-#[test]
-fn forged_unknown_for_a_known_code_does_not_round_trip() {
-    let forged = ValueError::Unknown {
-        code: "unknown_currency".into(),
-    };
-
-    let json = serde_json::to_string(&forged).unwrap();
-    assert_eq!(json, r#"{"code":"unknown_currency"}"#);
-
-    let back = serde_json::from_str::<ValueError>(&json);
+fn unknown_code_does_not_deserialize() {
+    let wire = r#"{"code":"some_future_rule"}"#;
     assert!(
-        back.is_err(),
-        "a forged Unknown for a known code must not deserialize, got {back:?}"
-    );
-    let msg = back.unwrap_err().to_string();
-    assert!(
-        msg.contains("value"),
-        "the failure must name the missing required field, got {msg:?}"
+        serde_json::from_str::<ValueError>(wire).is_err(),
+        "a non-canonical code must fail deserialization, not degrade"
     );
 }

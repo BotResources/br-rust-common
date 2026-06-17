@@ -50,8 +50,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
-    use br_core_auth::AuthMethod;
-    use serde_json::json;
+    use br_core_auth::{AuthMethod, PassportClaims};
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -70,14 +69,14 @@ mod tests {
     }
 
     fn make_passport_header() -> String {
-        let p = Passport::Human {
-            user_id: Uuid::nil(),
-            is_super_admin: false,
-            is_active: true,
-            auth_method: AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({}),
-        };
+        let p = Passport::human(
+            Uuid::nil(),
+            false,
+            true,
+            AuthMethod::Jwt,
+            None,
+            PassportClaims::new(),
+        );
         p.to_header()
     }
 

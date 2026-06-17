@@ -4,21 +4,53 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+use crate::error::{DirectoryError, reject_reserved_keys};
+
+pub const PUBLISHED_GROUP_RESERVED_KEYS: [&str; 2] = ["name", "member_ids"];
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct PublishedGroup {
     pub name: String,
     pub member_ids: Vec<Uuid>,
     #[serde(flatten)]
-    pub extensions: BTreeMap<String, Value>,
+    extensions: BTreeMap<String, Value>,
 }
 
 impl PublishedGroup {
+    pub fn new(
+        name: String,
+        member_ids: Vec<Uuid>,
+        extensions: BTreeMap<String, Value>,
+    ) -> Result<Self, DirectoryError> {
+        reject_reserved_keys("PublishedGroup", PUBLISHED_GROUP_RESERVED_KEYS, &extensions)?;
+        Ok(Self {
+            name,
+            member_ids,
+            extensions,
+        })
+    }
+
+    pub fn extensions(&self) -> &BTreeMap<String, Value> {
+        &self.extensions
+    }
+
     pub fn extension(&self, key: &str) -> Option<&Value> {
         self.extensions.get(key)
     }
 
     pub fn has_member(&self, user_id: Uuid) -> bool {
         self.member_ids.contains(&user_id)
+    }
+}
+
+impl<'de> Deserialize<'de> for PublishedGroup {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut bag = BTreeMap::<String, Value>::deserialize(deserializer)?;
+        let name = crate::flatten::take_required_string(&mut bag, "name")
+            .map_err(serde::de::Error::custom)?;
+        let member_ids = crate::flatten::take_required_uuid_vec(&mut bag, "member_ids")
+            .map_err(serde::de::Error::custom)?;
+        PublishedGroup::new(name, member_ids, bag).map_err(serde::de::Error::custom)
     }
 }
 
@@ -82,6 +114,27 @@ mod tests {
         let group: PublishedGroup = serde_json::from_value(core).unwrap();
         assert_eq!(group.name, "core-only");
         assert!(group.member_ids.is_empty());
-        assert!(group.extensions.is_empty());
+        assert!(group.extensions().is_empty());
+    }
+
+    #[test]
+    fn new_rejects_extension_shadowing_a_reserved_key() {
+        let mut extensions = BTreeMap::new();
+        extensions.insert("name".to_string(), Value::from("Shadow"));
+        let err = PublishedGroup::new("real".to_string(), vec![], extensions).unwrap_err();
+        assert_eq!(
+            err,
+            DirectoryError::ReservedExtensionKey {
+                entity: "PublishedGroup",
+                key: "name".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn deser_fails_closed_on_member_ids_typed_as_non_uuid() {
+        let wire = serde_json::json!({ "name": "bad", "member_ids": ["not-a-uuid"] });
+        let result: Result<PublishedGroup, _> = serde_json::from_value(wire);
+        assert!(result.is_err());
     }
 }

@@ -1,4 +1,6 @@
-use br_core_integration::{MessageKind, SubjectError, integration_subject};
+#![doc = include_str!("../README.md")]
+
+use br_core_integration::{Aggregate, Bc, CommandCoords, CoordError, EventCoords, PastFact, Verb};
 
 pub const BC: &str = "identity";
 pub const AGGREGATE: &str = "service_scope";
@@ -6,21 +8,32 @@ pub const VERSION: u8 = 1;
 pub const COMMAND_NAME: &str = "declare";
 pub const ACCEPTED: &str = "accepted";
 pub const REJECTED: &str = "rejected";
+pub const UNREPRESENTABLE_SERVICE: &str = "unrepresentable_service";
 
-pub fn command_subject() -> Result<String, SubjectError> {
-    integration_subject(BC, MessageKind::Cmd, AGGREGATE, COMMAND_NAME, VERSION)
+pub fn declare_command_coords() -> Result<CommandCoords, CoordError> {
+    Ok(CommandCoords {
+        receiver: Bc::new(BC)?,
+        aggregate: Aggregate::new(AGGREGATE)?,
+        verb: Verb::new(COMMAND_NAME)?,
+        version: VERSION,
+    })
 }
 
-pub fn event_subject(name: &str) -> Result<String, SubjectError> {
-    integration_subject(BC, MessageKind::Evt, AGGREGATE, name, VERSION)
+pub fn accepted_event_coords() -> Result<EventCoords, CoordError> {
+    event_coords(ACCEPTED)
 }
 
-pub fn accepted_subject() -> Result<String, SubjectError> {
-    event_subject(ACCEPTED)
+pub fn rejected_event_coords() -> Result<EventCoords, CoordError> {
+    event_coords(REJECTED)
 }
 
-pub fn rejected_subject() -> Result<String, SubjectError> {
-    event_subject(REJECTED)
+fn event_coords(fact: &str) -> Result<EventCoords, CoordError> {
+    Ok(EventCoords {
+        producer: Bc::new(BC)?,
+        aggregate: Aggregate::new(AGGREGATE)?,
+        fact: PastFact::new(fact)?,
+        version: VERSION,
+    })
 }
 
 pub fn command_type() -> String {
@@ -36,28 +49,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn subjects_match_the_published_wire_contract() {
-        assert_eq!(
-            command_subject().unwrap(),
-            "identity.cmd.service_scope.declare.v1"
-        );
-        assert_eq!(
-            accepted_subject().unwrap(),
-            "identity.evt.service_scope.accepted.v1"
-        );
-        assert_eq!(
-            rejected_subject().unwrap(),
-            "identity.evt.service_scope.rejected.v1"
-        );
+    fn declare_command_coords_carry_the_typed_v1_grammar() {
+        let coords = declare_command_coords().unwrap();
+        assert_eq!(coords.receiver.as_str(), "identity");
+        assert_eq!(coords.aggregate.as_str(), "service_scope");
+        assert_eq!(coords.verb.as_str(), "declare");
+        assert_eq!(coords.version, 1);
     }
 
     #[test]
-    fn command_type_is_the_subject_tail() {
+    fn accepted_and_rejected_event_coords_carry_the_typed_v1_grammar() {
+        let accepted = accepted_event_coords().unwrap();
+        assert_eq!(accepted.producer.as_str(), "identity");
+        assert_eq!(accepted.aggregate.as_str(), "service_scope");
+        assert_eq!(accepted.fact.as_str(), "accepted");
+        assert_eq!(accepted.version, 1);
+
+        let rejected = rejected_event_coords().unwrap();
+        assert_eq!(rejected.fact.as_str(), "rejected");
+    }
+
+    #[test]
+    fn command_type_is_the_aggregate_verb_pair() {
         assert_eq!(command_type(), "service_scope.declare");
-        assert_eq!(
-            command_subject().unwrap(),
-            format!("identity.cmd.{}.v{VERSION}", command_type())
-        );
     }
 
     #[test]

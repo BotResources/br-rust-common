@@ -59,7 +59,7 @@ let app = Router::new()
 
 ```toml
 [dependencies]
-br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "v0.11.1" }
+br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "v1.0.0" }
 ```
 
 ---

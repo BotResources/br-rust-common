@@ -1,10 +1,9 @@
 use std::marker::PhantomData;
 
 use async_graphql::{InputObject, SimpleObject};
-use br_core_values::{Localized, LocalizedEntry, ValueError};
+use br_core_values::{LocaleCodec, Localized, LocalizedEntry, ValueError};
 
 use crate::values::error::GqlValueError;
-use crate::values::locale::GqlLocale;
 
 #[derive(InputObject, Debug, Clone)]
 pub struct GqlLocalizedEntryInput {
@@ -21,13 +20,13 @@ pub struct GqlLocalizedInput {
 impl GqlLocalizedInput {
     pub fn into_localized<F, L>(self) -> Result<Localized<F, L>, GqlValueError>
     where
-        L: GqlLocale + PartialEq,
+        L: LocaleCodec + PartialEq,
     {
-        let primary = L::parse_wire(&self.primary)?;
+        let primary = L::parse_wire(&self.primary).map_err(map_localized_error)?;
         let mut entries = Vec::with_capacity(self.entries.len());
         for entry in self.entries {
             entries.push(LocalizedEntry {
-                locale: L::parse_wire(&entry.locale)?,
+                locale: L::parse_wire(&entry.locale).map_err(map_localized_error)?,
                 content: entry.content,
             });
         }
@@ -49,7 +48,7 @@ pub struct GqlLocalized {
 }
 
 impl GqlLocalized {
-    pub fn from_localized<F, L: GqlLocale>(value: &Localized<F, L>) -> Self {
+    pub fn from_localized<F, L: LocaleCodec>(value: &Localized<F, L>) -> Self {
         Self {
             primary_locale: value.primary_locale().as_wire().to_owned(),
             entries: value
@@ -65,6 +64,7 @@ impl GqlLocalized {
 
 fn map_localized_error(error: ValueError) -> GqlValueError {
     match error {
+        ValueError::LocaleUnknown { value } => GqlValueError::LocaleUnknown { value },
         ValueError::LocalizedPrimaryMissing => GqlValueError::PrimaryContentMissing,
         other => GqlValueError::ValueRejected { source: other },
     }
@@ -81,7 +81,7 @@ mod tests {
         Fr,
     }
 
-    impl GqlLocale for Locale {
+    impl LocaleCodec for Locale {
         fn from_wire(s: &str) -> Option<Self> {
             match s {
                 "en" => Some(Locale::En),

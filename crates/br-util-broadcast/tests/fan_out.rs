@@ -77,6 +77,12 @@ async fn given_all_receivers_closed_when_published_then_no_subscribers_signal() 
     assert_eq!(outcome, Err(BroadcastError::NoSubscribers { unheard: 1 }));
 }
 
+#[test]
+#[should_panic(expected = "EventBus capacity must be > 0")]
+fn given_zero_capacity_when_constructed_then_it_panics_with_a_precise_message() {
+    let _bus: EventBus<String> = EventBus::new(0);
+}
+
 #[tokio::test]
 async fn given_a_slow_subscriber_when_it_overflows_capacity_then_it_lags() {
     let bus: EventBus<u64> = EventBus::new(2);

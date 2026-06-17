@@ -32,21 +32,21 @@ mod tests {
     use uuid::Uuid;
 
     fn make_human() -> Passport {
-        Passport::Human {
-            user_id: Uuid::now_v7(),
-            is_super_admin: true,
-            is_active: true,
-            auth_method: crate::AuthMethod::Jwt,
-            impersonator: None,
-            claims: json!({"email": "test@example.com"}),
-        }
+        Passport::human(
+            Uuid::now_v7(),
+            true,
+            true,
+            crate::AuthMethod::Jwt,
+            None,
+            crate::PassportClaims::from_value(json!({"email": "test@example.com"})).unwrap(),
+        )
     }
 
     fn make_service() -> Passport {
-        Passport::Service {
-            service_account_id: Uuid::now_v7(),
-            claims: json!({"name": "ci-bot"}),
-        }
+        Passport::service(
+            Uuid::now_v7(),
+            crate::PassportClaims::from_value(json!({"name": "ci-bot"})).unwrap(),
+        )
     }
 
     #[test]

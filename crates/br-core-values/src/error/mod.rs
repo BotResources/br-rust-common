@@ -12,14 +12,14 @@ pub enum ValueError {
     UnknownCurrency { value: String },
     #[error("unknown_country")]
     UnknownCountry { value: String },
+    #[error("locale_unknown")]
+    LocaleUnknown { value: String },
     #[error("localized_empty")]
     LocalizedEmpty,
     #[error("localized_primary_missing")]
     LocalizedPrimaryMissing,
     #[error("localized_duplicate_locale")]
     LocalizedDuplicateLocale,
-    #[error("{code}")]
-    Unknown { code: String },
 }
 
 #[cfg(test)]
@@ -46,6 +46,10 @@ mod tests {
         assert_eq!(
             ValueError::UnknownCountry { value: "UK".into() }.to_string(),
             "unknown_country"
+        );
+        assert_eq!(
+            ValueError::LocaleUnknown { value: "xx".into() }.to_string(),
+            "locale_unknown"
         );
         assert_eq!(ValueError::LocalizedEmpty.to_string(), "localized_empty");
         assert_eq!(
@@ -81,6 +85,7 @@ mod tests {
                 value: "RMB".into(),
             },
             ValueError::UnknownCountry { value: "UK".into() },
+            ValueError::LocaleUnknown { value: "xx".into() },
             ValueError::LocalizedEmpty,
             ValueError::LocalizedPrimaryMissing,
             ValueError::LocalizedDuplicateLocale,
@@ -93,27 +98,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_future_code_degrades_to_unknown_not_an_error() {
+    fn unknown_code_fails_deserialization() {
         let wire = r#"{"code":"some_future_rule","value":"x","extra":42}"#;
-        let back: ValueError = serde_json::from_str(wire).unwrap();
-        assert_eq!(
-            back,
-            ValueError::Unknown {
-                code: "some_future_rule".into()
-            }
-        );
+        assert!(serde_json::from_str::<ValueError>(wire).is_err());
     }
 
     #[test]
-    fn unknown_future_code_without_params_degrades() {
+    fn unknown_code_without_params_fails_deserialization() {
         let wire = r#"{"code":"future_bare"}"#;
-        let back: ValueError = serde_json::from_str(wire).unwrap();
-        assert_eq!(
-            back,
-            ValueError::Unknown {
-                code: "future_bare".into()
-            }
-        );
+        assert!(serde_json::from_str::<ValueError>(wire).is_err());
     }
 
     #[test]

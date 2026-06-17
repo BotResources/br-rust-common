@@ -26,16 +26,17 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 |---|---|---|---|---|
 | `br-core-kernel` | core | Typed ID wrappers (`UserId`, `ServiceAccountId`) | [README](crates/br-core-kernel/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-auth` | core | `Passport` DTO, `X-Passport` header codec, PAT bearer-token contract | [README](crates/br-core-auth/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-core-events` | core | Shared event envelopes (`EventMetadata`, `RawEvent`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-core-integration` | core | Typed integration envelopes + `IntegrationPublisher` (NATS JetStream / noop) | [README](crates/br-core-integration/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-events` | core | Shared event envelopes (`EventMetadata`, `DomainEvent`) | [README](crates/br-core-events/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-core-integration` | core | Transport-independent integration contracts: message coordinates, `IntegrationEvent`/`IntegrationCommand` envelopes, `MessageOutcome`, and the pure outbox state machine (no NATS, no DB) | [README](crates/br-core-integration/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | [README](crates/br-core-scope/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | [README](crates/br-core-values/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | [README](crates/br-scope-declaration-contract/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-util-postgres` | util | Postgres pools, TLS, RLS context, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | [README](crates/br-util-broadcast/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-graphql` | util | GraphQL/REST edge kit: `ErrorCode` cross-service contract, `Affordance` / `MutationResult` / `Connection` / `SubscriptionPayload`, fallible `br-core-values` wrappers | [README](crates/br-util-graphql/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-nats-fabric` | util | The Project NATS Fabric API: coordinate-only publish/consume/await over the fixed `integration.…` subject grammar, the KV published-language projection, and the Postgres transactional outbox (store + subscribe-driven relay) | [README](crates/br-util-nats-fabric/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-observability` | util | Boot-time observability: structured JSON logging + an always-200 `/livez` liveness route | [README](crates/br-util-observability/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | [README](crates/br-util-scope-declaration/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-identity-domain` | bc | Identity bounded context, pure domain — scope-registration slice (`ScopeRegistry` aggregate, commands, events) | [README](crates/br-identity-domain/README.md) | [CHANGELOG](CHANGELOG.md) |
@@ -56,7 +57,7 @@ under a single git tag (`vX.Y.Z`) consumed by git tag:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v0.11.1" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.0.0" }
 ```
 
 ## Release process
