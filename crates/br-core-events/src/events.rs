@@ -2,30 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct RawEvent {
-    pub aggregate_id: Uuid,
-    pub aggregate_type: String,
-    pub event_type: String,
-    pub payload: serde_json::Value,
-}
-
-impl RawEvent {
-    pub fn new(
-        aggregate_id: Uuid,
-        aggregate_type: impl Into<String>,
-        event_type: impl Into<String>,
-        payload: serde_json::Value,
-    ) -> Self {
-        Self {
-            aggregate_id,
-            aggregate_type: aggregate_type.into(),
-            event_type: event_type.into(),
-            payload,
-        }
-    }
-}
+use crate::metadata::EventMetadata;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -35,7 +12,7 @@ pub struct DomainEvent {
     pub aggregate_type: String,
     pub event_type: String,
     pub payload: serde_json::Value,
-    pub metadata: serde_json::Value,
+    pub metadata: EventMetadata,
     pub occurred_at: DateTime<Utc>,
 }
 
@@ -47,7 +24,7 @@ impl DomainEvent {
         aggregate_type: impl Into<String>,
         event_type: impl Into<String>,
         payload: serde_json::Value,
-        metadata: serde_json::Value,
+        metadata: EventMetadata,
         occurred_at: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -65,31 +42,10 @@ impl DomainEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use br_core_kernel::{Actor, UserId};
 
-    #[test]
-    fn raw_event_new_sets_fields() {
-        let evt = RawEvent::new(
-            Uuid::nil(),
-            "Organization",
-            "OrgCreated",
-            serde_json::json!({"name": "Acme"}),
-        );
-        assert_eq!(evt.aggregate_type, "Organization");
-        assert_eq!(evt.event_type, "OrgCreated");
-        assert_eq!(evt.payload["name"], "Acme");
-    }
-
-    #[test]
-    fn raw_event_clone() {
-        let evt = RawEvent::new(
-            Uuid::nil(),
-            "User",
-            "UserCreated",
-            serde_json::json!({"name": "test"}),
-        );
-        let cloned = evt.clone();
-        assert_eq!(cloned.aggregate_type, evt.aggregate_type);
-        assert_eq!(cloned.event_type, evt.event_type);
+    fn metadata() -> EventMetadata {
+        EventMetadata::new(Actor::Human(UserId::from(Uuid::nil())), Uuid::nil())
     }
 
     #[test]
@@ -100,7 +56,7 @@ mod tests {
             "User",
             "UserCreated",
             serde_json::json!({"email": "a@b.com"}),
-            serde_json::json!({"actor_id": Uuid::nil()}),
+            metadata(),
             Utc::now(),
         );
         assert_eq!(evt.aggregate_type, "User");
@@ -115,7 +71,7 @@ mod tests {
             "User",
             "UserCreated",
             serde_json::json!({"email": "a@b.com"}),
-            serde_json::json!({"actor_id": Uuid::nil()}),
+            metadata(),
             Utc::now(),
         );
         let json = serde_json::to_string(&evt).unwrap();
@@ -126,20 +82,24 @@ mod tests {
 
     #[test]
     fn domain_event_payload_and_metadata_survive_roundtrip() {
+        let meta = EventMetadata::new(
+            Actor::Human(UserId::from(Uuid::from_u128(1))),
+            Uuid::from_u128(2),
+        );
         let evt = DomainEvent::new(
             Uuid::nil(),
             Uuid::nil(),
             "Organization",
             "OrgCreated",
             serde_json::json!({"org_id": "some-uuid", "name": "Acme"}),
-            serde_json::json!({"actor_id": "some-uuid", "correlation_id": "some-uuid"}),
+            meta,
             Utc::now(),
         );
         let json = serde_json::to_string(&evt).unwrap();
         let back: DomainEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back.payload["org_id"], "some-uuid");
         assert_eq!(back.payload["name"], "Acme");
-        assert_eq!(back.metadata["actor_id"], "some-uuid");
-        assert_eq!(back.metadata["correlation_id"], "some-uuid");
+        assert_eq!(back.metadata.actor.id(), Uuid::from_u128(1));
+        assert_eq!(back.metadata.correlation_id, Uuid::from_u128(2));
     }
 }

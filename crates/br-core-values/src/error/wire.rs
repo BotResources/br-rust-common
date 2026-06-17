@@ -38,7 +38,6 @@ impl Serialize for ValueError {
             ValueError::LocalizedDuplicateLocale => {
                 single_code(serializer, "localized_duplicate_locale")
             }
-            ValueError::Unknown { code } => single_code(serializer, code),
         }
     }
 }
@@ -54,6 +53,15 @@ impl<'de> Deserialize<'de> for ValueError {
         deserializer.deserialize_map(ValueErrorVisitor)
     }
 }
+
+const KNOWN_CODES: &[&str] = &[
+    "malformed_code",
+    "unknown_currency",
+    "unknown_country",
+    "localized_empty",
+    "localized_primary_missing",
+    "localized_duplicate_locale",
+];
 
 struct ValueErrorVisitor;
 
@@ -111,7 +119,7 @@ impl<'de> Visitor<'de> for ValueErrorVisitor {
             "localized_empty" => Ok(ValueError::LocalizedEmpty),
             "localized_primary_missing" => Ok(ValueError::LocalizedPrimaryMissing),
             "localized_duplicate_locale" => Ok(ValueError::LocalizedDuplicateLocale),
-            _ => Ok(ValueError::Unknown { code }),
+            other => Err(de::Error::unknown_variant(other, KNOWN_CODES)),
         }
     }
 }

@@ -162,15 +162,11 @@ params — **never UI prose**. The human text and its i18n live at the edge.
 `ValueError` is `#[non_exhaustive]` (match with a wildcard) and (de)serializes
 (internally tagged on `code`) so a rejection reason can travel on the wire.
 
-**Forward-compat on the wire.** `ValueError` travels nested in other envelopes
-(domain errors, affordance reasons). A newer producer crate may emit a `code`
-this (older) crate does not know yet. Rather than fail the deserialization of the
-**whole** enclosing envelope, an unrecognized `code` degrades to
-`ValueError::Unknown { code }` carrying the raw `code` string — the envelope
-still parses, and the original code is preserved verbatim for logging /
-pass-through. Every code this version knows stays strongly typed; only a genuinely
-unknown future code degrades. (`Unknown` is produced **only** on deserialization,
-never by a rejecting constructor here.)
+**A non-canonical `code` fails deserialization.** `ValueError` travels nested in
+other envelopes (domain errors, affordance reasons). Every variant is one of the
+fixed, canonical codes listed above; deserializing a `code` this crate does not
+know is a hard error (`unknown variant`), never a degraded publicly-constructible
+state. A non-canonical wire must not parse — there is no catch-all variant.
 
 ## Tier & dependencies
 

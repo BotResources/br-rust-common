@@ -2,6 +2,7 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::auth_method::AuthMethod;
+use crate::claims::PassportClaims;
 use crate::passport::Passport;
 
 pub struct PassportBuilder {
@@ -66,21 +67,18 @@ impl PassportBuilder {
     }
 
     pub fn build(self) -> Passport {
-        Passport::Human {
-            user_id: self.user_id,
-            is_super_admin: self.is_super_admin,
-            is_active: self.is_active,
-            auth_method: self.auth_method,
-            impersonator: self.impersonator,
-            claims: Value::Object(self.claims),
-        }
+        Passport::human(
+            self.user_id,
+            self.is_super_admin,
+            self.is_active,
+            self.auth_method,
+            self.impersonator,
+            PassportClaims::from_map(self.claims),
+        )
     }
 
     pub fn build_service(self) -> Passport {
-        Passport::Service {
-            service_account_id: self.user_id,
-            claims: Value::Object(self.claims),
-        }
+        Passport::service(self.user_id, PassportClaims::from_map(self.claims))
     }
 }
 
