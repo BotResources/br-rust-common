@@ -97,7 +97,8 @@ fn ack_kind(outcome: MessageOutcome) -> async_nats::jetstream::AckKind {
     match outcome {
         MessageOutcome::Ack => async_nats::jetstream::AckKind::Ack,
         MessageOutcome::Nak(delay) => async_nats::jetstream::AckKind::Nak(delay),
-        _ => async_nats::jetstream::AckKind::Term,
+        MessageOutcome::Term => async_nats::jetstream::AckKind::Term,
+        _ => async_nats::jetstream::AckKind::Nak(None),
     }
 }
 
@@ -109,5 +110,27 @@ async fn apply_outcome(message: &async_nats::jetstream::Message, outcome: Messag
             ?outcome,
             "failed to send ack for handled message; it may be redelivered"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ack_kind;
+    use async_nats::jetstream::AckKind;
+    use br_core_integration::MessageOutcome;
+    use std::time::Duration;
+
+    #[test]
+    fn maps_known_outcomes_to_their_ack_kind() {
+        assert!(matches!(ack_kind(MessageOutcome::Ack), AckKind::Ack));
+        assert!(matches!(
+            ack_kind(MessageOutcome::Nak(None)),
+            AckKind::Nak(None)
+        ));
+        assert!(matches!(
+            ack_kind(MessageOutcome::Nak(Some(Duration::from_secs(2)))),
+            AckKind::Nak(Some(_))
+        ));
+        assert!(matches!(ack_kind(MessageOutcome::Term), AckKind::Term));
     }
 }
