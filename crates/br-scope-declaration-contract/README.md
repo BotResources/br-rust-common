@@ -28,6 +28,7 @@ coordinate types), holds no aggregate, no event payloads, no policy.
 | `VERSION` | `u8` | `1` |
 | `COMMAND_NAME` | `&str` | `"declare"` |
 | `ACCEPTED` / `REJECTED` | `&str` | confirmation fact names |
+| `UNREPRESENTABLE_SERVICE` | `&str` | `"unrepresentable_service"` — service-key sentinel emitted on the `rejected` fact when the declared manifest key is unparsable |
 | `declare_command_coords()` | `fn() -> Result<CommandCoords, CoordError>` | receiver=`identity`, aggregate=`service_scope`, verb=`declare`, v1 |
 | `accepted_event_coords()` / `rejected_event_coords()` | `fn() -> Result<EventCoords, CoordError>` | producer=`identity`, aggregate=`service_scope`, fact=`accepted`/`rejected`, v1 |
 | `command_type()` | `fn() -> String` | `service_scope.declare` |
