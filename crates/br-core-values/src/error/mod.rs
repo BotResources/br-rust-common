@@ -12,6 +12,8 @@ pub enum ValueError {
     UnknownCurrency { value: String },
     #[error("unknown_country")]
     UnknownCountry { value: String },
+    #[error("locale_unknown")]
+    LocaleUnknown { value: String },
     #[error("localized_empty")]
     LocalizedEmpty,
     #[error("localized_primary_missing")]
@@ -44,6 +46,10 @@ mod tests {
         assert_eq!(
             ValueError::UnknownCountry { value: "UK".into() }.to_string(),
             "unknown_country"
+        );
+        assert_eq!(
+            ValueError::LocaleUnknown { value: "xx".into() }.to_string(),
+            "locale_unknown"
         );
         assert_eq!(ValueError::LocalizedEmpty.to_string(), "localized_empty");
         assert_eq!(
@@ -79,6 +85,7 @@ mod tests {
                 value: "RMB".into(),
             },
             ValueError::UnknownCountry { value: "UK".into() },
+            ValueError::LocaleUnknown { value: "xx".into() },
             ValueError::LocalizedEmpty,
             ValueError::LocalizedPrimaryMissing,
             ValueError::LocalizedDuplicateLocale,

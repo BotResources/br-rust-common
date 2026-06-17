@@ -37,6 +37,14 @@ fn golden_unknown_country() {
 }
 
 #[test]
+fn golden_locale_unknown() {
+    assert_golden(
+        ValueError::LocaleUnknown { value: "xx".into() },
+        r#"{"code":"locale_unknown","value":"xx"}"#,
+    );
+}
+
+#[test]
 fn golden_localized_empty() {
     assert_golden(ValueError::LocalizedEmpty, r#"{"code":"localized_empty"}"#);
 }
