@@ -52,6 +52,7 @@ mod tests {
 
     struct EnvGuard {
         prior_new: Option<String>,
+        prior_legacy: Option<String>,
         _lock: MutexGuard<'static, ()>,
     }
 
@@ -60,6 +61,7 @@ mod tests {
             let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             Self {
                 prior_new: std::env::var("TRUSTED_NETWORK_HOSTS").ok(),
+                prior_legacy: std::env::var("TRUSTED_HOSTS").ok(),
                 _lock: lock,
             }
         }
@@ -71,6 +73,10 @@ mod tests {
                 match &self.prior_new {
                     Some(v) => std::env::set_var("TRUSTED_NETWORK_HOSTS", v),
                     None => std::env::remove_var("TRUSTED_NETWORK_HOSTS"),
+                }
+                match &self.prior_legacy {
+                    Some(v) => std::env::set_var("TRUSTED_HOSTS", v),
+                    None => std::env::remove_var("TRUSTED_HOSTS"),
                 }
             }
         }
@@ -103,10 +109,6 @@ mod tests {
             std::env::set_var("TRUSTED_HOSTS", "legacy-db");
         }
         assert!(resolve_trusted_network_hosts().is_empty());
-
-        unsafe {
-            std::env::remove_var("TRUSTED_HOSTS");
-        }
     }
 
     #[test]

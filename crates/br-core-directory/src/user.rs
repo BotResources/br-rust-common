@@ -10,7 +10,9 @@ pub const PUBLISHED_USER_RESERVED_KEYS: [&str; 3] = ["email", "first_name", "las
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct PublishedUser {
     pub email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_name: Option<String>,
     #[serde(flatten)]
     extensions: BTreeMap<String, Value>,
@@ -118,6 +120,23 @@ mod tests {
         let user: PublishedUser = serde_json::from_value(wire).unwrap();
         assert!(user.first_name.is_none());
         assert!(user.last_name.is_none());
+    }
+
+    #[test]
+    fn absent_names_round_trip_without_explicit_null() {
+        let wire = serde_json::json!({ "email": "x@y" });
+        let user: PublishedUser = serde_json::from_value(wire.clone()).unwrap();
+        let back = serde_json::to_value(&user).unwrap();
+        assert_eq!(back, wire);
+        assert!(back.get("first_name").is_none());
+        assert!(back.get("last_name").is_none());
+    }
+
+    #[test]
+    fn deser_fails_closed_on_first_name_typed_as_non_string() {
+        let wire = serde_json::json!({ "email": "x", "first_name": 123 });
+        let result: Result<PublishedUser, _> = serde_json::from_value(wire);
+        assert!(result.is_err());
     }
 
     #[test]

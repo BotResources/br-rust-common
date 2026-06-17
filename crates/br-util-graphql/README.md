@@ -89,11 +89,15 @@ resolver / handler / endpoint becomes uniform.
   an **opaque String** the server mints and the client echoes via `after`; this
   crate does not prescribe its encoding. `Connection::forward(edges,
   has_next_page)` builds a forward page and derives the boundary cursors.
-- **`SubscriptionPayload<E, T>`** — the collaborative-pure push: the **event**
+- **`SubscriptionPayload<N, E, T>`** — the collaborative-pure push: the **event**
   that happened (the near-unfiltered domain-event union), the **fresh entity** it
   produced, and the **recalculated affordances** for *this* subscriber — so a
-  client folds it into state without a refetch. Generic over the event union `E`
-  and the entity `T`, both `async_graphql::OutputType`.
+  client folds it into state without a refetch. Generic over a `PayloadName` `N`
+  and the event union `E` and entity `T`, both `async_graphql::OutputType`. `N`
+  supplies the wire type name via `PayloadName::NAME`: that string **must be a
+  valid GraphQL identifier and unique per `(event-union, entity)` pairing** — a
+  malformed or duplicated name fails schema composition at boot (fail-loud), so
+  keeping each `PayloadName::NAME` distinct is the caller's contract.
 
 ## Fallible value-object wrappers (`values`)
 

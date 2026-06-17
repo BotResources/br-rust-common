@@ -83,6 +83,13 @@ release; they remain reachable through the historical per-crate tags
 
 ### Changed
 
+- **`br-core-directory`: `PublishedUser` omits absent names on re-serialization.**
+  `first_name` / `last_name` now carry `skip_serializing_if = "Option::is_none"`,
+  so a wire with a name absent round-trips identically (`{"email":"x"}` →
+  `{"email":"x"}`) instead of re-emitting explicit `first_name: null` /
+  `last_name: null`. `email` stays always present. A wire-shape refinement on the
+  read-and-written `KV_PUBLISHED_LANGUAGE` DTO; absent and explicit-null remain
+  equivalent on deserialization.
 - **BREAKING — `br-util-graphql`: `SubscriptionPayload` now requires a
   caller-supplied type name.** The signature is `SubscriptionPayload<N, E, T>`
   where `N: PayloadName` carries `const NAME: &'static str`. Previously the
