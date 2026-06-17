@@ -167,11 +167,21 @@ release; they remain reachable through the historical per-crate tags
   reconcile orphan-deleted every `known_*` row. `reconcile()` / `watch()` now
   **fail closed** with `DirectoryError::ManifestAbsent` and leave the projection
   untouched — a degraded/unready condition, never a delete-all.
-- **`br-util-directory`: `known_user_group.user_id` now has a foreign key to
-  `known_users` (`ON DELETE CASCADE`).** Membership rows are inserted only for
-  members already present in `known_users`, so a scoped roster (the `filter_users`
-  seam) keeps referential integrity without breaking group projection, and a
-  user deletion deterministically cascades its memberships.
+- **`br-util-directory`: membership projection now converges regardless of
+  user-vs-group projection order.** `known_user_group.user_id` carries **no**
+  foreign key, and the group sink records **every** `(group_id, user_id)` pair
+  straight from the group's `member_ids` (delete-then-insert per group), dropping
+  the prior member-existence guard. The user, group and service-account watches
+  are independent streams with no inter-entity re-trigger, so a group could
+  project before one of its members' user entry (watch reordering, or a member
+  published after the group); the FK + existence guard silently skipped that
+  membership row and never re-projected the group when the user later arrived, so
+  `is_member` stayed wrong. Under this read-only roster a membership referencing a
+  not-(yet/ever)-projected user is **legitimate**, not corruption — `is_member` is
+  correct from the group projection, while `resolve_user` returns `None` for a
+  filtered/not-yet-projected user (the expected scoped behavior). Group deletion
+  still CASCADEs the junction via the retained `group_id` FK (#69's "FK **or**
+  deterministic orphan cleanup").
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`
   and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
   `LICENSE` file and crate manifests were already correct).

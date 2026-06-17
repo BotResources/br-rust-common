@@ -13,7 +13,7 @@ CREATE TABLE known_groups (
 
 CREATE TABLE known_user_group (
     group_id uuid NOT NULL REFERENCES known_groups (group_id) ON DELETE CASCADE,
-    user_id  uuid NOT NULL REFERENCES known_users (user_id) ON DELETE CASCADE,
+    user_id  uuid NOT NULL,
     PRIMARY KEY (group_id, user_id)
 );
 

@@ -43,8 +43,7 @@ impl ProjectionSink<PublishedGroup> for GroupSink {
 
         for row in member_rows(group_id, value) {
             sqlx::query(
-                "INSERT INTO known_user_group (group_id, user_id) \
-                 SELECT $1, $2 WHERE EXISTS (SELECT 1 FROM known_users WHERE user_id = $2) \
+                "INSERT INTO known_user_group (group_id, user_id) VALUES ($1, $2) \
                  ON CONFLICT (group_id, user_id) DO NOTHING",
             )
             .bind(row.group_id)

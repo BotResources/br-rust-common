@@ -165,6 +165,19 @@ mod tests {
     }
 
     #[test]
+    fn membership_converges_when_the_group_projects_before_its_member_user() {
+        let mut snap =
+            DirectorySnapshot::new(&meta(&[PublishedEntity::Users, PublishedEntity::Groups]));
+        snap.set_members(id(10), [id(1)]);
+        assert!(snap.is_member(id(10), id(1)));
+        assert!(snap.resolve_user(id(1)).is_none());
+
+        snap.upsert_user(ada());
+        assert!(snap.is_member(id(10), id(1)));
+        assert!(snap.resolve_user(id(1)).is_some());
+    }
+
+    #[test]
     fn set_members_replaces_the_prior_membership_set_for_the_group() {
         let mut snap =
             DirectorySnapshot::new(&meta(&[PublishedEntity::Users, PublishedEntity::Groups]));

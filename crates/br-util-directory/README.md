@@ -84,17 +84,32 @@ trait DirectorySource {
     Otherwise run, per consumed entity, the fabric consumer's `bootstrap()`
     (scan-and-project + **orphan-delete within that prefix** against the sink's
     own `known_keys`). Returns the `DirectoryMeta` it read.
-  - `watch()` — runs the per-entity fabric watches concurrently; each live KV
-    update projects or retracts through the entity's sink.
+  - `watch()` — reads `identity/_meta` **once** at start (fail-closed with
+    `DirectoryError::ManifestAbsent` if absent), then runs the per-entity fabric
+    watches concurrently; each live KV update projects or retracts through the
+    entity's sink. The manifest is **not** hot-reloaded: activating a new entity
+    (a manifest republish that newly declares groups or service accounts)
+    requires a consumer restart — intentionally not done live.
 - **Denormalized-KV → normalized-PG.** The group sink recomposes the
   denormalized `PublishedGroup { name, member_ids }` into `known_groups` plus one
-  `known_user_group` row per member, in one transaction. Membership rows are
-  inserted only for members already present in `known_users` (FK-safe under a
-  scoped roster — see #59).
+  `known_user_group` row per member, in one transaction (delete the group's old
+  junction rows, insert one row per `member_id`). Membership rows are recorded
+  for **every** `member_id`, independent of whether that user is currently in
+  `known_users` — `known_user_group.user_id` carries no FK, so a group projected
+  before (or without) one of its members still converges: the membership is
+  correct as soon as the group projects, and `resolve_user` returns the user once
+  it arrives. A member with no `known_users` row is legitimate under a scoped
+  roster, not an orphan (see #69 — group deletion CASCADEs the junction via the
+  `group_id` FK).
 - **Typed readers carry the id** over `DirectorySnapshot`: `resolve_user`,
   `user_extensions`, `is_member`, `group_name`, `resolve_service_account`.
-  **Auto-degrade**: a snapshot built from a manifest that does not declare an
-  entity returns `None` / `false` / empty from that entity's readers.
+  `DirectorySnapshot` / `KnownUser` are an **in-memory** projection the
+  **consuming service** populates and owns (the kit ships no PG-backed reader over
+  the `known_*` tables here — that mirror lives on the consumer side); the
+  `extensions` field on `KnownUser` is the consumer-extracted payload selected by
+  `extract_user_extensions`. **Auto-degrade**: a snapshot built from a manifest
+  that does not declare an entity returns `None` / `false` / empty from that
+  entity's readers.
 
 ### Missing manifest is DEGRADED, never a purge (#69)
 
@@ -129,8 +144,10 @@ producer manifest**:
   scanned, no group tables are touched.
 - `UsersAndGroups` (**default**) — users + groups.
 
-Service accounts are projected when the **manifest** declares them, orthogonal
-to the users/groups scope.
+`UsersOnly` bounds the dependence on the **group** tables: with no group-key
+handling there is no scan of, and no crash on the absence of, `known_groups` /
+`known_user_group`. Service accounts are governed by the producer manifest
+(projected when it declares them), orthogonal to the users/groups scope.
 
 ## Tenancy-agnostic (hard rule)
 
@@ -144,7 +161,9 @@ reads/writes the core contract and the opaque `extensions` bag generically;
 Unit tests cover the **pure logic**, no I/O: `member_rows` (recompose),
 `DirectoryConsumerConfig` (default keep-nothing / keep-all, custom
 extract / filter), `DirectorySnapshot` (resolve / extensions / membership /
-service accounts, **auto-degrade**), key rendering. The KV/PG round-trip —
+service accounts, **auto-degrade**, and **order-independent convergence**: a
+group's membership is correct even when set before the member user is projected),
+key rendering. The KV/PG round-trip —
 real-NATS + real-PG orphan-delete, extension survival, pass→fail orphan, the
 users-only scope, the absent-manifest fail-closed — is the **conformance-directory**
 battery in `br-e2e-harness` (a post-tag follow-up there, out of scope for this
@@ -158,7 +177,7 @@ crate).
 | `DirectorySource` is the only publisher seam | The project owns its domain→`Published*` mapping; the kit owns the reconcile mechanism. |
 | The user sink re-upserts on every projected entry | An idempotent `ON CONFLICT … DO UPDATE` over the KV scan is cheaper than re-reading the local row to diff; only deletes need the observed-vs-desired set. |
 | Group upsert replaces its junction rows in one transaction | A membership change is atomic and idempotent under redelivery. |
-| Membership rows are FK-backed and member-existence-guarded | `known_user_group.user_id` references `known_users` `ON DELETE CASCADE`; under a scoped roster a group may list a filtered-out member, so the insert is guarded by an existence check — referential integrity without breaking the scoped projection. |
+| Memberships are group-derived, `user_id` has no FK | A membership is recomposed straight from the group's `member_ids`, independent of whether that user has a `known_users` row. The user, group and service-account watches are independent streams with no inter-entity re-trigger, so a group can project before one of its members' user entry (or a member may be filtered out / never published under a scoped roster). A FK + member-existence guard silently dropped such a row and never re-projected the group when the user later arrived (`is_member` stayed wrong). So `known_user_group.user_id` carries no FK; the group reconcile/watch replaces a group's rows from its `member_ids` (delete-then-insert) — order-independent convergence. A member with no `known_users` row is legitimate, not an orphan; `is_member` is correct regardless, while `resolve_user` returns `None` for a filtered/not-yet-projected user (the expected scoped behavior). |
 | Manifest absent = fail-closed, not empty roster | Treating an absent manifest as empty orphan-deleted every local row (a PII purge) when a consumer merely booted ahead of identity. Fail-closed leaves the projection intact. |
 | Readers resolve over `DirectorySnapshot`, a pure projection | Resolution + auto-degrade stay unit-testable with no I/O; the PG-backed readers mirror the semantics, proven in the e2e conformance battery. |
 | `delete_group` relies on `ON DELETE CASCADE` | Purges the junction via the `known_user_group` group FK — the contract relies on it. |

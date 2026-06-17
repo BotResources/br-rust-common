@@ -13,7 +13,7 @@ pub enum ManifestState {
 }
 
 pub async fn read_manifest(fabric: &Fabric) -> Result<ManifestState, DirectoryError> {
-    let prefix = KvPrefix::new(META_KEY).expect("frozen meta key is a valid kv prefix");
+    let prefix = KvPrefix::new(META_KEY).expect("frozen identity/_meta key is a valid kv prefix");
     let sink = CaptureSink::default();
     let captured = sink.clone();
     let consumer =
@@ -44,8 +44,10 @@ impl CaptureSink {
 impl ProjectionSink<DirectoryMeta> for CaptureSink {
     type Error = DirectoryError;
 
-    async fn project(&self, _key: &KvKey, value: &DirectoryMeta) -> Result<(), Self::Error> {
-        *self.manifest.lock().expect("manifest mutex poisoned") = Some(value.clone());
+    async fn project(&self, key: &KvKey, value: &DirectoryMeta) -> Result<(), Self::Error> {
+        if key.as_str() == META_KEY {
+            *self.manifest.lock().expect("manifest mutex poisoned") = Some(value.clone());
+        }
         Ok(())
     }
 
