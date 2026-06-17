@@ -4,7 +4,7 @@ use br_core_integration::{EventMetadata, IntegrationCommand, IntegrationEvent, M
 use br_core_kernel::{Actor, UserId};
 use br_util_nats_fabric::{
     Aggregate, Bc, CommandCoords, EventCoords, Fabric, FabricError, INTEGRATION_CMD,
-    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, PastFact, Verb,
+    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, PastFact, PublishedLanguagePublisher, Verb,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -193,8 +193,8 @@ async fn published_language_binds_existing_bucket_and_fails_loud_when_absent() {
     let _ = js.delete_key_value(KV_PUBLISHED_LANGUAGE).await;
 
     let fabric = fabric().await;
-    let err = fabric.published_language().await.unwrap_err();
-    assert!(matches!(err, FabricError::Kv(_)));
+    let absent = PublishedLanguagePublisher::<Payload>::open(&fabric).await;
+    assert!(matches!(absent, Err(FabricError::Kv(_))));
 
     js.create_key_value(async_nats::jetstream::kv::Config {
         bucket: KV_PUBLISHED_LANGUAGE.to_string(),
@@ -202,7 +202,11 @@ async fn published_language_binds_existing_bucket_and_fails_loud_when_absent() {
     })
     .await
     .expect("create bucket");
-    assert!(fabric.published_language().await.is_ok());
+    assert!(
+        PublishedLanguagePublisher::<Payload>::open(&fabric)
+            .await
+            .is_ok()
+    );
 
     let _ = js.delete_key_value(KV_PUBLISHED_LANGUAGE).await;
 }

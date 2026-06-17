@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::error::FabricError;
+use crate::fabric::Fabric;
 use crate::kv::codec::{decode, encode};
 use crate::kv::key::{KvKey, KvPrefix};
 use crate::kv::reconcile::{KvOp, reconcile};
@@ -20,7 +21,11 @@ impl<V> PublishedLanguagePublisher<V>
 where
     V: Serialize + DeserializeOwned + PartialEq + Clone,
 {
-    pub fn new(kv: Store) -> Self {
+    pub async fn open(fabric: &Fabric) -> Result<Self, FabricError> {
+        Ok(Self::bind(fabric.published_language().await?))
+    }
+
+    pub(crate) fn bind(kv: Store) -> Self {
         Self {
             kv,
             _value: PhantomData,

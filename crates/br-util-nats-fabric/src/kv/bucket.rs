@@ -6,7 +6,7 @@ use crate::fabric::Fabric;
 pub const KV_PUBLISHED_LANGUAGE: &str = "PUBLISHED_LANGUAGE";
 
 impl Fabric {
-    pub async fn published_language(&self) -> Result<Store, FabricError> {
+    pub(crate) async fn published_language(&self) -> Result<Store, FabricError> {
         self.context()
             .get_key_value(KV_PUBLISHED_LANGUAGE)
             .await

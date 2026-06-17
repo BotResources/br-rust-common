@@ -98,12 +98,27 @@ typed destination at publish time**, and applies the pure retry/transition state
 machine from `br-core-integration`; `RelayHealth` degrades on a structural
 (no-stream) failure. The table is assumed to exist — the relay never creates it.
 
+`br_util_nats_fabric::OutboxRecord` (typed `EventCoords` destination) is the
+preferred type. The legacy `br_core_integration::OutboxRecord` (raw
+`subject: String`) is the old path, removed later in the v1.0.0
+integration-reduction step.
+
 ## Surface 2 — Published Language over KV
 
-`Fabric::published_language()` binds the fixed bucket `PUBLISHED_LANGUAGE` and
-fails loud if it is absent. This crate ships **generic mechanics only**; the
-*policy* — which prefixes, which entries to copy, what to persist — is a set of
-**caller-owned seams**.
+`PublishedLanguagePublisher::open(&fabric)` and
+`PublishedLanguageConsumer::open(&fabric, prefixes, copy_filter, sink)` are the
+only ways in. Each binds the fixed bucket `PUBLISHED_LANGUAGE` **internally** and
+fails loud if it is absent. The raw `async_nats` KV `Store` is never handed to a
+caller — there is no untyped `store.put(key, …)` / `store.get(key)` escape
+hatch; every write and read goes through a validated `KvKey` / `KvPrefix`. This
+crate ships **generic mechanics only**; the *policy* — which prefixes, which
+entries to copy, what to persist — is a set of **caller-owned seams**.
+
+> `br-util-directory` will be re-expressed on top of this crate's
+> Published-Language KV mechanics in the same v1.0.0 train; its own
+> `reconcile_entries` / `KvOp` reconcile engine is destined to disappear. The
+> `PublishedLanguagePublisher` / `PublishedLanguageConsumer` + reconcile here are
+> the canonical generic mechanism.
 
 ### Keys
 
@@ -154,7 +169,7 @@ transformation DSL — filtering and mapping are the caller's.
 ## Dependency
 
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v0.11.1" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v0.11.1", version = "0.11.1" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v0.11.1", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v0.11.1", version = "0.11.1", features = ["outbox"] }
 ```

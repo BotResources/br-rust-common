@@ -5,6 +5,8 @@ use async_nats::jetstream::kv::{Operation, Store};
 use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 
+use crate::error::FabricError;
+use crate::fabric::Fabric;
 use crate::kv::codec::decode;
 use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
 use crate::kv::key::{KvKey, KvPrefix};
@@ -25,7 +27,21 @@ where
     F: Fn(&V) -> bool,
     S: ProjectionSink<V>,
 {
-    pub fn new(kv: Store, prefixes: Vec<KvPrefix>, copy_filter: F, sink: S) -> Self {
+    pub async fn open(
+        fabric: &Fabric,
+        prefixes: Vec<KvPrefix>,
+        copy_filter: F,
+        sink: S,
+    ) -> Result<Self, FabricError> {
+        Ok(Self::bind(
+            fabric.published_language().await?,
+            prefixes,
+            copy_filter,
+            sink,
+        ))
+    }
+
+    pub(crate) fn bind(kv: Store, prefixes: Vec<KvPrefix>, copy_filter: F, sink: S) -> Self {
         Self {
             kv,
             prefixes,

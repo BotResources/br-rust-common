@@ -33,7 +33,10 @@ release; they remain reachable through the historical per-crate tags
   at publish time, and generic Published-Language publisher (semantic upsert /
   retract / reconcile / drift-repair) and consumer (bootstrap scan + watch with
   consumer-selected prefixes, a copy-filter `Fn(&V) -> bool` that orphan-deletes
-  pass→fail entries, and a caller-owned lossless projection sink) mechanics.
+  pass→fail entries, and a caller-owned lossless projection sink) mechanics, both
+  constructed via `open(&fabric)` — the raw `async_nats` KV `Store` is never
+  handed to a caller, so every key path goes through a validated `KvKey` /
+  `KvPrefix`.
   Builds on `br-core-integration` (envelopes, the pure outbox state machine);
   the old `br-core-integration` transport APIs remain available until consumers
   migrate.
