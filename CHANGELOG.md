@@ -299,6 +299,15 @@ release; they remain reachable through the historical per-crate tags
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`
   and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
   `LICENSE` file and crate manifests were already correct).
+- **`br-util-nats-fabric`: the outbox relay re-drains immediately after a
+  saturated batch that made forward progress, instead of parking until the next
+  `pg_notify`.** When a drain filled its `max_messages` budget and at least one
+  publish succeeded, no retry was owed, so the relay slept until the next insert
+  — committed integration events left in the backlog could starve indefinitely.
+  A saturated batch that published at least one message now schedules an
+  immediate re-drain (still racing the shutdown signal in the select loop); a
+  saturated batch with no forward progress (all-structural / all-transient)
+  keeps its existing backoff or parks, so a down dependency is not hot-looped.
 
 ## [0.11.1] — 2026-06-15
 

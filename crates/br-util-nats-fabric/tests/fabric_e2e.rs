@@ -101,22 +101,34 @@ async fn command_renders_grammar_and_a_matching_durable_consumes_it() {
         .await
         .expect("publish command");
 
-    let received = tokio::time::timeout(Duration::from_secs(5), async {
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel::<String>();
+    let seen_tx = std::sync::Arc::new(std::sync::Mutex::new(Some(seen_tx)));
+    let consumer = tokio::spawn(async move {
         fabric
             .run_commands::<Payload, _, _, _>(
                 &coords,
                 &durable,
-                |delivery| async move {
-                    assert_eq!(delivery.envelope.payload.label, "hello");
-                    MessageOutcome::Ack
+                move |delivery| {
+                    let seen_tx = seen_tx.clone();
+                    async move {
+                        if let Some(tx) = seen_tx.lock().unwrap().take() {
+                            let _ = tx.send(delivery.envelope.payload.label.clone());
+                        }
+                        MessageOutcome::Ack
+                    }
                 },
                 |_| {},
             )
             .await
-    })
-    .await;
-    assert!(received.is_err() || received.unwrap().is_ok());
+    });
 
+    let label = tokio::time::timeout(Duration::from_secs(5), seen_rx)
+        .await
+        .expect("durable consumed the command within the deadline")
+        .expect("handler signalled the payload");
+    assert_eq!(label, "hello");
+
+    consumer.abort();
     let _ = js.delete_stream(INTEGRATION_CMD).await;
 }
 
