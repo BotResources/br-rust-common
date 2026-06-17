@@ -155,12 +155,6 @@ jobs:
           fi
           for toml in crates/*/Cargo.toml; do
             crate=$(basename "$(dirname "$toml")")
-            case "$crate" in
-              br-core-integration|br-identity-app|br-util-scope-declaration)
-                echo "::warning::skipping semver-checks for ${crate}: async-nats 0.48 fails to compile under time 0.3.48 (E0119); fresh resolution ignores Cargo.lock (cargo-semver-checks#167). Remove when async-nats>=0.50 or time>=0.3.49."
-                continue
-                ;;
-            esac
             if ! git cat-file -e "${baseline}:crates/${crate}/Cargo.toml" 2>/dev/null; then
               echo "::notice::${crate} did not exist at ${baseline}, skipping semver-checks (new crate)"
               continue
