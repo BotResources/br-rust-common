@@ -31,6 +31,12 @@ impl Serialize for ValueError {
                 m.serialize_entry("value", value)?;
                 m.end()
             }
+            ValueError::LocaleUnknown { value } => {
+                let mut m = serializer.serialize_map(Some(2))?;
+                m.serialize_entry("code", "locale_unknown")?;
+                m.serialize_entry("value", value)?;
+                m.end()
+            }
             ValueError::LocalizedEmpty => single_code(serializer, "localized_empty"),
             ValueError::LocalizedPrimaryMissing => {
                 single_code(serializer, "localized_primary_missing")
@@ -58,6 +64,7 @@ const KNOWN_CODES: &[&str] = &[
     "malformed_code",
     "unknown_currency",
     "unknown_country",
+    "locale_unknown",
     "localized_empty",
     "localized_primary_missing",
     "localized_duplicate_locale",
@@ -114,6 +121,9 @@ impl<'de> Visitor<'de> for ValueErrorVisitor {
                 value: value.ok_or_else(|| de::Error::missing_field("value"))?,
             }),
             "unknown_country" => Ok(ValueError::UnknownCountry {
+                value: value.ok_or_else(|| de::Error::missing_field("value"))?,
+            }),
+            "locale_unknown" => Ok(ValueError::LocaleUnknown {
                 value: value.ok_or_else(|| de::Error::missing_field("value"))?,
             }),
             "localized_empty" => Ok(ValueError::LocalizedEmpty),

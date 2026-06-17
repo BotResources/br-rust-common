@@ -9,6 +9,6 @@ pub use iso::country_codes::COUNTRY_CODES;
 pub use iso::currency_codes::CURRENCY_CODES;
 pub use iso::{CountryCode, Currency, Money};
 pub use localized::{
-    Html, Localized, LocalizedContent, LocalizedEntry, LocalizedHtml, LocalizedMd, LocalizedString,
-    Markdown, PlainText, TextFormat,
+    Html, LocaleCodec, Localized, LocalizedContent, LocalizedEntry, LocalizedHtml, LocalizedMd,
+    LocalizedString, Markdown, PlainText, TextFormat,
 };

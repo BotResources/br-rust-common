@@ -121,6 +121,32 @@ fn locale_is_lowercase_conformant() {
 
 The feature is **off by default** so the helper never bloats the prod surface.
 
+### The locale wire-codec — `LocaleCodec`
+
+`LocaleCodec` is the **featureless** locale↔wire codec a product's `Locale` enum
+implements to map to and from its stable string form:
+
+```rust,ignore
+pub trait LocaleCodec: Sized {
+    fn from_wire(s: &str) -> Option<Self>;
+    fn as_wire(&self) -> &str;
+    fn parse_wire(s: &str) -> Result<Self, ValueError>; // default: from_wire().ok_or(LocaleUnknown)
+}
+```
+
+It lives here, next to `Localized<F, L>`, because **the locale codec is a value
+concern, not a transport concern** — there is nothing GraphQL or HTTP about
+mapping `Locale::Fr ↔ "fr"`. A **serde-only `contract-*` crate** (the published
+language that crosses BC boundaries over NATS) can therefore
+`impl LocaleCodec for Locale` at **~zero cost** — no `async-graphql`, no `axum`,
+no edge stack dragged into the most-stable layer. `parse_wire` returns this
+crate's own `ValueError::LocaleUnknown { value }` (code `locale_unknown`),
+carrying the offending input.
+
+The GraphQL edge re-exports this trait as `br_util_graphql::GqlLocale` and binds
+its `GqlLocalized::from_localized` on it, so the **same** codec serves the serde
+side and the GraphQL edge — one canonical implementation, no per-service mapper.
+
 `LocalizedContent<L>` wraps the inner body and adds a `format` discriminator:
 
 ```json
@@ -156,8 +182,9 @@ ValueError>`); deserialization re-runs the constructor and fails closed.
 
 Every constructor returns this crate's own `ValueError`. Per the
 codes-not-language rule its `Display` strings are **stable codes**
-(`malformed_code`, `unknown_currency`, `unknown_country`, `localized_empty`,
-`localized_primary_missing`, `localized_duplicate_locale`) carrying structured
+(`malformed_code`, `unknown_currency`, `unknown_country`, `locale_unknown`,
+`localized_empty`, `localized_primary_missing`, `localized_duplicate_locale`)
+carrying structured
 params — **never UI prose**. The human text and its i18n live at the edge.
 `ValueError` is `#[non_exhaustive]` (match with a wildcard) and (de)serializes
 (internally tagged on `code`) so a rejection reason can travel on the wire.

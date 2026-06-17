@@ -1,8 +1,10 @@
+mod codec;
 mod content;
 mod entry;
 mod format;
 mod value;
 
+pub use codec::LocaleCodec;
 pub use content::LocalizedContent;
 pub use entry::LocalizedEntry;
 pub use format::{Html, Markdown, PlainText, TextFormat};

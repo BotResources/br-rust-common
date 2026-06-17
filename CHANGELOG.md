@@ -94,6 +94,15 @@ release; they remain reachable through the historical per-crate tags
   invalid manifest key produces a typed rejection identity instead of an
   unwrap-or-default placeholder.
 
+- **`br-core-values`: new `LocaleCodec` trait — the featureless locale↔wire
+  codec.** `LocaleCodec { from_wire(&str) -> Option<Self> / as_wire(&self) ->
+  &str / parse_wire(&str) -> Result<Self, ValueError> }` sits next to
+  `Localized<F, L>` in the pure value crate (no `async-graphql`, no `axum`), so a
+  serde-only `contract-*` crate can `impl LocaleCodec for Locale` at ~zero cost —
+  the locale codec is a value concern, not a transport one, and no longer drags
+  the GraphQL/HTTP edge stack into the published-language layer. `parse_wire`
+  returns the new `ValueError::LocaleUnknown { value }` (code `locale_unknown`).
+
 ### Changed
 
 - **`br-core-directory`: `PublishedUser` omits absent names on re-serialization.**
@@ -103,6 +112,16 @@ release; they remain reachable through the historical per-crate tags
   `last_name: null`. `email` stays always present. A wire-shape refinement on the
   read-and-written `KV_PUBLISHED_LANGUAGE` DTO; absent and explicit-null remain
   equivalent on deserialization.
+- **BREAKING — `br-util-graphql`: the locale wire-codec is pushed down to
+  `br-core-values`.** `GqlLocale` is now a re-export of
+  `br_core_values::LocaleCodec` (it no longer defines its own
+  `from_wire`/`as_wire`/`parse_wire`); `GqlLocalizedInput::into_localized` and
+  `GqlLocalized::from_localized` are re-bound on the **core** `LocaleCodec`
+  instead of the former local `GqlLocale` trait. A locale type now implements the
+  codec without depending on `br-util-graphql` (so without `async-graphql` /
+  `axum`); the edge keeps mapping the core's `locale_unknown` to the
+  `LOCALE_UNKNOWN` reason code via `GqlValueError`. Existing `impl GqlLocale for
+  Locale` blocks compile unchanged (the trait is the same item under a new home).
 - **BREAKING — `br-util-graphql`: `SubscriptionPayload` now requires a
   caller-supplied type name.** The signature is `SubscriptionPayload<N, E, T>`
   where `N: PayloadName` carries `const NAME: &'static str`. Previously the
