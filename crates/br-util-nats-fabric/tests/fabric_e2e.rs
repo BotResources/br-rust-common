@@ -302,9 +302,19 @@ async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
     let base = isolated_key("meta");
     let key = KvKey::new(base.clone()).unwrap();
     let sibling = KvKey::new(format!("{base}data")).unwrap();
+    let base_value = Payload {
+        label: "meta".to_string(),
+    };
     let sibling_value = Payload {
         label: "sibling".to_string(),
     };
+    store
+        .put(
+            key.as_str(),
+            serde_json::to_vec(&base_value).unwrap().into(),
+        )
+        .await
+        .expect("put base");
     store
         .put(
             sibling.as_str(),
@@ -316,5 +326,9 @@ async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
     let reader = PublishedLanguageReader::<Payload>::open(&fabric)
         .await
         .expect("open reader");
-    assert_eq!(reader.get(&key).await.expect("get"), None);
+    assert_eq!(reader.get(&key).await.expect("get"), Some(base_value));
+    assert_eq!(
+        reader.get(&sibling).await.expect("get"),
+        Some(sibling_value)
+    );
 }

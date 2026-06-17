@@ -174,6 +174,8 @@ directory manifest `identity/_meta`) rather than a prefix scan. Semantics:
   sharing a prefix (`identity/_metadata`) is never matched;
 - **fail-closed decode** — an undecodable value is an explicit
   `FabricError::Decode` naming the key, **never** a silent `None`;
+- **store-access failure surfaces** — a broker/KV outage during the read is an
+  explicit `FabricError::Kv`, never collapsed to `Ok(None)`;
 - **`Ok(None)` only for a genuinely absent key**;
 - **bind-existing** — the fixed `PUBLISHED_LANGUAGE` bucket is bound internally,
   failing loud if absent; no provisioning.
