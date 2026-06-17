@@ -2,8 +2,28 @@
 
 One boot-time observability setup for every BotResources process: structured
 JSON logging, an always-200 `/livez` liveness route, and an anonymized
-Prometheus `/metrics` endpoint. Thin technical wrapper (tier `util`); it enforces
-no domain policy.
+Prometheus `/metrics` endpoint. Tier `util`; it enforces no domain policy.
+
+## A BR platform convention, not a neutral utility
+
+This crate is **opinionated by design**: it is the BotResources house observability
+stack — Axum + `tracing`-JSON + Prometheus + an unconditional `/livez` + universal
+process/HTTP collectors — packaged so every BR process boots the *same* shape.
+It is **not** a vendor-neutral abstraction and does not try to be: it bakes in the
+JSON log schema, the liveness-vs-readiness split, the EU/GDPR label-anonymization
+rule, and the `metrics` + `metrics-exporter-prometheus` backend as deliberate
+platform choices. Adopt it to inherit the convention wholesale; if a service needs
+a fundamentally different observability backend, it wires that itself rather than
+bending this crate.
+
+**`MetricsHandle::prometheus() -> &PrometheusHandle` is an intentional part of the
+public contract**, not a leak. Because the chosen backend *is* the convention,
+exposing the underlying `PrometheusHandle` lets a service reach the recorder
+directly when it needs to (custom rendering, additional bucket configuration via
+`set_buckets_for_metric`, recorder upkeep) without this crate having to proxy every
+`metrics-exporter-prometheus` capability. It ties the public surface to that crate
+on purpose — a backend swap is a breaking change here by design, consistent with
+the convention this crate exists to enforce.
 
 ## What's inside
 

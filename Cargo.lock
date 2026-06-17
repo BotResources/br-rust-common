@@ -521,13 +521,10 @@ dependencies = [
 name = "br-util-postgres"
 version = "0.11.1"
 dependencies = [
- "br-core-auth",
  "br-test-support",
- "serde_json",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
  "url",
  "uuid",
 ]

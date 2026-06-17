@@ -11,6 +11,47 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING — `br-util-postgres`: removed `set_rls_context`.** The exact shape
+  of the `app.*` RLS session variables (which fields, which names) is
+  project-specific — it depends on a service's Passport claims and its policy
+  model — so it does not belong in the shared lib. Each service now injects its
+  own transaction-local RLS context with `set_config(..., true)`; this crate
+  keeps the pool/TLS/role/grant wiring underneath. `br-core-auth` and `tracing`
+  are no longer dependencies of `br-util-postgres`.
+- **BREAKING — `br-util-postgres`: removed the deprecated `TRUSTED_HOSTS`
+  environment-variable fallback.** `resolve_trusted_network_hosts` now reads
+  **only** `TRUSTED_NETWORK_HOSTS`; `TRUSTED_HOSTS` (deprecated since 0.6.0) is
+  no longer honored and no longer warns. Services still setting the legacy name
+  must rename it.
+
+### Changed
+
+- **BREAKING — `br-util-graphql`: `SubscriptionPayload` now requires a
+  caller-supplied type name.** The signature is `SubscriptionPayload<N, E, T>`
+  where `N: PayloadName` carries `const NAME: &'static str`. Previously the
+  GraphQL type name was derived from the entity `T` alone, so the same entity
+  paired with two different event unions silently produced the same SDL type
+  name and collided. The name is now explicit and per-pairing, so a collision is
+  unrepresentable. `PayloadName` is exported. The list-entity name fix from
+  0.11.1 is subsumed: the caller names the payload directly, list or scalar.
+- **`br-util-broadcast`: `EventBus::new` now rejects a zero capacity.** It
+  panics with a precise message (a zero-capacity broadcast channel buffers
+  nothing and would drop every event); capacity is a composition-root config
+  value, so a zero is a programming error rather than a runtime condition.
+
+### Other
+
+- **`br-test-support` is marked `publish = false`** so it can never be released
+  to a registry or mistaken for a normal public surface (it was already
+  dev-dependency-only and workspace-internal).
+- **`br-util-observability` README** documents that the crate is a BR platform
+  observability **convention** (opinionated Axum + `tracing`-JSON + Prometheus +
+  liveness + process/HTTP collectors), not a vendor-neutral utility, and that
+  `MetricsHandle::prometheus() -> &PrometheusHandle` is an **intentional** part
+  of the public contract.
+
 ### Fixed
 
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`

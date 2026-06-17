@@ -21,6 +21,10 @@ transitively, so a downstream git-rev consumer of `br-rust-common` (e.g.
 be-botresources) never builds, links, or sees `br-test-support`. Promoting it to
 a normal dependency would break that guarantee — don't.
 
+It is marked `publish = false` in its `Cargo.toml`, so it can never be mistaken
+for a normal public surface or accidentally released to a registry — `cargo
+publish` refuses it outright.
+
 ## Surface
 
 | Item | Role |

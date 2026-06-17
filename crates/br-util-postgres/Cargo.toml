@@ -5,17 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Postgres helpers for BotResources services: pools, TLS validation, RLS context, grants"
+description = "Postgres helpers for BotResources services: pools, TLS validation, app roles, grants"
 
 [dependencies]
-br-core-auth = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }
-tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
 br-test-support = { workspace = true }
-serde_json = { workspace = true }
 tokio = { workspace = true }
