@@ -42,6 +42,17 @@ release; they remain reachable through the historical per-crate tags
   Builds on `br-core-integration` (envelopes, coordinates, the pure outbox state
   machine); it is now the **sole** owner of all NATS transport.
 
+- **`br-util-nats-fabric` — typed single-key Published-Language read
+  (`PublishedLanguageReader<V>`).** `PublishedLanguageReader::<V>::open(&fabric)
+  .get(&key) -> Result<Option<V>, FabricError>` reads exactly one entry by its
+  validated `KvKey` — for the consumer that needs one known key (e.g. the
+  directory manifest `identity/_meta`) rather than a prefix scan with a capturing
+  sink. **Exact-key** (a prefix sibling is never matched), **fail-closed decode**
+  (an undecodable value is an explicit `FabricError::Decode` naming the key, never
+  a silent `None`), `Ok(None)` only for a genuinely absent key, and
+  **bind-existing** (the fixed `PUBLISHED_LANGUAGE` bucket, fail loud if absent;
+  no provisioning) — like the rest of Surface 2, no raw `Store` escape hatch.
+
 - **`br-core-directory` — `PublishedServiceAccount` directory DTO + the
   `service_accounts` entity, key prefix and builders.** A separate, minimal
   concrete DTO (single typed core field `name`, the rest in `extensions`) for
@@ -144,6 +155,12 @@ release; they remain reachable through the historical per-crate tags
   `remove_group` are removed — incremental projection is the fabric `watch()`.
   `DirectoryError` drops the `Kv` / `Wire` string variants in favor of
   `Fabric(FabricError)` / `KvKey(KvKeyError)`, and gains `ManifestAbsent`.
+- **`br-util-directory` — `read_manifest` reads `identity/_meta` via the new
+  single-key `PublishedLanguageReader::get`** instead of opening a prefix-scoped
+  consumer with a capturing one-shot sink and filtering on exact-key equality.
+  This drops the workaround and closes the prefix over-matching it carried (the
+  old `identity/_meta` *prefix* would also match `identity/_metadata`); the
+  observable fail-closed / absent-as-`ManifestAbsent` behavior is unchanged.
 - **BREAKING — the scope-declaration slice runs over the NATS Fabric.** The
   handshake and the Identity receiver no longer touch the legacy
   `br-core-integration` transport (`NatsIntegrationPublisher`,

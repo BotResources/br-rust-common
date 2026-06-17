@@ -20,8 +20,8 @@ pub use error::{ConsumeErrorKind, FabricError, PublishErrorKind};
 pub use fabric::Fabric;
 pub use kv::{
     KV_PUBLISHED_LANGUAGE, KvKey, KvKeyError, KvOp, KvPrefix, ProjectionError, ProjectionSink,
-    PublishedLanguageConsumer, PublishedLanguagePublisher, WatchHealth, WatchHealthReceiver,
-    reconcile,
+    PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, WatchHealth,
+    WatchHealthReceiver, reconcile,
 };
 pub use outbox::OutboxRecord;
 pub use stream::{INTEGRATION_CMD, INTEGRATION_EVT};

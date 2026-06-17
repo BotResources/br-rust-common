@@ -113,8 +113,9 @@ removed in the v1.0.0 integration-reduction step; `br_util_nats_fabric::OutboxRe
 
 ## Surface 2 — Published Language over KV
 
-`PublishedLanguagePublisher::open(&fabric)` and
-`PublishedLanguageConsumer::open(&fabric, prefixes, copy_filter, sink)` are the
+`PublishedLanguagePublisher::open(&fabric)`,
+`PublishedLanguageConsumer::open(&fabric, prefixes, copy_filter, sink)` and
+`PublishedLanguageReader::open(&fabric)` are the
 only ways in. Each binds the fixed bucket `PUBLISHED_LANGUAGE` **internally** and
 fails loud if it is absent. The raw `async_nats` KV `Store` is never handed to a
 caller — there is no untyped `store.put(key, …)` / `store.get(key)` escape
@@ -163,6 +164,22 @@ processes live updates from the selected prefixes. `WatchHealth` exposes a
 degraded signal when the watch ends or errors. This crate **does not** ship a
 transformation DSL — filtering and mapping are the caller's.
 
+### Single-key read
+
+`PublishedLanguageReader::<V>::open(&fabric).get(&key)` reads exactly one entry
+by its validated `KvKey` — for the consumer that needs one known key (e.g. the
+directory manifest `identity/_meta`) rather than a prefix scan. Semantics:
+
+- **exact-key, not prefix** — only the entry at `key` is returned; a sibling key
+  sharing a prefix (`identity/_metadata`) is never matched;
+- **fail-closed decode** — an undecodable value is an explicit
+  `FabricError::Decode` naming the key, **never** a silent `None`;
+- **store-access failure surfaces** — a broker/KV outage during the read is an
+  explicit `FabricError::Kv`, never collapsed to `Ok(None)`;
+- **`Ok(None)` only for a genuinely absent key**;
+- **bind-existing** — the fixed `PUBLISHED_LANGUAGE` bucket is bound internally,
+  failing loud if absent; no provisioning.
+
 ## Generic mechanics vs caller seams (summary)
 
 | Generic (this crate owns)                              | Caller seam                                  |
@@ -171,6 +188,7 @@ transformation DSL — filtering and mapping are the caller's.
 | subject rendering, durable filter verification         | the durable name                             |
 | reconcile op computation, orphan detection             | the desired set                              |
 | bootstrap scan + watch loop, fail-closed codec         | the prefix selection                         |
+| exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
 
