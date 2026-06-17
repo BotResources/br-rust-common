@@ -1,27 +1,23 @@
-use crate::coords::newtypes::{Aggregate, Bc, PastFact, Verb};
+use br_core_integration::{CommandCoords, EventCoords};
 
 pub(crate) const INTEGRATION_PREFIX: &str = "integration";
 pub(crate) const CMD_TOKEN: &str = "cmd";
 pub(crate) const EVT_TOKEN: &str = "evt";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandCoords {
-    pub receiver: Bc,
-    pub aggregate: Aggregate,
-    pub verb: Verb,
-    pub version: u8,
+pub(crate) trait IntegrationSubject {
+    fn subject(&self) -> String;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EventCoords {
-    pub producer: Bc,
-    pub aggregate: Aggregate,
-    pub fact: PastFact,
-    pub version: u8,
+pub fn command_subject(coords: &CommandCoords) -> String {
+    coords.subject()
 }
 
-impl CommandCoords {
-    pub(crate) fn subject(&self) -> String {
+pub fn event_subject(coords: &EventCoords) -> String {
+    coords.subject()
+}
+
+impl IntegrationSubject for CommandCoords {
+    fn subject(&self) -> String {
         format!(
             "{INTEGRATION_PREFIX}.{CMD_TOKEN}.{}.{}.{}.v{}",
             self.receiver.as_str(),
@@ -32,8 +28,8 @@ impl CommandCoords {
     }
 }
 
-impl EventCoords {
-    pub(crate) fn subject(&self) -> String {
+impl IntegrationSubject for EventCoords {
+    fn subject(&self) -> String {
         format!(
             "{INTEGRATION_PREFIX}.{EVT_TOKEN}.{}.{}.{}.v{}",
             self.producer.as_str(),
@@ -47,6 +43,7 @@ impl EventCoords {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use br_core_integration::{Aggregate, Bc, PastFact, Verb};
 
     fn bc(v: &str) -> Bc {
         Bc::new(v).unwrap()

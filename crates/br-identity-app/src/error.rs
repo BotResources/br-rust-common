@@ -10,7 +10,7 @@ pub enum AppError {
     Hydration(#[from] RegistryHydrationError),
 
     #[error("confirmation publish failed: {0}")]
-    Publish(#[from] br_core_integration::IntegrationError),
+    Publish(#[from] br_util_nats_fabric::FabricError),
 
     #[error("scope_registry_head row is missing; run migrations")]
     MissingRegistryHead,
@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn publish_failure_is_transient() {
-        let err = AppError::Publish(br_core_integration::IntegrationError::Serialization(
+        let err = AppError::Publish(br_util_nats_fabric::FabricError::Serialization(
             serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
         ));
         assert!(!err.is_permanent());

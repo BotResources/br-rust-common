@@ -1,24 +1,22 @@
-use br_core_integration::{
-    CorrelatedAwaiter, CorrelatedMatch, EventMetadata, IntegrationCommand, IntegrationError,
-    IntegrationEvent, IntegrationPublisherExt, NatsIntegrationPublisher,
-};
+use br_core_integration::{EventMetadata, IntegrationCommand, IntegrationEvent};
 use br_core_scope::{DeclareServiceScopes, ScopeDeclaration, ServiceKey, ServiceScopesRejected};
 use br_scope_declaration_contract::VERSION;
 use br_util_axum_readiness::ReadinessHandle;
+use br_util_nats_fabric::{CorrelatedMatch, Fabric, FabricError};
 use chrono::Utc;
 use uuid::Uuid;
 
 use crate::actor::declaring_actor;
 use crate::config::ScopeDeclarationConfig;
 use crate::outcome::ScopeDeclarationOutcome;
-use crate::subjects::DeclarationSubjects;
+use crate::subjects::DeclarationCoords;
 
 pub async fn declare_scopes(
-    jetstream: &async_nats::jetstream::Context,
+    fabric: &Fabric,
     declaration: ScopeDeclaration,
     readiness: ReadinessHandle,
     config: ScopeDeclarationConfig,
-) -> Result<ScopeDeclarationOutcome, IntegrationError> {
+) -> Result<ScopeDeclarationOutcome, FabricError> {
     let service = declaration.manifest().key.clone();
 
     if !config.enabled {
@@ -30,21 +28,15 @@ pub async fn declare_scopes(
         return Ok(ScopeDeclarationOutcome::Disabled);
     }
 
-    let subjects = DeclarationSubjects::build();
+    let coords = DeclarationCoords::build();
     let correlation_id = Uuid::now_v7();
 
-    let mut awaiter = CorrelatedAwaiter::create(
-        jetstream,
-        &config.stream_name,
-        subjects.confirmation_filters(),
-    )
-    .await?;
+    let mut awaiter = fabric.await_events(&coords.confirmation_coords()).await?;
 
-    let publisher = NatsIntegrationPublisher::new(jetstream.clone());
     let command = build_command(&service, correlation_id, declaration);
 
     loop {
-        if let Err(err) = publisher.publish_command(&subjects.declare, &command).await {
+        if let Err(err) = fabric.publish_command(&coords.declare, &command).await {
             tracing::warn!(
                 service = %service,
                 correlation_id = %correlation_id,
@@ -58,7 +50,7 @@ pub async fn declare_scopes(
             .await?
         {
             Some(matched) => {
-                if let Some(outcome) = resolve_match(&subjects, &service, &readiness, matched) {
+                if let Some(outcome) = resolve_match(&coords, &service, &readiness, matched) {
                     return Ok(outcome);
                 }
             }
@@ -81,7 +73,7 @@ fn build_command(
     let metadata = EventMetadata::new(declaring_actor(service), correlation_id);
     IntegrationCommand::new(
         Uuid::now_v7(),
-        DeclarationSubjects::command_type(),
+        DeclarationCoords::command_type(),
         VERSION,
         Utc::now(),
         metadata,
@@ -90,12 +82,12 @@ fn build_command(
 }
 
 fn resolve_match(
-    subjects: &DeclarationSubjects,
+    coords: &DeclarationCoords,
     service: &ServiceKey,
     readiness: &ReadinessHandle,
     matched: CorrelatedMatch,
 ) -> Option<ScopeDeclarationOutcome> {
-    if matched.subject == subjects.accepted {
+    if matched.subject == coords.accepted_subject {
         tracing::info!(
             service = %service,
             correlation_id = %matched.metadata.correlation_id,

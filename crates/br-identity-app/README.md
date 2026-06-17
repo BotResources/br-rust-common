@@ -17,15 +17,18 @@ domain's `judge_declaration`; this crate moves bytes.
 ## What it does
 
 A declaring service publishes an `IntegrationCommand<DeclareServiceScopes>` on
-`identity.cmd.service_scope.declare.v1`. This crate:
+`integration.cmd.identity.service_scope.declare.v1`. This crate:
 
-1. **consumes** it with a durable NATS consumer (work-shared across replicas);
+1. **consumes** it through the **NATS Fabric** (`br-util-nats-fabric`): a durable
+   command consumer on the fixed `INTEGRATION_CMD` stream, work-shared across
+   replicas, with the durable's filter verified against the declare coordinates
+   so a misconfigured durable cannot widen its delivery;
 2. **loads** the registry from Postgres, re-validating every invariant on
    hydration (the read-side double barrier);
 3. **judges** the declaration with the pure domain function;
 4. **saves** the new state under an optimistic lock (on accept);
-5. **dispatches** a correlated `accepted` / `rejected` confirmation on
-   `identity.evt.service_scope.{accepted,rejected}.v1`.
+5. **dispatches** a correlated `accepted` / `rejected` confirmation via the
+   Fabric on `integration.evt.identity.service_scope.{accepted,rejected}.v1`.
 
 ## Persistence (Postgres is the source of truth)
 
@@ -151,7 +154,7 @@ recovery mechanism.
 ## Confirmations
 
 `accepted` / `rejected` are `IntegrationEvent` envelopes on
-`identity.evt.service_scope.{accepted,rejected}.v1`:
+`integration.evt.identity.service_scope.{accepted,rejected}.v1`:
 
 - `correlation_id` **echoes** the command's `metadata.correlation_id` (the
   declarant correlates the reply to its command on it);
@@ -166,6 +169,12 @@ the domain judges `Accepted` with an empty result): a rebooted replica
 re-declaring its scopes must receive its `accepted`, so its readiness is never
 stuck waiting on a confirmation a "nothing changed, skip" optimization would have
 swallowed.
+
+A `rejected` confirmation's `service` field is the typed `RejectedIdentity` the
+domain produced. When the rejection is about a **malformed manifest key** (no
+valid `ServiceKey` exists), the reply carries the explicit
+`UNREPRESENTABLE_SERVICE` sentinel from `br-scope-declaration-contract` — a
+named, documented value, never a silent `"unknown"` default.
 
 ## Domain events
 
@@ -192,26 +201,28 @@ use br_identity_app::{
     ConfirmationPublisher, ScopeDeclarationPipeline, ScopeRegistryRepository,
     migrate, run_scope_declarations,
 };
-use br_core_integration::NatsIntegrationPublisher;
+use br_scope_declaration_contract::declare_command_coords;
 use br_util_axum_readiness::ReadinessHandle;
+use br_util_nats_fabric::Fabric;
 
 # async fn boot(
 #     owner_pool: sqlx::PgPool,
 #     app_pool: sqlx::PgPool,
-#     jetstream: async_nats::jetstream::Context,
+#     fabric: Fabric,
 #     readiness: ReadinessHandle, // started not_ready, shared with /readyz
 # ) -> Result<(), Box<dyn std::error::Error>> {
 // On boot (owner/migration pool): apply the schema, explicitly.
 migrate(&owner_pool).await?;
 // ... ensure_app_role + grant_app_access (br-util-postgres) ...
 
-// Composition root: assemble the pipeline from the app pool + publisher.
-let publisher = Arc::new(NatsIntegrationPublisher::new(jetstream.clone()));
+// Composition root: assemble the pipeline from the app pool + the Fabric.
 let repository = ScopeRegistryRepository::new(app_pool);
-let confirmations = ConfirmationPublisher::new(publisher);
+let confirmations = ConfirmationPublisher::new(fabric.clone());
 let pipeline = Arc::new(ScopeDeclarationPipeline::new(repository, confirmations));
 
-// Bind the PRE-DECLARED stream + durable consumer and run (parks at zero CPU).
+// Consume the declare command over the Fabric (fixed INTEGRATION_CMD stream;
+// the Fabric verifies the durable's filter against the declare coordinates).
+// Parks at zero CPU.
 //
 // CALLER CONTRACT: this future is the declaration path. The composing service
 // MUST observe it (and the on_permanent_failure callback) and wire BOTH into its
@@ -220,9 +231,9 @@ let pipeline = Arc::new(ScopeDeclarationPipeline::new(repository, confirmations)
 // a dead path). Select on it alongside the server, mark readiness DOWN if it
 // resolves or if the corrupt-store callback fires.
 run_scope_declarations(
-    &jetstream,
-    "IDENTITY_CMD",            // pre-declared stream
-    "scope_declare_worker",    // pre-declared durable consumer
+    &fabric,
+    &declare_command_coords()?,
+    "scope_declare_worker",    // pre-declared durable name
     pipeline,
     |poison| tracing::error!(error = %poison, "poison declare payload termed"),
     // Corrupt store at rest (see "Corrupt store (operator remediation)"): drop

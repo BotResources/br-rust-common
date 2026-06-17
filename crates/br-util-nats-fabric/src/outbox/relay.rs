@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 use br_core_integration::{OutboxStatus, Transition, next_after_attempt};
 
+use crate::coords::IntegrationSubject;
 use crate::fabric::Fabric;
 use crate::outbox::health::{RelayHealthChannel, RelayHealthReceiver};
 use crate::outbox::report::{

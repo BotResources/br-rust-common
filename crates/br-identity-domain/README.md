@@ -37,9 +37,16 @@ crate's.
   are *not* the rehydration mechanism. `ScopeRegistry::hydrate` rebuilds the
   aggregate from persisted state (never by replaying a log).
 - **Double barrier.** Every invariant is enforced at command time *and*
-  re-validated on hydration. `hydrate` re-checks global key uniqueness and
-  scope/owner prefix consistency — a malformed persisted state fails to load with
-  a `RegistryHydrationError` instead of resurrecting an illegal registry.
+  re-validated on hydration. `hydrate` re-checks global key uniqueness, **service
+  uniqueness** (a `ServiceKey` appears at most once, even with disjoint scopes),
+  and scope/owner prefix consistency — a malformed persisted state fails to load
+  with a `RegistryHydrationError` instead of resurrecting an illegal registry.
+- **Re-declaration is label/description-immutable (v1).** Re-declaring an
+  already-owned scope is a no-op for its metadata: the stored `label_key` /
+  `description_key` / `platform_only` are frozen at first registration; a
+  re-declare only touches `last_seen_at` (in the app layer). Changing a scope's
+  copy is therefore not a registry mutation — it does not bump the version and
+  emits no event.
 - **Decide, don't act.** `register_declaration` mutates in-memory state and
   returns events; it performs no I/O and dispatches nothing.
 - **One pure verdict function.** `judge_declaration` composes `br-core-scope`'s
@@ -61,12 +68,13 @@ crate's.
 |---|---|
 | `ScopeRegistry` | The single aggregate. `new()` (empty, version 0); `hydrate(version, services)` (rebuild from persisted state, re-validating every invariant); `register_declaration(&ScopeDeclaration)` (the command → `CommandResult`); reads `version()` / `services()` / `find_service()` / `owner_of()`. |
 | `judge_declaration` | The pure receiver-side verdict: `(&mut ScopeRegistry, DeclareServiceScopes) -> DeclarationOutcome`. Boundary validation + the aggregate command in one call. |
-| `DeclarationOutcome` | `Accepted { service, result }` / `Rejected { reason }`. |
+| `DeclarationOutcome` | `Accepted { service, result }` / `Rejected { identity, reason }`. |
+| `RejectedIdentity` | The identity a rejection is *about*: `Service(ServiceKey)` when the manifest key is valid, `Unrepresentable { raw }` when it is not — a typed value, never an unwrap-or-default placeholder. |
 | `RegisteredService` | A service entity inside the registry: its manifest plus the scopes it owns. `key()` / `manifest()` / `scopes()`. |
 | `RegistryEvent` | Granular domain events: `ServiceRegistered { service, label_key, description_key }`, `ScopeRegistered { key, owning_service, label_key, description_key, platform_only }`. Each carries its full value. |
 | `CommandResult` | `{ events, warnings }`. `from_events`, `is_noop`, `Default` (the no-op result). |
 | `RegistryWarning` | A typed, `#[non_exhaustive]`, empty-for-now warning enum (forward-compat). |
-| `RegistryHydrationError` | Why a persisted state failed to load: `DuplicateScope`, `ScopeOwnerMismatch`. Stable `Display` codes. |
+| `RegistryHydrationError` | Why a persisted state failed to load: `DuplicateScope`, `DuplicateService`, `ScopeOwnerMismatch`. Stable `Display` codes. |
 
 `ScopeDeclaration` and `ScopeDeclarationError` are re-exported from
 `br-core-scope` for convenience.
@@ -102,11 +110,11 @@ match judge_declaration(&mut registry, command) {
         // dispatch `result.events`, then reply ServiceScopesAccepted { service }.
         let _ = (service, result);
     }
-    DeclarationOutcome::Rejected { reason } => {
-        // Persist nothing; reply ServiceScopesRejected with this reason and
-        // the service key taken from the original payload (the rejection may
-        // itself be about a malformed service key).
-        let _ = reason;
+    DeclarationOutcome::Rejected { identity, reason } => {
+        // Persist nothing; reply ServiceScopesRejected with this reason. The
+        // rejected `identity` is typed: `Unrepresentable { raw }` when the
+        // manifest key itself is malformed (no valid ServiceKey exists).
+        let _ = (identity, reason);
     }
     _ => unreachable!("DeclarationOutcome is non_exhaustive — future variants"),
 }

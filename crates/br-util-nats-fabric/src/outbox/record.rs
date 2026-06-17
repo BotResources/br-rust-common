@@ -36,6 +36,7 @@ impl OutboxRecord {
 
     #[cfg(feature = "outbox")]
     pub(crate) fn subject(&self) -> String {
+        use crate::coords::IntegrationSubject;
         self.destination.subject()
     }
 }

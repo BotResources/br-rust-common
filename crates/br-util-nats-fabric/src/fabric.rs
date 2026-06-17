@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use br_core_integration::{IntegrationCommand, IntegrationEvent};
 
-use crate::coords::{CommandCoords, EventCoords};
+use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::FabricError;
 
 #[derive(Clone)]

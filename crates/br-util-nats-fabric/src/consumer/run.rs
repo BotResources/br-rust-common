@@ -8,7 +8,7 @@ use br_core_integration::{IntegrationCommand, IntegrationEvent, MessageOutcome};
 
 use crate::classify::classify_messages_error;
 use crate::consumer::bind::bind_durable;
-use crate::coords::{CommandCoords, EventCoords};
+use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::{ConsumeErrorKind, FabricError};
 use crate::fabric::Fabric;
 use crate::stream::{INTEGRATION_CMD, INTEGRATION_EVT};

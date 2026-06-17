@@ -2,6 +2,7 @@
 
 pub mod awaiter;
 pub mod consumer;
+mod coords;
 mod envelopes;
 mod error;
 mod nats;
@@ -15,6 +16,7 @@ mod subject;
 pub use awaiter::{CorrelatedAwaiter, CorrelatedMatch};
 pub use br_core_events::{Actor, ServiceAccountId, UserId};
 pub use consumer::{Delivery, DurableConsumer};
+pub use coords::{Aggregate, Bc, CommandCoords, CoordError, EventCoords, PastFact, Verb};
 pub use envelopes::{EventMetadata, IntegrationCommand, IntegrationEvent};
 pub use error::{ConsumeErrorKind, IntegrationError, PublishErrorKind};
 pub use nats::NatsIntegrationPublisher;

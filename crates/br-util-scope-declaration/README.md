@@ -3,18 +3,20 @@
 The boot-time **scope-declaration handshake** helper. A generic BR service that
 *owns scopes* declares them to Identity at startup and gates its readiness on the
 confirmation, in a few lines. Thin technical wrapper (tier `util`): it
-orchestrates the handshake over `br-core-integration` and `br-core-scope` and
-drives `br-util-axum-readiness`; it enforces no domain policy.
+orchestrates the handshake over the **NATS Fabric** (`br-util-nats-fabric`) and
+`br-core-scope` and drives `br-util-axum-readiness`; it enforces no domain
+policy.
 
 ## Usage — the three lines
 
 ```rust,no_run
 use br_core_scope::{ScopeDeclaration, ScopeKey, ScopeSpec, ServiceKey, ServiceManifest};
 use br_util_axum_readiness::ReadinessHandle;
+use br_util_nats_fabric::Fabric;
 use br_util_scope_declaration::{declare_scopes, ScopeDeclarationConfig, ScopeDeclarationOutcome};
 
 # async fn boot(
-#     jetstream: async_nats::jetstream::Context,
+#     fabric: Fabric,
 #     readiness: ReadinessHandle, // started not_ready
 # ) -> Result<(), Box<dyn std::error::Error>> {
 // 1. Build the validated declaration (from br-core-scope).
@@ -23,12 +25,12 @@ let declaration = ScopeDeclaration::new(
     vec![ScopeSpec::new(ScopeKey::new("notifier:read")?, "label.read", "desc.read", false)],
 )?;
 
-// 2. Declare + gate readiness (stream name + enabled flag wired from Helm).
+// 2. Declare + gate readiness (the enabled flag is wired from Helm).
 match declare_scopes(
-    &jetstream,
+    &fabric,
     declaration,
     readiness,
-    ScopeDeclarationConfig::enabled("IDENTITY"), // or ::disabled(..) to opt out
+    ScopeDeclarationConfig::enabled(), // or ::disabled() to opt out
 )
 .await?
 {
@@ -48,13 +50,15 @@ match declare_scopes(
 `declare_scopes` implements **subscribe-first / re-publish-on-timeout**:
 
 1. Generate `correlation_id = C` **once** at startup.
-2. **Subscribe first** — create the per-replica, per-boot `CorrelatedAwaiter`
-   over both confirmation subjects (`identity.evt.service_scope.accepted.v1` and
-   `…rejected.v1`). **Never a durable, never a queue-group**: each replica must
-   see *all* confirmations and filter on its own `C`. Subscribing before
-   publishing closes the race against a fast confirmation.
-3. Publish the durable command `identity.cmd.service_scope.declare.v1`
-   (`IntegrationCommand<DeclareServiceScopes>`, `metadata.correlation_id = C`).
+2. **Subscribe first** — create the per-replica, per-boot correlated awaiter via
+   `Fabric::await_events` over both confirmation subjects
+   (`integration.evt.identity.service_scope.accepted.v1` and `…rejected.v1`).
+   **Never a durable, never a queue-group**: each replica must see *all*
+   confirmations and filter on its own `C`. Subscribing before publishing closes
+   the race against a fast confirmation.
+3. Publish the command `integration.cmd.identity.service_scope.declare.v1`
+   (`IntegrationCommand<DeclareServiceScopes>`, `metadata.correlation_id = C`)
+   via `Fabric::publish_command`.
 4. Await the correlated confirmation. On a wait timeout → **re-publish (same
    `C`)** and keep awaiting, **indefinitely** — Identity may be down, and the
    readiness gate keeps the pod out of rotation meanwhile (an accepted
@@ -86,23 +90,25 @@ touches this crate.
 
 ## Subjects & fail-loud infrastructure
 
-Subjects follow the integration convention `{bc}.{cmd|evt}.{aggregate}.{name}.v{N}`
-and are fixed by the `br-scope-declaration-contract` crate (the single source of
-the wire coordinates):
+The coordinates are the typed `CommandCoords` / `EventCoords` fixed by the
+`br-scope-declaration-contract` crate (the single source of the wire
+coordinates); the Fabric renders them on the v1 grammar
+`integration.{cmd|evt}.{bc}.{aggregate}.{name}.v{N}`:
 
-- command:  `identity.cmd.service_scope.declare.v1`
-- accepted: `identity.evt.service_scope.accepted.v1`
-- rejected: `identity.evt.service_scope.rejected.v1`
+- command:  `integration.cmd.identity.service_scope.declare.v1`
+- accepted: `integration.evt.identity.service_scope.accepted.v1`
+- rejected: `integration.evt.identity.service_scope.rejected.v1`
 
-The JetStream **stream is pre-declared** (Helm / operator). The awaiter asserts
-it exists by name and **fails loud** with `IntegrationError::Consume { NoStream }`
-if it is missing — this helper **never** creates a stream or a durable consumer.
-The confirmation itself is awaited over a core NATS push subscription on the two
-event subjects (a JetStream publish also reaches core subscribers).
+The fixed `INTEGRATION_CMD` / `INTEGRATION_EVT` streams are **pre-declared**
+(Helm / operator). The Fabric awaiter asserts `INTEGRATION_EVT` exists by name
+and **fails loud** with `FabricError::Consume { NoStream }` if it is missing —
+this helper **never** creates a stream or a durable consumer. The confirmation
+is awaited over a core NATS push subscription on the two event subjects (a
+JetStream publish also reaches core subscribers).
 
-Subjects are built with `br_core_integration::integration_subject` (the single
-source of the subject convention) and pinned to the canonical contract strings
-by a unit test.
+The accepted-subject string used to classify a confirmation is rendered through
+the Fabric's `event_subject` and pinned to the canonical contract string by a
+unit test.
 
 ## Declaring-service identity (provenance, not authentication)
 

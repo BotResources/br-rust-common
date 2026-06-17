@@ -1,6 +1,7 @@
 use br_core_scope::{DeclareServiceScopes, ScopeDeclarationError, ServiceKey};
 
 use crate::event::CommandResult;
+use crate::identity::RejectedIdentity;
 use crate::registry::ScopeRegistry;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +12,7 @@ pub enum DeclarationOutcome {
         result: CommandResult,
     },
     Rejected {
+        identity: RejectedIdentity,
         reason: ScopeDeclarationError,
     },
 }
@@ -19,14 +21,23 @@ pub fn judge_declaration(
     registry: &mut ScopeRegistry,
     command: DeclareServiceScopes,
 ) -> DeclarationOutcome {
+    let raw_key = command.raw().manifest.key.clone();
     let declaration = match command.validate() {
         Ok(declaration) => declaration,
-        Err(reason) => return DeclarationOutcome::Rejected { reason },
+        Err(reason) => {
+            return DeclarationOutcome::Rejected {
+                identity: RejectedIdentity::from_raw_key(&raw_key),
+                reason,
+            };
+        }
     };
     let service = declaration.manifest().key.clone();
     match registry.register_declaration(&declaration) {
         Ok(result) => DeclarationOutcome::Accepted { service, result },
-        Err(reason) => DeclarationOutcome::Rejected { reason },
+        Err(reason) => DeclarationOutcome::Rejected {
+            identity: RejectedIdentity::Service(service),
+            reason,
+        },
     }
 }
 
@@ -96,6 +107,7 @@ mod tests {
         assert_eq!(
             outcome,
             DeclarationOutcome::Rejected {
+                identity: RejectedIdentity::Service(ServiceKey::new("notifier").unwrap()),
                 reason: ScopeDeclarationError::InvalidScopeKey {
                     key: "notifier:BAD".to_string(),
                     validation: KeyValidationError::InvalidCharset,
@@ -117,6 +129,7 @@ mod tests {
         assert_eq!(
             judge_declaration(&mut registry, payload),
             DeclarationOutcome::Rejected {
+                identity: RejectedIdentity::Service(ServiceKey::new("notifier").unwrap()),
                 reason: ScopeDeclarationError::ScopePrefixMismatch {
                     scope_service: "billing".to_string(),
                     declaring_service: "notifier".to_string(),
@@ -140,6 +153,7 @@ mod tests {
         assert_eq!(
             judge_declaration(&mut registry, payload),
             DeclarationOutcome::Rejected {
+                identity: RejectedIdentity::Service(ServiceKey::new("notifier").unwrap()),
                 reason: ScopeDeclarationError::DuplicateScopeInDeclaration {
                     key: "notifier:read".to_string(),
                 }
@@ -148,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_manifest_key_is_rejected() {
+    fn malformed_manifest_key_is_rejected_with_an_unrepresentable_identity() {
         let mut registry = ScopeRegistry::new();
         let payload = raw_declare(
             r#"{"declaration":{
@@ -156,11 +170,17 @@ mod tests {
                 "scopes":[]
             }}"#,
         );
-        assert!(matches!(
+        assert_eq!(
             judge_declaration(&mut registry, payload),
             DeclarationOutcome::Rejected {
-                reason: ScopeDeclarationError::InvalidScopeKey { .. }
+                identity: RejectedIdentity::Unrepresentable {
+                    raw: "NOPE".to_string(),
+                },
+                reason: ScopeDeclarationError::InvalidScopeKey {
+                    key: "NOPE".to_string(),
+                    validation: KeyValidationError::InvalidCharset,
+                },
             }
-        ));
+        );
     }
 }
