@@ -4,7 +4,8 @@ use br_core_integration::{EventMetadata, IntegrationCommand, IntegrationEvent, M
 use br_core_kernel::{Actor, UserId};
 use br_util_nats_fabric::{
     Aggregate, Bc, CommandCoords, EventCoords, Fabric, FabricError, INTEGRATION_CMD,
-    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, PastFact, PublishedLanguagePublisher, Verb,
+    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, KvKey, PastFact, PublishedLanguagePublisher,
+    PublishedLanguageReader, Verb,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -209,4 +210,111 @@ async fn published_language_binds_existing_bucket_and_fails_loud_when_absent() {
     );
 
     let _ = js.delete_key_value(KV_PUBLISHED_LANGUAGE).await;
+}
+
+async fn ensure_published_language_bucket(
+    js: &async_nats::jetstream::Context,
+) -> async_nats::jetstream::kv::Store {
+    if let Ok(store) = js.get_key_value(KV_PUBLISHED_LANGUAGE).await {
+        return store;
+    }
+    js.create_key_value(async_nats::jetstream::kv::Config {
+        bucket: KV_PUBLISHED_LANGUAGE.to_string(),
+        ..Default::default()
+    })
+    .await
+    .expect("create bucket")
+}
+
+fn isolated_key(suffix: &str) -> String {
+    format!("plget/{}/{suffix}", Uuid::now_v7().simple())
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn single_key_get_returns_none_for_an_absent_key() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let _ = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+    let key = KvKey::new(isolated_key("absent")).unwrap();
+    assert_eq!(reader.get(&key).await.expect("get"), None);
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn single_key_get_returns_the_decoded_value_for_a_present_key() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let key = KvKey::new(isolated_key("present")).unwrap();
+    let value = Payload {
+        label: "manifest".to_string(),
+    };
+    store
+        .put(key.as_str(), serde_json::to_vec(&value).unwrap().into())
+        .await
+        .expect("put");
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+    assert_eq!(reader.get(&key).await.expect("get"), Some(value));
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn single_key_get_fails_closed_on_an_undecodable_value() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let key = KvKey::new(isolated_key("garbage")).unwrap();
+    store
+        .put(key.as_str(), b"{ not json".to_vec().into())
+        .await
+        .expect("put");
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+    match reader.get(&key).await {
+        Err(FabricError::Decode { subject, .. }) => assert_eq!(subject, key.as_str()),
+        other => panic!("expected Decode naming the key, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let base = isolated_key("meta");
+    let key = KvKey::new(base.clone()).unwrap();
+    let sibling = KvKey::new(format!("{base}data")).unwrap();
+    let sibling_value = Payload {
+        label: "sibling".to_string(),
+    };
+    store
+        .put(
+            sibling.as_str(),
+            serde_json::to_vec(&sibling_value).unwrap().into(),
+        )
+        .await
+        .expect("put sibling");
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+    assert_eq!(reader.get(&key).await.expect("get"), None);
 }

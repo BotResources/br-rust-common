@@ -4,6 +4,7 @@ mod consumer;
 mod health;
 mod key;
 mod publisher;
+mod reader;
 mod reconcile;
 mod sink;
 
@@ -12,5 +13,6 @@ pub use consumer::PublishedLanguageConsumer;
 pub use health::{WatchHealth, WatchHealthReceiver};
 pub use key::{KvKey, KvKeyError, KvPrefix};
 pub use publisher::PublishedLanguagePublisher;
+pub use reader::PublishedLanguageReader;
 pub use reconcile::{KvOp, reconcile};
 pub use sink::{ProjectionError, ProjectionSink};
