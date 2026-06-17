@@ -11,6 +11,33 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Added
+
+- **New crate `br-util-nats-fabric` — the Project NATS Fabric API.** The single,
+  restricted, typed application-facing way a BR service touches NATS; it owns all
+  `async_nats` coupling. Two surfaces: **integration messaging** over a fixed v1
+  grammar (`integration.cmd.{receiver}.{aggregate}.{verb}.v{N}` /
+  `integration.evt.{producer}.{aggregate}.{fact}.v{N}`) on fixed streams
+  (`INTEGRATION_CMD` / `INTEGRATION_EVT`), and the **Published-Language KV**
+  generic mechanics over the fixed `PUBLISHED_LANGUAGE` bucket. The `Fabric`
+  handle is built from an existing JetStream `Context` and **never provisions**
+  (no stream/bucket creation; binds and fails loud when a declared object is
+  absent). Callers supply only business coordinates — validated `Bc` /
+  `Aggregate` / `Verb` / `PastFact` newtypes and `CommandCoords` / `EventCoords`
+  — never stream names, the `integration` prefix, or the grammar; there is no
+  freestyle string subject builder. Command/event durable consumers verify the
+  durable's configured filter matches the requested coordinates
+  (`FabricError::FilterMismatch`) so a misconfigured durable cannot silently
+  widen its delivery. Includes the correlated awaiter, a transactional outbox
+  (feature `outbox`) whose record destination is a typed `EventCoords` rendered
+  at publish time, and generic Published-Language publisher (semantic upsert /
+  retract / reconcile / drift-repair) and consumer (bootstrap scan + watch with
+  consumer-selected prefixes, a copy-filter `Fn(&V) -> bool` that orphan-deletes
+  pass→fail entries, and a caller-owned lossless projection sink) mechanics.
+  Builds on `br-core-integration` (envelopes, the pure outbox state machine);
+  the old `br-core-integration` transport APIs remain available until consumers
+  migrate.
+
 ### Fixed
 
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`

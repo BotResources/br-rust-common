@@ -17,6 +17,7 @@ members = [
     "crates/br-util-broadcast",
     "crates/br-util-directory",
     "crates/br-util-graphql",
+    "crates/br-util-nats-fabric",
     "crates/br-util-observability",
     "crates/br-util-postgres",
     "crates/br-util-scope-declaration",
@@ -46,6 +47,7 @@ br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.
 br-util-broadcast = { path = "crates/br-util-broadcast", version = "0.11.0" }
 br-util-directory = { path = "crates/br-util-directory", version = "0.11.0" }
 br-util-graphql = { path = "crates/br-util-graphql", version = "0.11.0" }
+br-util-nats-fabric = { path = "crates/br-util-nats-fabric", version = "0.11.0" }
 br-util-observability = { path = "crates/br-util-observability", version = "0.11.0" }
 br-util-postgres = { path = "crates/br-util-postgres", version = "0.11.0" }
 br-util-scope-declaration = { path = "crates/br-util-scope-declaration", version = "0.11.0" }
