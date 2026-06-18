@@ -79,10 +79,9 @@ where
     }
 
     pub async fn watch(&self) -> Result<(), ProjectionError<S::Error>> {
-        let subjects: Vec<String> = self.prefixes.iter().map(KvPrefix::watch_subject).collect();
         let mut entries = self
             .kv
-            .watch_many(subjects)
+            .watch_all()
             .await
             .map_err(|e| ProjectionError::Fabric(crate::error::FabricError::kv(e)))?;
 
@@ -95,7 +94,9 @@ where
                 }
             };
             self.health.set(WatchHealth::Healthy);
-            self.apply_entry(entry).await?;
+            if self.prefixes.iter().any(|p| p.matches(&entry.key)) {
+                self.apply_entry(entry).await?;
+            }
         }
         self.health.set(WatchHealth::Degraded);
         Ok(())

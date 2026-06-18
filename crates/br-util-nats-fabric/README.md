@@ -160,9 +160,14 @@ three **caller-owned seams**:
   own `known_keys`.
 
 `bootstrap()` does the initial scan-and-project + orphan cleanup; `watch()`
-processes live updates from the selected prefixes. `WatchHealth` exposes a
-degraded signal when the watch ends or errors. This crate **does not** ship a
-transformation DSL — filtering and mapping are the caller's.
+processes live updates from the selected prefixes. `watch()` subscribes to the
+**whole bucket** and filters each entry by the selected prefixes client-side
+(`KvPrefix::matches`) — **not** a per-prefix subject wildcard: NATS subject
+wildcards match only across `.`-delimited tokens, and the Published-Language keys
+are `/`-delimited (`identity/users/<id>` is a single token), so a `{prefix}>`
+filter matches nothing and would silently deliver no live updates. `WatchHealth`
+exposes a degraded signal when the watch ends or errors. This crate **does not**
+ship a transformation DSL — filtering and mapping are the caller's.
 
 ### Single-key read
 
@@ -195,7 +200,7 @@ directory manifest `identity/_meta`) rather than a prefix scan. Semantics:
 ## Dependency
 
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.0.0", version = "1.0.0" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.0.1", version = "1.0.1" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.0.0", version = "1.0.0", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.0.1", version = "1.0.1", features = ["outbox"] }
 ```

@@ -201,7 +201,7 @@ this crate even when its own public surface is unchanged.
 
 ```toml
 [dependencies]
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.0.0", version = "1.0.0", features = ["graphql"] }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.0.1", version = "1.0.1", features = ["graphql"] }
 ```
 
 ---
