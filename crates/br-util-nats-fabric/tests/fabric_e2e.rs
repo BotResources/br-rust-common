@@ -5,9 +5,10 @@ use std::time::Duration;
 use br_core_integration::{EventMetadata, IntegrationCommand, IntegrationEvent, MessageOutcome};
 use br_core_kernel::{Actor, UserId};
 use br_util_nats_fabric::{
-    Aggregate, Bc, CommandCoords, EventCoords, Fabric, FabricError, INTEGRATION_CMD,
-    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, KvKey, KvPrefix, PastFact, ProjectionSink,
-    PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, Verb,
+    Aggregate, Bc, CommandCoords, ConsumeErrorKind, EphemeralAuthStore, EventCoords, Fabric,
+    FabricError, INTEGRATION_CMD, INTEGRATION_EVT, KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE, KvKey,
+    KvPrefix, NatsAuth, PastFact, ProjectionSink, PublishedLanguageConsumer,
+    PublishedLanguagePublisher, PublishedLanguageReader, Verb,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -85,17 +86,6 @@ async fn command_renders_grammar_and_a_matching_durable_consumes_it() {
         version: 1,
     };
     let durable = format!("test_{}", Uuid::now_v7().simple());
-    let stream = js.get_stream(INTEGRATION_CMD).await.unwrap();
-    stream
-        .create_consumer(async_nats::jetstream::consumer::pull::Config {
-            durable_name: Some(durable.clone()),
-            filter_subject: "integration.cmd.notifier.notification.deliver.v1".to_string(),
-            ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-
     let fabric = fabric().await;
     let correlation = Uuid::now_v7();
     fabric
@@ -136,7 +126,7 @@ async fn command_renders_grammar_and_a_matching_durable_consumes_it() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn a_widened_durable_is_rejected_on_bind() {
+async fn a_pre_existing_widened_durable_converges_to_the_libs_filter() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_EVT, "integration.evt.>").await;
@@ -160,11 +150,16 @@ async fn a_widened_durable_is_rejected_on_bind() {
         version: 1,
     };
     let fabric = fabric().await;
-    let err = fabric
-        .verify_event_durable(&coords, &durable)
+    fabric
+        .ensure_event_durable(&coords, &durable)
         .await
-        .unwrap_err();
-    assert!(matches!(err, FabricError::FilterMismatch { .. }));
+        .expect("ensure converges the pre-existing widened durable to the lib config");
+
+    let info = stream.consumer_info(&durable).await.expect("consumer info");
+    assert_eq!(
+        info.config.filter_subject, "integration.evt.identity.user.created.v1",
+        "the lib's config is authoritative; a pre-existing widened durable is narrowed, never left widened"
+    );
 
     let _ = js.delete_stream(INTEGRATION_EVT).await;
 }
@@ -198,6 +193,136 @@ async fn awaiter_matches_by_correlation_id() {
     assert!(matched.is_some());
 
     let _ = js.delete_stream(INTEGRATION_EVT).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_matches_by_correlation_id() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let coords = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let fabric = fabric().await;
+    let mut awaiter = fabric.await_command(&coords).await.expect("await_command");
+
+    let correlation = Uuid::now_v7();
+    fabric
+        .publish_command(&coords, &command("cmd", correlation))
+        .await
+        .expect("publish command");
+
+    let matched = awaiter
+        .await_correlation(correlation, Duration::from_secs(5))
+        .await
+        .expect("await_correlation");
+    assert!(matched.is_some());
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_matches_one_of_several_coords() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let deliver = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let retract = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("retract").unwrap(),
+        version: 1,
+    };
+
+    let fabric = fabric().await;
+    let mut awaiter = fabric
+        .await_commands(&[&deliver, &retract])
+        .await
+        .expect("await_commands");
+
+    let correlation = Uuid::now_v7();
+    fabric
+        .publish_command(&retract, &command("retract", correlation))
+        .await
+        .expect("publish command");
+
+    let matched = awaiter
+        .await_correlation(correlation, Duration::from_secs(5))
+        .await
+        .expect("await_correlation")
+        .expect("a matching command");
+    assert_eq!(
+        matched.subject,
+        "integration.cmd.notifier.notification.retract.v1"
+    );
+    assert_eq!(matched.metadata.correlation_id, correlation);
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_returns_none_at_the_deadline() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let coords = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let fabric = fabric().await;
+    let mut awaiter = fabric.await_command(&coords).await.expect("await_command");
+
+    let absent = Uuid::now_v7();
+    let matched = awaiter
+        .await_correlation(absent, Duration::from_millis(300))
+        .await
+        .expect("await_correlation");
+    assert!(
+        matched.is_none(),
+        "no command published → None at the deadline"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_fails_loud_when_the_command_stream_is_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+
+    let coords = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let fabric = fabric().await;
+    match fabric.await_command(&coords).await {
+        Err(FabricError::Consume {
+            kind: ConsumeErrorKind::NoStream,
+            ..
+        }) => {}
+        Err(other) => panic!("expected NoStream, got {other:?}"),
+        Ok(_) => panic!("awaiting on an absent command stream must fail loud, never auto-create"),
+    }
 }
 
 #[tokio::test]
@@ -347,6 +472,122 @@ async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
     );
 }
 
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn enumeration_returns_only_the_prefix_scoped_keys_and_entries() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = KvPrefix::new(format!("plenum/{run}/users/")).unwrap();
+    let inside = [
+        (
+            KvKey::new(format!("plenum/{run}/users/ada")).unwrap(),
+            Payload {
+                label: "ada".to_string(),
+            },
+        ),
+        (
+            KvKey::new(format!("plenum/{run}/users/grace")).unwrap(),
+            Payload {
+                label: "grace".to_string(),
+            },
+        ),
+    ];
+    let outside = (
+        KvKey::new(format!("plenum/{run}/groups/admins")).unwrap(),
+        Payload {
+            label: "admins".to_string(),
+        },
+    );
+    for (key, value) in inside.iter().chain(std::iter::once(&outside)) {
+        store
+            .put(key.as_str(), serde_json::to_vec(value).unwrap().into())
+            .await
+            .expect("put");
+    }
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+
+    let keys = reader.keys(&prefix).await.expect("keys");
+    assert_eq!(
+        keys,
+        vec![inside[0].0.clone(), inside[1].0.clone()],
+        "keys must be exactly the prefix-scoped set, sorted"
+    );
+
+    let entries = reader.entries(&prefix).await.expect("entries");
+    let expected: BTreeMap<KvKey, Payload> = inside.iter().cloned().collect();
+    assert_eq!(entries, expected);
+    assert!(
+        !entries.contains_key(&outside.0),
+        "an entry outside the prefix must never be enumerated"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn enumeration_entries_fails_closed_on_an_undecodable_value() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = KvPrefix::new(format!("plenum/{run}/users/")).unwrap();
+    let good = KvKey::new(format!("plenum/{run}/users/ada")).unwrap();
+    let bad = KvKey::new(format!("plenum/{run}/users/garbage")).unwrap();
+    store
+        .put(
+            good.as_str(),
+            serde_json::to_vec(&Payload {
+                label: "ada".to_string(),
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .expect("put good");
+    store
+        .put(bad.as_str(), b"{ not json".to_vec().into())
+        .await
+        .expect("put bad");
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+    match reader.entries(&prefix).await {
+        Err(FabricError::Decode { subject, .. }) => assert_eq!(subject, bad.as_str()),
+        other => panic!("expected Decode naming the bad key, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn enumeration_on_an_unmatched_prefix_returns_a_legitimate_empty() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = KvPrefix::new(format!("plenum/{run}/never-written/")).unwrap();
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+
+    assert_eq!(reader.keys(&prefix).await.expect("keys"), Vec::new());
+    assert_eq!(
+        reader.entries(&prefix).await.expect("entries"),
+        BTreeMap::new()
+    );
+}
+
 #[derive(Clone, Default)]
 struct RecordingSink {
     projected: Arc<Mutex<BTreeMap<KvKey, Payload>>>,
@@ -430,4 +671,695 @@ async fn watch_delivers_a_live_slash_keyed_directory_put() {
 
     watcher.abort();
     let _ = store.purge(&key).await;
+}
+
+async fn ensure_ephemeral_auth_bucket(
+    js: &async_nats::jetstream::Context,
+) -> async_nats::jetstream::kv::Store {
+    if let Ok(store) = js.get_key_value(KV_EPHEMERAL_AUTH).await {
+        return store;
+    }
+    js.create_key_value(async_nats::jetstream::kv::Config {
+        bucket: KV_EPHEMERAL_AUTH.to_string(),
+        history: 8,
+        max_age: Duration::from_secs(3600),
+        ..Default::default()
+    })
+    .await
+    .expect("create ephemeral-auth bucket")
+}
+
+fn ephemeral_key(suffix: &str) -> KvKey {
+    KvKey::new(format!("auth/refresh/{}/{suffix}", Uuid::now_v7().simple())).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ephemeral_auth_binds_existing_bucket_and_fails_loud_when_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let _ = js.delete_key_value(KV_EPHEMERAL_AUTH).await;
+
+    let fabric = fabric().await;
+    let absent = EphemeralAuthStore::<Payload>::open(&fabric).await;
+    assert!(matches!(absent, Err(FabricError::Kv(_))));
+
+    ensure_ephemeral_auth_bucket(&js).await;
+    assert!(EphemeralAuthStore::<Payload>::open(&fabric).await.is_ok());
+
+    let _ = js.delete_key_value(KV_EPHEMERAL_AUTH).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn concurrent_update_if_on_the_same_revision_has_exactly_one_winner() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("family");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "seed".to_string(),
+            },
+        )
+        .await
+        .expect("seed create");
+
+    let (_, rev) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+
+    let value_a = Payload {
+        label: "rotation-a".to_string(),
+    };
+    let value_b = Payload {
+        label: "rotation-b".to_string(),
+    };
+    let a = store.update_if(&key, &value_a, rev);
+    let b = store.update_if(&key, &value_b, rev);
+    let (ra, rb) = tokio::join!(a, b);
+
+    let outcomes = [ra, rb];
+    let winners = outcomes.iter().filter(|r| r.is_ok()).count();
+    let conflicts = outcomes
+        .iter()
+        .filter(|r| matches!(r, Err(FabricError::RevisionConflict { .. })))
+        .count();
+    assert_eq!(winners, 1, "exactly one writer wins on the same revision");
+    assert_eq!(conflicts, 1, "the loser gets the distinguishable conflict");
+
+    let _ = store
+        .put(
+            &key,
+            &Payload {
+                label: "wipe".into(),
+            },
+        )
+        .await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn put_performs_the_unconditional_revoke_family_wipe() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("revoke");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    store
+        .put(
+            &key,
+            &Payload {
+                label: "revoked".to_string(),
+            },
+        )
+        .await
+        .expect("unconditional put ignores the revision chain");
+
+    let (value, _) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+    assert_eq!(value.label, "revoked");
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn delete_then_get_with_revision_reads_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("delete-absent");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "live".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    store.delete(&key).await.expect("delete");
+
+    assert_eq!(
+        store.get_with_revision(&key).await.expect("get"),
+        None,
+        "a deleted key reads as absent"
+    );
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn create_re_creates_through_a_post_delete_tombstone() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("recreate");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "first-life".to_string(),
+            },
+        )
+        .await
+        .expect("first create");
+
+    store
+        .delete(&key)
+        .await
+        .expect("delete leaves a tombstone at seq>0");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "second-life".to_string(),
+            },
+        )
+        .await
+        .expect("create re-creates through the tombstone");
+
+    let (value, _) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+    assert_eq!(value.label, "second-life");
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn delete_if_with_the_current_revision_removes_the_key() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("delete-if-ok");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "live".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    let (_, revision) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+
+    store.delete_if(&key, revision).await.expect("delete_if");
+
+    assert_eq!(
+        store.get_with_revision(&key).await.expect("get"),
+        None,
+        "delete_if with the current revision removes the key"
+    );
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn delete_if_with_a_stale_revision_conflicts_and_keeps_the_key() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("delete-if-stale");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "first".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    let (_, stale) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+
+    store
+        .update_if(
+            &key,
+            &Payload {
+                label: "second".to_string(),
+            },
+            stale,
+        )
+        .await
+        .expect("update advances the revision past the stale handle");
+
+    let conflict = store.delete_if(&key, stale).await;
+    assert!(
+        matches!(conflict, Err(FabricError::RevisionConflict { .. })),
+        "delete_if with a stale revision conflicts: {conflict:?}"
+    );
+
+    let (value, _) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+    assert_eq!(
+        value.label, "second",
+        "the loser did not delete — the key is still present"
+    );
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn create_on_a_live_key_returns_key_already_exists() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("live");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "occupant".to_string(),
+            },
+        )
+        .await
+        .expect("first create");
+
+    let again = store
+        .create(
+            &key,
+            &Payload {
+                label: "intruder".to_string(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(again, Err(FabricError::KeyAlreadyExists { .. })),
+        "create on a live key is a distinguishable conflict: {again:?}"
+    );
+
+    let _ = store
+        .put(
+            &key,
+            &Payload {
+                label: "wipe".into(),
+            },
+        )
+        .await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn get_with_revision_fails_closed_on_an_undecodable_value() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let key = ephemeral_key("garbage");
+    raw.put(key.as_str(), b"{ not json".to_vec().into())
+        .await
+        .expect("put garbage");
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    match store.get_with_revision(&key).await {
+        Err(FabricError::Decode { subject, .. }) => assert_eq!(subject, key.as_str()),
+        other => panic!("expected Decode naming the key, got {other:?}"),
+    }
+}
+
+const DELIVER_FILTER: &str = "integration.cmd.notifier.notification.deliver.v1";
+
+fn deliver_coords() -> CommandCoords {
+    CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ensure_command_consumer_acks_and_the_message_is_not_redelivered() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let durable = format!("ack_{}", Uuid::now_v7().simple());
+    let coords = deliver_coords();
+    let fabric = fabric().await;
+    fabric
+        .publish_command(&coords, &command("hello", Uuid::now_v7()))
+        .await
+        .expect("publish command");
+
+    let mut consumer = fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("ensure durable (lib creates it)");
+
+    let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery");
+    assert_eq!(delivery.payload().unwrap().payload.label, "hello");
+    assert_eq!(delivery.delivered_count(), Some(1));
+    delivery.ack().await.expect("ack");
+
+    let after_ack = tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await;
+    assert!(
+        after_ack.is_err(),
+        "an acked message must not be redelivered"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let durable = format!("nak_{}", Uuid::now_v7().simple());
+    let coords = deliver_coords();
+    let fabric = fabric().await;
+    fabric
+        .publish_command(&coords, &command("again", Uuid::now_v7()))
+        .await
+        .expect("publish command");
+
+    let mut consumer = fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("ensure durable (lib creates it)");
+
+    let first = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("first recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery");
+    assert_eq!(first.delivered_count(), Some(1));
+    first
+        .nak(Some(Duration::from_millis(500)))
+        .await
+        .expect("nak");
+
+    let second = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("redelivered within deadline")
+        .expect("recv ok")
+        .expect("a redelivery");
+    assert_eq!(
+        second.delivered_count(),
+        Some(2),
+        "delivered_count increments on redelivery"
+    );
+    second.ack().await.expect("ack");
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn a_poison_frame_is_routable_to_term_and_the_loop_survives() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let durable = format!("poison_{}", Uuid::now_v7().simple());
+    let coords = deliver_coords();
+    let fabric = fabric().await;
+
+    js.publish(DELIVER_FILTER.to_string(), b"{ not json".to_vec().into())
+        .await
+        .expect("publish poison")
+        .await
+        .expect("poison ack");
+    fabric
+        .publish_command(&coords, &command("good", Uuid::now_v7()))
+        .await
+        .expect("publish good command");
+
+    let mut consumer = fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("ensure durable (lib creates it)");
+
+    let poison = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("poison recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery");
+    match poison.payload() {
+        Err(FabricError::Decode { subject, .. }) => assert_eq!(subject, DELIVER_FILTER),
+        other => panic!("expected a routable Decode error, got {other:?}"),
+    }
+    poison.term().await.expect("term the poison frame");
+
+    let good = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("loop survives and yields the next frame")
+        .expect("recv ok")
+        .expect("a delivery");
+    assert_eq!(good.payload().unwrap().payload.label, "good");
+    good.ack().await.expect("ack");
+
+    let after_term = tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await;
+    assert!(
+        after_term.is_err(),
+        "a termed poison frame must not be redelivered"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn delivered_count_increments_across_redeliveries() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let durable = format!("budget_{}", Uuid::now_v7().simple());
+    let coords = deliver_coords();
+    let fabric = fabric().await;
+    fabric
+        .publish_command(&coords, &command("retry", Uuid::now_v7()))
+        .await
+        .expect("publish command");
+
+    let mut consumer = fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("ensure durable (lib creates it)");
+
+    for expected in 1..=3 {
+        let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+            .await
+            .expect("recv within deadline")
+            .expect("recv ok")
+            .expect("a delivery");
+        assert_eq!(
+            delivery.delivered_count(),
+            Some(expected),
+            "delivered_count tracks the attempt number across redeliveries (lib max_deliver is unlimited; poison handling is the caller's term())"
+        );
+        delivery
+            .nak(Some(Duration::from_millis(200)))
+            .await
+            .expect("nak");
+    }
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+async fn round_trip_a_command(fabric: &Fabric, js: &async_nats::jetstream::Context) {
+    recreate_stream(js, INTEGRATION_CMD, "integration.cmd.>").await;
+    let coords = deliver_coords();
+    let durable = format!("connect_{}", Uuid::now_v7().simple());
+
+    fabric
+        .publish_command(&coords, &command("dialed", Uuid::now_v7()))
+        .await
+        .expect("publish over the dialled fabric");
+
+    let mut consumer = fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("ensure durable (lib creates it)");
+    let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery");
+    assert_eq!(delivery.payload().unwrap().payload.label, "dialed");
+    delivery.ack().await.expect("ack");
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn connect_dials_and_the_returned_fabric_publishes_and_consumes() {
+    let Some(url) = nats_url() else { return };
+    let fabric = Fabric::connect(&url).await.expect("Fabric::connect dials");
+    let js = jetstream().await;
+    round_trip_a_command(&fabric, &js).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn connect_with_credentials_dials_and_the_returned_fabric_round_trips() {
+    let Some(url) = nats_url() else { return };
+    let auth = NatsAuth {
+        user: std::env::var("NATS_USER").unwrap_or_else(|_| "fabric".to_string()),
+        password: std::env::var("NATS_PASSWORD").unwrap_or_else(|_| "fabric".to_string()),
+    };
+    let fabric = Fabric::connect_with(&url, &auth)
+        .await
+        .expect("Fabric::connect_with dials");
+    let js = jetstream().await;
+    round_trip_a_command(&fabric, &js).await;
+}
+
+#[tokio::test]
+async fn connect_fails_loud_with_a_distinct_variant_on_an_unreachable_broker() {
+    let dialled = tokio::time::timeout(
+        Duration::from_secs(5),
+        Fabric::connect("nats://127.0.0.1:1"),
+    )
+    .await
+    .expect("dialling a closed port must fail fast, never hang");
+    match dialled {
+        Err(FabricError::Connect(_)) => {}
+        Err(other) => panic!("expected a distinct Connect variant, got {other:?}"),
+        Ok(_) => panic!("dialling an unreachable broker must fail loud"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ensure_command_consumer_creates_an_absent_durable_and_consumes() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let coords = deliver_coords();
+    let fabric = fabric().await;
+    let durable = format!("created_{}", Uuid::now_v7().simple());
+    fabric
+        .publish_command(&coords, &command("created", Uuid::now_v7()))
+        .await
+        .expect("publish command");
+
+    let mut consumer = fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("ensure creates the absent durable, never fails loud on its absence");
+    let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery from the just-created durable");
+    assert_eq!(delivery.payload().unwrap().payload.label, "created");
+    delivery.ack().await.expect("ack");
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ensure_command_consumer_fails_loud_when_the_stream_is_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+
+    let coords = deliver_coords();
+    let fabric = fabric().await;
+    let durable = format!("orphan_{}", Uuid::now_v7().simple());
+    match fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+    {
+        Err(FabricError::Consume {
+            kind: ConsumeErrorKind::NoStream,
+            ..
+        }) => {}
+        Err(other) => panic!("expected NoStream, got {other:?}"),
+        Ok(_) => panic!("the stream is gitops; an absent stream must fail loud, never auto-create"),
+    }
 }

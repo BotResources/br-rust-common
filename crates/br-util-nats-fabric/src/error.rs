@@ -38,6 +38,7 @@ pub enum ConsumeErrorKind {
     NoConsumer,
     ConsumerGone,
     Other,
+    NoDeliveryInfo,
 }
 
 impl std::fmt::Display for ConsumeErrorKind {
@@ -46,6 +47,7 @@ impl std::fmt::Display for ConsumeErrorKind {
             Self::NoStream => "no such stream",
             Self::NoConsumer => "no such consumer",
             Self::ConsumerGone => "consumer gone",
+            Self::NoDeliveryInfo => "delivery info absent",
             Self::Other => "consume failed",
         };
         f.write_str(s)
@@ -55,6 +57,8 @@ impl std::fmt::Display for ConsumeErrorKind {
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum FabricError {
+    #[error("connection to NATS failed: {0}")]
+    Connect(String),
     #[error("invalid coordinate: {0}")]
     Coord(#[from] CoordError),
     #[error("invalid kv key: {0}")]
@@ -80,6 +84,10 @@ pub enum FabricError {
     },
     #[error("payload on '{subject}' failed to deserialize: {detail}")]
     Decode { subject: String, detail: String },
+    #[error("revision conflict on kv key '{key}' (expected {expected})")]
+    RevisionConflict { key: String, expected: u64 },
+    #[error("kv key '{key}' already exists")]
+    KeyAlreadyExists { key: String },
     #[error("key/value store error: {0}")]
     Kv(String),
     #[error("serialization failed: {0}")]
@@ -87,6 +95,10 @@ pub enum FabricError {
 }
 
 impl FabricError {
+    pub(crate) fn connect(err: &async_nats::ConnectError) -> Self {
+        Self::Connect(err.to_string())
+    }
+
     pub(crate) fn from_publish(err: &async_nats::jetstream::context::PublishError) -> Self {
         Self::Publish {
             kind: err.kind().into(),
@@ -110,6 +122,17 @@ impl FabricError {
 
     pub(crate) fn kv(detail: impl std::fmt::Display) -> Self {
         Self::Kv(detail.to_string())
+    }
+
+    pub(crate) fn revision_conflict(key: impl Into<String>, expected: u64) -> Self {
+        Self::RevisionConflict {
+            key: key.into(),
+            expected,
+        }
+    }
+
+    pub(crate) fn key_already_exists(key: impl Into<String>) -> Self {
+        Self::KeyAlreadyExists { key: key.into() }
     }
 }
 

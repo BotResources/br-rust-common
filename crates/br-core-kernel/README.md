@@ -74,7 +74,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "v1.0.1" }
+br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "v1.0.2" }
 ```
 
 ---

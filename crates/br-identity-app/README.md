@@ -250,7 +250,7 @@ run_scope_declarations(
 
 ```toml
 [dependencies]
-br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "v1.0.1" }
+br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "v1.0.2" }
 ```
 
 ---

@@ -12,18 +12,11 @@ pub(crate) fn classify_get_stream(
     }
 }
 
-pub(crate) fn classify_consumer_info(
-    err: &async_nats::jetstream::context::ConsumerInfoError,
+pub(crate) fn classify_create_consumer(
+    err: &async_nats::jetstream::stream::ConsumerError,
 ) -> ConsumeErrorKind {
-    use async_nats::jetstream::context::ConsumerInfoErrorKind as K;
+    use async_nats::jetstream::stream::ConsumerErrorKind as K;
     match err.kind() {
-        K::NotFound => ConsumeErrorKind::NoConsumer,
-        K::StreamNotFound => ConsumeErrorKind::NoStream,
-        K::JetStream(e)
-            if e.error_code() == async_nats::jetstream::ErrorCode::CONSUMER_NOT_FOUND =>
-        {
-            ConsumeErrorKind::NoConsumer
-        }
         K::JetStream(e) if e.error_code() == async_nats::jetstream::ErrorCode::STREAM_NOT_FOUND => {
             ConsumeErrorKind::NoStream
         }
@@ -43,6 +36,18 @@ pub(crate) fn classify_messages_error(
     }
 }
 
+pub(crate) fn classify_ack_error(
+    err: &(dyn std::error::Error + Send + Sync + 'static),
+) -> ConsumeErrorKind {
+    use async_nats::client::PublishErrorKind as K;
+    match err.downcast_ref::<async_nats::client::PublishError>() {
+        Some(publish_err) if matches!(publish_err.kind(), K::Send) => {
+            ConsumeErrorKind::ConsumerGone
+        }
+        _ => ConsumeErrorKind::Other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +60,17 @@ mod tests {
         assert_eq!(go(K::MissingHeartbeat), ConsumeErrorKind::ConsumerGone);
         assert_eq!(go(K::NoResponders), ConsumeErrorKind::ConsumerGone);
         assert_eq!(go(K::Pull), ConsumeErrorKind::Other);
+    }
+
+    #[test]
+    fn classifies_a_send_ack_error_as_consumer_gone() {
+        let err = async_nats::client::PublishError::new(async_nats::client::PublishErrorKind::Send);
+        assert_eq!(classify_ack_error(&err), ConsumeErrorKind::ConsumerGone);
+    }
+
+    #[test]
+    fn classifies_an_unrelated_ack_error_as_other() {
+        let err = std::io::Error::other("not a publish error");
+        assert_eq!(classify_ack_error(&err), ConsumeErrorKind::Other);
     }
 }

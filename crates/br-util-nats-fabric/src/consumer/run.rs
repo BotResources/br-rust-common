@@ -7,7 +7,8 @@ use serde::de::DeserializeOwned;
 use br_core_integration::{IntegrationCommand, IntegrationEvent, MessageOutcome};
 
 use crate::classify::classify_messages_error;
-use crate::consumer::bind::bind_durable;
+use crate::consumer::bind::ensure_durable;
+use crate::consumer::config::ConsumerTuning;
 use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::{ConsumeErrorKind, FabricError};
 use crate::fabric::Fabric;
@@ -24,6 +25,30 @@ impl Fabric {
         &self,
         coords: &CommandCoords,
         durable: &str,
+        handler: H,
+        on_poison: P,
+    ) -> Result<(), FabricError>
+    where
+        T: DeserializeOwned,
+        H: FnMut(Delivery<IntegrationCommand<T>>) -> HFut,
+        HFut: Future<Output = MessageOutcome>,
+        P: FnMut(FabricError),
+    {
+        self.run_commands_with(
+            coords,
+            durable,
+            &ConsumerTuning::default(),
+            handler,
+            on_poison,
+        )
+        .await
+    }
+
+    pub async fn run_commands_with<T, H, HFut, P>(
+        &self,
+        coords: &CommandCoords,
+        durable: &str,
+        tuning: &ConsumerTuning,
         mut handler: H,
         mut on_poison: P,
     ) -> Result<(), FabricError>
@@ -33,8 +58,14 @@ impl Fabric {
         HFut: Future<Output = MessageOutcome>,
         P: FnMut(FabricError),
     {
-        let consumer =
-            bind_durable(self.context(), INTEGRATION_CMD, durable, &coords.subject()).await?;
+        let consumer = ensure_durable(
+            self.context(),
+            INTEGRATION_CMD,
+            durable,
+            &coords.subject(),
+            tuning,
+        )
+        .await?;
         run_inner::<IntegrationCommand<T>, _, _, _>(consumer, &mut handler, &mut on_poison).await
     }
 
@@ -42,6 +73,30 @@ impl Fabric {
         &self,
         coords: &EventCoords,
         durable: &str,
+        handler: H,
+        on_poison: P,
+    ) -> Result<(), FabricError>
+    where
+        T: DeserializeOwned,
+        H: FnMut(Delivery<IntegrationEvent<T>>) -> HFut,
+        HFut: Future<Output = MessageOutcome>,
+        P: FnMut(FabricError),
+    {
+        self.run_events_with(
+            coords,
+            durable,
+            &ConsumerTuning::default(),
+            handler,
+            on_poison,
+        )
+        .await
+    }
+
+    pub async fn run_events_with<T, H, HFut, P>(
+        &self,
+        coords: &EventCoords,
+        durable: &str,
+        tuning: &ConsumerTuning,
         mut handler: H,
         mut on_poison: P,
     ) -> Result<(), FabricError>
@@ -51,8 +106,14 @@ impl Fabric {
         HFut: Future<Output = MessageOutcome>,
         P: FnMut(FabricError),
     {
-        let consumer =
-            bind_durable(self.context(), INTEGRATION_EVT, durable, &coords.subject()).await?;
+        let consumer = ensure_durable(
+            self.context(),
+            INTEGRATION_EVT,
+            durable,
+            &coords.subject(),
+            tuning,
+        )
+        .await?;
         run_inner::<IntegrationEvent<T>, _, _, _>(consumer, &mut handler, &mut on_poison).await
     }
 }

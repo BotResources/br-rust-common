@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 use async_nats::jetstream::kv::Store;
@@ -6,7 +7,8 @@ use serde::de::DeserializeOwned;
 use crate::error::FabricError;
 use crate::fabric::Fabric;
 use crate::kv::codec::decode;
-use crate::kv::key::KvKey;
+use crate::kv::key::{KvKey, KvPrefix};
+use crate::kv::scan::{scan_entries, scan_keys};
 
 pub struct PublishedLanguageReader<V> {
     kv: Store,
@@ -34,5 +36,13 @@ where
         };
         let value = decode(key.as_str(), &bytes)?;
         Ok(Some(value))
+    }
+
+    pub async fn keys(&self, prefix: &KvPrefix) -> Result<Vec<KvKey>, FabricError> {
+        scan_keys(&self.kv, prefix).await
+    }
+
+    pub async fn entries(&self, prefix: &KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError> {
+        scan_entries(&self.kv, prefix).await
     }
 }

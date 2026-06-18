@@ -11,6 +11,332 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-06-18
+
+### Added
+
+- **`br-util-nats-fabric` — typed `KV_EPHEMERAL_AUTH` surface with
+  optimistic-concurrency (compare-and-swap) writes.** The Fabric now fixes a
+  second KV bucket, `EPHEMERAL_AUTH` (`KV_EPHEMERAL_AUTH`), alongside
+  `PUBLISHED_LANGUAGE`, exposed through a new `EphemeralAuthStore<V>` facade
+  (`open` binds the fixed bucket internally and fails loud if it is absent — no
+  auto-provisioning; the bucket-level TTL is declared at provisioning and the
+  opener only binds). The facade adds a **revision-checked write primitive** so a
+  consumer can drive optimistic concurrency:
+  - `get_with_revision(&KvKey) -> Result<Option<(V, Revision)>, FabricError>`
+    reads the current value and its `Revision` (fail-closed decode, consistent
+    with `PublishedLanguageReader`);
+  - `create(&KvKey, &V) -> Result<(), FabricError>` is the create path: it
+    occupies a key the caller believes free, succeeding both for a never-written
+    key and for one that previously lived then expired (TTL `max_age`) or was
+    deleted — both leave a KV tombstone at sequence `> 0`, and `create`
+    re-creates against it (the nominal refresh-family lifecycle). A currently
+    live key returns the new matchable `FabricError::KeyAlreadyExists { key }`;
+  - `update_if(&KvKey, &V, Revision) -> Result<(), FabricError>` is the rotate
+    path: it writes only when the supplied `Revision` is still the last one,
+    returning the new first-class, matchable
+    `FabricError::RevisionConflict { key, expected }` on a revision mismatch —
+    distinct from not-found, `KeyAlreadyExists`, transport (`Kv`) and `Decode`;
+  - `delete_if(&KvKey, Revision) -> Result<(), FabricError>` is the
+    revision-checked delete: it writes a delete tombstone (so a later
+    `get_with_revision` reads `Ok(None)`) only when the supplied `Revision` is
+    still the last one, returning the same matchable
+    `FabricError::RevisionConflict { key, expected }` on a mismatch and leaving
+    the key untouched — for logout-vs-rotation, where an explicit session
+    invalidation must not clobber a concurrent rotation;
+  - `delete(&KvKey) -> Result<(), FabricError>` is the unconditional delete
+    (delete counterpart of `put`), writing a delete tombstone regardless of the
+    revision chain;
+  - `put(&KvKey, &V)` is the unconditional write for the `revoke_family` wipe;
+  - `status()` exposes the bound bucket's **cached** KV state in the
+    bind-existing posture; it does not round-trip the broker and is **not** a
+    live reachability probe. The fail-loud liveness gate is `open()` (the real
+    bind round-trip), the same bind-existing, fail-loud posture as the other
+    facades.
+  `Revision` is a new public newtype over the NATS KV sequence; its
+  `new`/sequence accessor are crate-internal so a revision can only originate
+  from `get_with_revision` and be passed back to `update_if`/`delete_if`. The raw
+  `async_nats` KV `Store` is still never handed to a caller — the CAS contract is
+  the only sanctioned revision-aware path. This unblocks svc-auth's refresh-token
+  rotation moving off raw `async-nats` with the family-reuse-detection property
+  (atomic CAS, no degrade to last-write-wins) intact. Purely additive. Proven by
+  real-`nats-server` integration tests: concurrent `update_if` on the same
+  revision yields exactly one winner and one `RevisionConflict`, `create`
+  re-creates through a post-delete tombstone, `delete`/`delete_if` write a
+  tombstone (`delete_if` only against the current revision, conflicting and
+  leaving the key intact against a stale one), `create` on a live key returns
+  `KeyAlreadyExists`, the unconditional revoke wipe, bind-existing fail-loud when
+  the bucket is absent, and fail-closed decode on a malformed value. (#86)
+- **`br-util-nats-fabric` — per-key TTL, enumeration, and a change-watch on the
+  `EPHEMERAL_AUTH` store, completing the KV side of "talk to what exists, entirely
+  through the Fabric".** All purely additive on `EphemeralAuthStore<V>`:
+  - `create_with_ttl(&KvKey, &V, Duration)` is `create` carrying a **per-message
+    TTL** so a key can expire before the bucket-wide `max_age`. It uses NATS 2.11
+    per-message TTL via the native `async_nats` `create_with_ttl`; the TTL is set
+    per message, so it only **shortens** expiry below the bucket `max_age` and
+    requires the bucket to have been declared with per-message-TTL support at
+    provisioning. The lib binds and sets the TTL, it **never** provisions or
+    configures the bucket (gitops declares `max_age ≥ longest TTL` + TTL support).
+    Same matchable `KeyAlreadyExists` on a live key as `create`. **The per-message
+    TTL does not survive a CAS rotation:** the only public rotation path,
+    `update_if` → `async-nats` `Store::update`, rewrites without a TTL header
+    (there is no public CAS-update-with-TTL — `update_maybe_ttl` is private in
+    0.48 and 0.49.1), so a key rotated via `update_if` loses its `create_with_ttl`
+    TTL and reverts to the bucket `max_age`. `create_with_ttl` is therefore
+    positioned on its truly-covered case — a **one-time code** created once and
+    never rewritten; a refresh family whose TTL must be stable across rotations
+    gets its effective TTL from the bucket `max_age`, not the initial value.
+    **No `put_with_ttl` is offered:** an unconditional last-writer-wins write
+    carrying a per-key TTL is not part of the public `async-nats` KV API at any
+    current version (verified against 0.48.0, locked, and 0.49.1, latest — only the
+    CAS-flavoured `create_with_ttl` / `purge_*_with_ttl` exist publicly; the fields
+    needed to hand-roll an unconditional TTL'd put are `pub(crate)`). Faking it via
+    a uniform-TTL fallback is explicitly refused;
+  - `keys(&KvPrefix) -> Result<Vec<KvKey>, FabricError>` and
+    `entries(&KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError>` give the store
+    the same prefix-scoped enumeration as `PublishedLanguageReader` (reusing the
+    shared `kv::scan` helper): `keys` does not decode; `entries` is **fail-closed**
+    on an undecodable value (`FabricError::Decode` naming the key). Both exclude
+    deleted / purged / TTL-expired tombstones, consistent with `get_with_revision`;
+  - `watcher() -> EphemeralAuthWatcher<V>` opens a **change-watch** so a service
+    reacts to a revoke / rotation made elsewhere **without polling**.
+    `EphemeralAuthWatcher::watch(on_change)` runs the loop and invokes a
+    `FnMut(EphemeralAuthChange<V>)` per change — `EphemeralAuthChange::Set { key,
+    value }` (fail-closed decode) on a put, `EphemeralAuthChange::Removed { key }`
+    on a delete / purge — mirroring the Published-Language watch (same fail-closed
+    decode, same `health()` degraded/healthy transitions, same cancel-safety). The
+    watch loops until error or stream-end with no cancellation token; a caller stops
+    it by **dropping the future** (cancel-safe). `Removed` covers **TTL-expiry only
+    when the bucket is declared with delete-marker TTL** (`limit_markers` /
+    `allow_msg_ttl`) — a gitops provisioning constraint the lib never controls. The
+    raw `async_nats` KV `Store` / `Entry` is still never exposed; the typed change
+    is the only path. New public types `EphemeralAuthWatcher<V>` and
+    `EphemeralAuthChange<V>`. Purely additive (semver-checks vs `v1.0.1`:
+    non-breaking). Proven by real-`nats-server` integration tests: a `create_with_ttl`
+    key expires well before the longer bucket `max_age`, `keys`/`entries` enumerate
+    live keys and exclude a tombstoned one, `entries` fails closed on a malformed
+    value, the watch yields a `Set` then `Removed` change on put/delete, and a
+    `Removed` change on per-key TTL expiry. (#91)
+- **`br-util-nats-fabric` — typed durable consumer for the integration command /
+  event streams (the production work loop), create-or-bind.** The Fabric covered
+  publish and the one-shot correlated awaiter but had no typed surface to *durably
+  consume* the integration command stream, so a receiver (svc-notifier's intake)
+  hand-rolled the whole loop on raw `async_nats`. New entry points
+  **create-or-bind** a caller-named durable and hand back a typed consumer. The
+  **dimensioning boundary**: a stream and a KV bucket are infra (gitops-declared,
+  bind-only, fail-loud); a **durable consumer carries the service's processing
+  semantics** (ack policy, `ack_wait`, `max_ack_pending`, `max_deliver`,
+  deliver/replay) and is cheap + idempotent to (re)create, so the **fabric creates
+  it** (via `create_consumer`, create-or-update — two replicas creating the same
+  durable with the same config share it; a pre-existing durable converges to the
+  fabric's config, narrowing a durable left widened on `integration.evt.>` to the
+  coordinate filter). The fabric **owns the `ConsumerConfig`** (the contract):
+  durable name = the caller's durable, `filter_subject(s)` = the rendered
+  coordinate set, `ack_policy = Explicit`, `ack_wait = 30s`,
+  `max_ack_pending = 256`, `max_deliver = -1` (unlimited — poison handling is the
+  caller's `term()`, never a silent drop-on-budget), `deliver_policy = All`,
+  `replay_policy = Instant`. The raw `async_nats` `Config` is **never** in a public
+  signature — the caller passes only typed coords + a durable name:
+  - `Fabric::ensure_command_consumer::<T>(&CommandCoords, durable) -> Result<CommandConsumer<T>, FabricError>`
+    and `Fabric::ensure_event_consumer::<T>(&EventCoords, durable) -> Result<EventConsumer<T>, FabricError>`
+    create-or-bind the durable with the fabric's config and **fail loud only on an
+    absent stream** (`FabricError::Consume { kind: NoStream }` — the stream is
+    gitops);
+  - `Fabric::ensure_event_consumer_many::<T>(&[&EventCoords], durable)` is the
+    fan-in case — one durable over several event coordinates (the svc-pm-style
+    consumer reading `user.created` + `user.updated` + `group.created`); the fabric
+    sets `filter_subjects` to the rendered set, so the consumer cannot silently
+    widen. An **empty coordinate set** is rejected before any create with
+    `FabricError::FilterMismatch` (it would vacuum the whole stream). There is
+    **no command-side fan-in** (a command durable is receiver-owned, one
+    `aggregate.verb`); `ensure_event_consumer` is the 1-coordinate case;
+  - `IntegrationConsumer<E>::recv(&mut self) -> Result<Option<Delivered<E>>, FabricError>`
+    yields the next typed delivery (`None` when the stream ends, a matchable
+    transport `FabricError::Consume` on a broker/consumer-gone error);
+  - `Delivered<E>` carries the per-delivery acknowledgement and inspection
+    surface: `payload() -> Result<&E, &FabricError>` (a malformed wire frame is
+    **fail-closed** — it surfaces as a `FabricError::Decode` the caller can route
+    to `term()`, never a silent drop and never a panic that kills the loop),
+    `subject()`, `delivered_count() -> Option<i64>` (from
+    `message.info().delivered`; **`None` when the delivery info is absent** — the
+    count that drives the poison budget is never fabricated, so the absence is
+    observable and the frame is independently routable to `term`, with
+    `payload()` then a `FabricError::Consume { kind: NoDeliveryInfo }` — never a
+    silent `1` that would let a poison frame evade the redelivery budget
+    forever), and the three JetStream ack outcomes typed as methods — `ack()`,
+    `nak(Option<Duration>)`, `term()`. An ack-path transport failure is
+    classified (`ConsumerGone` when the consumer/responders are gone, `Other`
+    otherwise), the same granularity the `recv()` side already surfaces. No raw
+    `async_nats` `Message` / `Consumer` / `Context` / `AckKind` is exposed; the
+    escape hatch stays closed, same posture as the KV facades and the awaiter.
+  Type aliases `CommandConsumer<T> = IntegrationConsumer<IntegrationCommand<T>>`
+  and `EventConsumer<T> = IntegrationConsumer<IntegrationEvent<T>>`. The existing
+  closure-based `run_commands`/`run_events` keep their signatures and are now
+  create-or-bind on the same config. The retained `verify_command_durable` /
+  `verify_event_durable` (now create-or-bind readiness gates) delegate to the
+  honestly-named `ensure_command_durable` / `ensure_event_durable`. Purely
+  additive vs `v1.0.1` (the `ensure_*` consumer entry points are new this version;
+  the new `ConsumeErrorKind::NoDeliveryInfo` rides the `#[non_exhaustive]` enum;
+  the `FilterMismatch` variant is repurposed — no longer a filter-verification failure, it now guards against an empty coordinate set). With
+  create-or-bind replacing `get_consumer` (fail-loud) on the consumer path,
+  `ConsumeErrorKind::NoConsumer` is no longer produced by the consumer path —
+  binding never fails on an absent durable, it creates it — but the variant is
+  retained on the `#[non_exhaustive]` enum for compatibility (removing it would be
+  breaking). Proven by
+  real-`nats-server` integration tests: create-or-bind then ack with no
+  redelivery, two `ensure_*` calls on the same durable sharing one consumer,
+  `nak(delay)` redelivery with `delivered_count` increment, a poison frame routed
+  to `term` with the loop surviving and the next frame still delivered,
+  `delivered_count` tracking attempts across redeliveries, a pre-existing widened
+  durable converging to the fabric's filter, `ensure_*` creating an absent durable
+  and consuming, an empty-coordinate-set rejection, and fail-loud only when the
+  **stream** is absent (`NoStream`); plus unit tests that the info-absent path
+  surfaces `NoDeliveryInfo` (not a fabricated count), that a `Send` ack failure
+  classifies as `ConsumerGone`, and that the owned `ConsumerConfig` carries the
+  documented defaults. Unblocks svc-notifier's intake migrating off raw
+  `async-nats` (#80). (#90)
+- **`br-util-nats-fabric` — tunable durable ack timing + the JetStream working
+  ack for long-running handlers.** The durable consumer hardcoded `ack_wait = 30s`
+  and `max_ack_pending = 256`, so a service whose handler legitimately outlasts 30s
+  had no way to stop the server redelivering the frame mid-processing. Two additions,
+  both purely additive on the unreleased v1.0.2 surface:
+  - `ConsumerTuning { ack_wait: Duration, max_ack_pending: i64 }` is the **only**
+    caller-tunable slice of the durable's config; `ConsumerTuning::default()` is the
+    `30s` / `256` defaults. `max_deliver = -1`, `ack_policy = Explicit`,
+    `deliver_policy = All` and `replay_policy = Instant` stay fixed (semantic, not
+    knobs), and the raw `async_nats` `pull::Config` is **never** exposed — the escape
+    hatch stays closed. Each consumer entry point gains a `_with` variant taking
+    `&ConsumerTuning` — `ensure_command_consumer_with`, `ensure_event_consumer_with`,
+    `ensure_event_consumer_many_with`, `run_commands_with`, `run_events_with`; the
+    no-suffix forms delegate with `ConsumerTuning::default()`, so existing callers
+    are unaffected.
+  - `Delivered::progress(&self) -> Result<(), FabricError>` sends the JetStream
+    working/in-progress ack, **resetting the server's `ack_wait` timer** without
+    acking or consuming the frame, so a handler that may exceed `ack_wait` calls it
+    periodically to avoid redelivery-while-processing; a final `ack()` / `nak()` /
+    `term()` is still required, and the transport failure maps to `FabricError` like
+    `ack` does. No raw `AckKind` crosses the public API.
+  Proven by real-`nats-server` integration tests: `ensure_event_consumer_with` a
+  custom `ack_wait` / `max_ack_pending` reflected on the real `consumer_info().config`
+  (with `max_deliver` left fixed), and `progress()` holding a frame in flight well
+  past a 2s `ack_wait` with no redelivery before the final `ack`. (#90)
+- **`br-util-nats-fabric` — the one-shot correlated awaiter now binds the command
+  stream too.** `await_event(s)` / `CorrelatedAwaiter` covered `INTEGRATION_EVT`
+  only, so a consumer needing to observe a command in flight (e.g. a `declare` a
+  service is about to consume) had to drop to raw `async_nats`. New symmetric
+  command-side entry points mirror the event surface:
+  - `Fabric::await_command(&CommandCoords) -> Result<CorrelatedAwaiter, FabricError>`
+    opens a subscription scoped to one `CommandCoords` on the fixed command
+    stream;
+  - `Fabric::await_commands(&[&CommandCoords]) -> Result<CorrelatedAwaiter, FabricError>`
+    awaits **one of several** commands.
+  Both bind the fixed `INTEGRATION_CMD` stream, **fail loud** with the matchable
+  `FabricError::Consume { kind: NoStream, .. }` when it is absent (never
+  auto-create), and reuse the existing `CorrelatedAwaiter` /
+  `await_correlation(correlation_id, deadline)` — the returned awaiter, its
+  `CorrelatedMatch`, and the correlation probe are shared with the event side
+  unchanged (both envelopes carry an `EventMetadata`). The caller still passes
+  typed coordinates, never a stream or filter string, and no raw `async_nats`
+  `Message` / `Subscriber` / `Context` is exposed. This promotes the command-await
+  stand-in the e2e harness hand-rolled on raw `async-nats` into the frozen lib.
+  Purely additive. Proven by real-`nats-server` integration tests: match by
+  correlation on the command stream, one-of-several coords selection, `None` at
+  the deadline, and bind fail-loud when the command stream is absent. (#84)
+- **`br-util-nats-fabric` — typed prefix enumeration on
+  `PublishedLanguageReader`.** The reader exposed only `get(&key)` (exact-key),
+  so a Published-Language consumer that must project **all** entries under a
+  prefix (e.g. the directory projecting every user/group during its
+  bootstrap/reconcile scan) had to drop to a raw `async_nats` `Store` key-scan.
+  Two additive methods close that gap, generic over `V: DeserializeOwned`:
+  - `keys(&KvPrefix) -> Result<Vec<KvKey>, FabricError>` returns the validated
+    `KvKey`s under the prefix (sorted, prefix-scoped by `KvPrefix::matches`);
+  - `entries(&KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError>` returns the
+    decoded values under the prefix, **fail-closed** — an undecodable value is an
+    explicit `FabricError::Decode` naming the key, never a silent skip, and a
+    broker/KV outage surfaces as `FabricError::Kv`, never an empty result.
+  Both bind the fixed `PUBLISHED_LANGUAGE` bucket internally (no provisioning) and
+  never expose the raw `Store`; the escape hatch stays closed. This is the surface
+  `br-util-directory` would use for its bootstrap/reconcile scan and lets the
+  `br-test-harness` `pl_list` stand-in retire its raw key-scan. Purely additive.
+  Proven by real-`nats-server` integration tests: a multi-entry prefix scan
+  returns exactly its own keys/entries (prefix-scoped, a sibling prefix excluded)
+  and fails closed on a malformed value. (#85)
+- **`br-util-nats-fabric` — boot-time connection helpers on `Fabric`.** The
+  fabric now owns the boot dial so a service never reaches for `async_nats`
+  directly: `Fabric::connect(url: &str) -> Result<Fabric, FabricError>` dials
+  anonymously, and `Fabric::connect_with(url: &str, auth: &NatsAuth) ->
+  Result<Fabric, FabricError>` dials with a user/password
+  (`NatsAuth { user, password }` — a typed pair that keeps `async_nats` /
+  `ConnectOptions` out of the public signature). Both build the JetStream context
+  internally and return a ready `Fabric`. A failed dial surfaces as the distinct,
+  matchable `FabricError::Connect(String)` (never conflated with publish/consume/
+  kv). Connecting is not provisioning — no JetStream object is created; in-cluster
+  transport is plaintext per the trust model, so there is no TLS/credentials-file
+  surface. `Fabric::new(jetstream::Context)` is unchanged (tests and advanced
+  callers that already own a context). Purely additive. Proven by real-`nats-
+  server` integration tests: a `connect` round-trip (publish + consume), a
+  `connect_with` round-trip, and a fail-loud `Connect` on an unreachable broker.
+  `NatsAuth` carries a manual `Debug` that masks the password (renders it as
+  `***`, never the cleartext value) so a later debug-print can never leak the
+  credential, and the fail-loud `Connect` test runs broker-free everywhere as a
+  portable error-contract test. Unblocks svc-auth and svc-notifier confining
+  their boot dial to the lib (#89).
+- **`br-util-nats-fabric` — fan-in event consumer over several coordinates on one
+  durable (create-or-bind).** `Fabric::ensure_event_consumer_many::<T>(&[&EventCoords], durable) ->
+  Result<EventConsumer<T>, FabricError>` create-or-binds **one** durable that fans
+  in several event coordinates (the svc-pm-style consumer reading
+  `user.created` + `user.updated` + `group.created` on a single durable). The
+  fabric sets the durable's `filter_subjects` to the rendered set, so a fan-in
+  consumer cannot silently widen beyond its declared coordinates — a pre-existing
+  durable (even one left widened on `integration.evt.>`) converges to that set.
+  An **empty coordinate set** is rejected before any create with
+  `FabricError::FilterMismatch` (it would vacuum the whole stream). `T` is the
+  caller's union type, deserialized per frame and **fail-closed** exactly as the
+  single-coordinate path. `ensure_event_consumer` is the 1-coordinate case. There
+  is **no command-side fan-in** (a command durable is receiver-owned, one
+  `aggregate.verb`) and the wildcard subscription stays rejected. Purely additive.
+  Proven by a real-`nats-server` integration test: two facts consumed and acked on
+  one durable with no redelivery, and an empty-coordinate-set rejected with
+  `FilterMismatch`. (#91)
+- **`br-util-nats-fabric` — graceful consumer drain (SIGTERM-safe shutdown).**
+  `IntegrationConsumer::drain(self)` consumes the consumer and closes the
+  underlying subscription cleanly (the pull task is aborted and the inbox
+  unsubscribed on drop) — it stops pulling without panicking and without losing a
+  message. `recv()` is documented **cancel-safe** (a frame is only consumed once
+  yielded as a `Delivered<E>`, and the ack lives on that owned value, not inside
+  `recv()`), so the SIGTERM-safe shape races `recv()` against the shutdown signal
+  in a `tokio::select!`, finishes the in-flight frame's ack on the held
+  `Delivered<E>`, then `drain()`s. A frame whose ack already completed is not
+  redelivered; a frame still un-acked at drain is left un-acked and redelivered
+  after `ack_wait` (at-least-once preserved, no silent drop). The shutdown
+  contract is documented in the README. Purely additive. Proven by a
+  real-`nats-server` integration test: an in-flight message acked before drain is
+  not redelivered after a rebind. (#91)
+- **`br-util-nats-fabric` — idempotent publish (`Nats-Msg-Id` dedup).**
+  `Fabric::publish_command_with_id` / `publish_event_with_id` are the plain
+  `publish_*` variants that additionally set the JetStream `Nats-Msg-Id` header
+  from a caller-supplied id (typically the domain event's UUIDv7), so two
+  publishes carrying the same id within the stream's duplicate window are deduped
+  by the broker to a single stored message — a retry after an ambiguous ack does
+  not double-write. The existing `publish_*` are untouched. The README states the
+  **sanctioned reliable / exactly-once-ish path is the `outbox` feature**; these
+  dedup-id variants are for callers managing their own idempotency. The caller
+  owns the id; the fabric never mints one. Purely additive. Proven by a
+  real-`nats-server` integration test: the same `Nats-Msg-Id` published twice
+  within the window yields exactly one stored message. (#91)
+- **`br-util-nats-fabric` — fabric reachability probe.**
+  `Fabric::reachable() -> bool` and `Fabric::connection_state() -> ConnectionState`
+  expose the client's **locally-cached** connection view for a readiness/liveness
+  gate (`ConnectionState` is the fabric's own `Pending` / `Connected` /
+  `Disconnected` enum — the raw `async_nats` `State` is never exposed). The README
+  is honest that this is the cached view `async_nats` maintains, **not** a
+  guaranteed live round-trip. For a true round-trip, `Fabric::ping()` flushes the client to the
+  server and surfaces a `FabricError::Connect` if the broker does not answer —
+  distinctly named so the cheap cached view is never mistaken for the round-trip.
+  Purely additive. Proven by a real-`nats-server` integration test:
+  `connection_state()` reads `Connected`, `reachable()` is true, and `ping()`
+  round-trips against a live broker. (#91)
+
 ## [1.0.1] — 2026-06-18
 
 ### Fixed

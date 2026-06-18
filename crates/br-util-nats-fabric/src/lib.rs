@@ -11,17 +11,20 @@ mod outbox;
 mod stream;
 
 pub use awaiter::{CorrelatedAwaiter, CorrelatedMatch};
-pub use consumer::Delivery;
+pub use consumer::{
+    CommandConsumer, ConsumerTuning, Delivered, Delivery, EventConsumer, IntegrationConsumer,
+};
 pub use coords::{
     Aggregate, Bc, CommandCoords, CoordError, EventCoords, EventSubjectParseError, PastFact, Verb,
     command_subject, event_subject, parse_event_subject,
 };
 pub use error::{ConsumeErrorKind, FabricError, PublishErrorKind};
-pub use fabric::Fabric;
+pub use fabric::{ConnectionState, Fabric, NatsAuth};
 pub use kv::{
+    EphemeralAuthChange, EphemeralAuthStore, EphemeralAuthWatcher, KV_EPHEMERAL_AUTH,
     KV_PUBLISHED_LANGUAGE, KvKey, KvKeyError, KvOp, KvPrefix, ProjectionError, ProjectionSink,
-    PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, WatchHealth,
-    WatchHealthReceiver, reconcile,
+    PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, Revision,
+    WatchHealth, WatchHealthReceiver, reconcile,
 };
 pub use outbox::OutboxRecord;
 pub use stream::{INTEGRATION_CMD, INTEGRATION_EVT};

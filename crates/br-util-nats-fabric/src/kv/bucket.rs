@@ -4,11 +4,19 @@ use crate::error::FabricError;
 use crate::fabric::Fabric;
 
 pub const KV_PUBLISHED_LANGUAGE: &str = "PUBLISHED_LANGUAGE";
+pub const KV_EPHEMERAL_AUTH: &str = "EPHEMERAL_AUTH";
 
 impl Fabric {
     pub(crate) async fn published_language(&self) -> Result<Store, FabricError> {
         self.context()
             .get_key_value(KV_PUBLISHED_LANGUAGE)
+            .await
+            .map_err(FabricError::kv)
+    }
+
+    pub(crate) async fn ephemeral_auth(&self) -> Result<Store, FabricError> {
+        self.context()
+            .get_key_value(KV_EPHEMERAL_AUTH)
             .await
             .map_err(FabricError::kv)
     }
@@ -21,5 +29,10 @@ mod tests {
     #[test]
     fn bucket_constant_is_the_frozen_name() {
         assert_eq!(KV_PUBLISHED_LANGUAGE, "PUBLISHED_LANGUAGE");
+    }
+
+    #[test]
+    fn ephemeral_auth_bucket_constant_is_the_frozen_name() {
+        assert_eq!(KV_EPHEMERAL_AUTH, "EPHEMERAL_AUTH");
     }
 }
