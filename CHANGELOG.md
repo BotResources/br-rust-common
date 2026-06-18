@@ -177,7 +177,7 @@ release; they remain reachable through the historical per-crate tags
   honestly-named `ensure_command_durable` / `ensure_event_durable`. Purely
   additive vs `v1.0.1` (the `ensure_*` consumer entry points are new this version;
   the new `ConsumeErrorKind::NoDeliveryInfo` rides the `#[non_exhaustive]` enum;
-  the unused-since-create-or-bind `FilterMismatch` variant is retained). With
+  the `FilterMismatch` variant is repurposed — no longer a filter-verification failure, it now guards against an empty coordinate set). With
   create-or-bind replacing `get_consumer` (fail-loud) on the consumer path,
   `ConsumeErrorKind::NoConsumer` is no longer produced by the consumer path —
   binding never fails on an absent durable, it creates it — but the variant is
