@@ -57,6 +57,13 @@ impl<E> Delivered<E> {
         self.payload.as_ref()
     }
 
+    pub async fn progress(&self) -> Result<(), FabricError> {
+        self.message
+            .ack_with(AckKind::Progress)
+            .await
+            .map_err(|err| FabricError::consume(classify_ack_error(err.as_ref()), err.to_string()))
+    }
+
     pub async fn ack(self) -> Result<(), FabricError> {
         self.apply(AckKind::Ack).await
     }

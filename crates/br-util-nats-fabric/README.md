@@ -166,11 +166,27 @@ The fabric owns the durable's `ConsumerConfig` — the contract is:
 | `durable_name`   | the caller's durable           | the only caller input besides the coords                       |
 | `filter_subject(s)` | the rendered coordinate set | the fabric derives it; a single coord on `filter_subject`, a fan-in set on `filter_subjects` |
 | `ack_policy`     | `Explicit`                     | per-delivery ack, the pull work-loop contract                  |
-| `ack_wait`       | 30s                            | redelivery grace for a frame in flight                         |
-| `max_ack_pending`| 256                            | bounded in-flight pull window, back-pressure                   |
+| `ack_wait`       | 30s (tunable)                  | redelivery grace for a frame in flight — `ConsumerTuning::ack_wait` |
+| `max_ack_pending`| 256 (tunable)                  | bounded in-flight pull window, back-pressure — `ConsumerTuning::max_ack_pending` |
 | `max_deliver`    | -1 (unlimited)                 | poison handling is the caller's `term()`, not a silent drop-on-budget |
 | `deliver_policy` | `All`                          | a fresh durable replays the stream from the start              |
 | `replay_policy`  | `Instant`                      | catch-up at full speed, not original pacing                    |
+
+Two settings are caller-tunable through `ConsumerTuning { ack_wait, max_ack_pending }`
+— a service with long-running handlers raises `ack_wait` so a frame in flight is
+not redelivered while still being processed, and sizes `max_ack_pending` to its
+concurrency. `max_ack_pending` follows JetStream wire semantics — use `>= 1` for a
+bounded back-pressure window; `0` or a negative value means **unbounded** (no
+back-pressure), so set it deliberately. `ConsumerTuning::default()` is the `30s` /
+`256` row above. The rest
+of the config is **not** tunable: `max_deliver = -1`, `ack_policy = Explicit`,
+`deliver_policy = All` and `replay_policy = Instant` are semantic, not knobs, and
+the raw `async_nats` `pull::Config` is never exposed — the escape hatch stays
+closed. Each consumer entry point has a `_with` variant taking `&ConsumerTuning`
+(`ensure_command_consumer_with`, `ensure_event_consumer_with`,
+`ensure_event_consumer_many_with`, `run_commands_with`, `run_events_with`); the
+no-suffix forms delegate with `ConsumerTuning::default()`, so existing callers are
+unaffected.
 
 The handler returns a `br_core_integration::MessageOutcome`
 (`Ack` / `Nak` / `Term`); a payload that fails to decode is `Term`-ed and routed
@@ -239,6 +255,12 @@ while let Some(delivery) = consumer.recv().await? {
 - `ack()`, `nak(Option<Duration>)`, `term()` are the three typed ack outcomes.
   An ack-path transport failure is classified: `ConsumerGone` when the
   consumer/responders are gone, `Other` otherwise.
+- `progress()` sends the JetStream **working ack** on a `&Delivered<E>`: it
+  **resets the server's `ack_wait` timer** without acking or consuming the frame,
+  so a handler that may exceed `ack_wait` calls it periodically to avoid being
+  redelivered mid-processing. It does not finalise the delivery — a final
+  `ack()` / `nak()` / `term()` is still required — and maps its transport failure
+  to `FabricError` exactly as `ack` does.
 - No raw `async_nats` `Message` / `Consumer` / `Context` / `AckKind` is exposed.
   `CommandConsumer<T>` / `EventConsumer<T>` alias
   `IntegrationConsumer<IntegrationCommand<T>>` /

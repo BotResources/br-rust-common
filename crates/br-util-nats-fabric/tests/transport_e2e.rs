@@ -3,7 +3,8 @@ use std::time::Duration;
 use br_core_integration::{EventMetadata, IntegrationEvent};
 use br_core_kernel::{Actor, UserId};
 use br_util_nats_fabric::{
-    Aggregate, Bc, ConnectionState, EventCoords, Fabric, FabricError, INTEGRATION_EVT, PastFact,
+    Aggregate, Bc, ConnectionState, ConsumerTuning, EventCoords, Fabric, FabricError,
+    INTEGRATION_EVT, PastFact,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -347,6 +348,109 @@ async fn idempotent_publish_dedups_the_same_message_id_within_the_window() {
     assert_eq!(
         info.state.messages, 1,
         "the duplicate Nats-Msg-Id must be deduped to a single stored message"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ensure_with_threads_the_custom_tuning_onto_the_real_durable() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_event_stream(&js, Duration::from_secs(2)).await;
+
+    let durable = format!("tuned_{}", Uuid::now_v7().simple());
+    let user = user_created_coords();
+    let fabric = fabric().await;
+    let tuning = ConsumerTuning {
+        ack_wait: Duration::from_secs(90),
+        max_ack_pending: 16,
+    };
+
+    let consumer = fabric
+        .ensure_event_consumer_with::<Payload>(&user, &durable, &tuning)
+        .await
+        .expect("ensure_with creates the durable with the custom tuning");
+    consumer.drain().await;
+
+    let stream = js.get_stream(INTEGRATION_EVT).await.unwrap();
+    let info = stream.consumer_info(&durable).await.expect("consumer info");
+    assert_eq!(
+        info.config.ack_wait,
+        Duration::from_secs(90),
+        "the caller's ack_wait is the durable's ack_wait"
+    );
+    assert_eq!(
+        info.config.max_ack_pending, 16,
+        "the caller's max_ack_pending is the durable's max_ack_pending"
+    );
+    assert_eq!(
+        info.config.max_deliver, -1,
+        "max_deliver stays operator-ratified, not caller-tunable"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn progress_resets_ack_wait_so_a_long_handler_is_not_redelivered_mid_processing() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_event_stream(&js, Duration::from_secs(10)).await;
+
+    let durable = format!("progress_{}", Uuid::now_v7().simple());
+    let user = user_created_coords();
+    let fabric = fabric().await;
+    let tuning = ConsumerTuning {
+        ack_wait: Duration::from_secs(2),
+        max_ack_pending: 256,
+    };
+    fabric
+        .publish_event(&user, &event("slow-me"))
+        .await
+        .expect("publish event");
+
+    let mut consumer = fabric
+        .ensure_event_consumer_with::<Payload>(&user, &durable, &tuning)
+        .await
+        .expect("ensure durable with a short ack_wait");
+
+    let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery");
+    assert_eq!(delivery.payload().unwrap().payload.label, "slow-me");
+
+    for _ in 0..4 {
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        delivery
+            .progress()
+            .await
+            .expect("working ack resets the server's ack_wait timer");
+    }
+
+    let no_redelivery = tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await;
+    assert!(
+        no_redelivery.is_err(),
+        "periodic progress() held the frame in flight well past the 2s ack_wait — no redelivery mid-processing"
+    );
+
+    delivery
+        .ack()
+        .await
+        .expect("the final ack is still required after progress()");
+
+    let mut rebound = fabric
+        .ensure_event_consumer_with::<Payload>(&user, &durable, &tuning)
+        .await
+        .expect("re-ensure durable");
+    let after_ack = tokio::time::timeout(Duration::from_secs(3), rebound.recv()).await;
+    assert!(
+        after_ack.is_err(),
+        "the acked frame must not be redelivered"
     );
 
     let _ = js.delete_stream(INTEGRATION_EVT).await;

@@ -195,6 +195,31 @@ release; they remain reachable through the historical per-crate tags
   classifies as `ConsumerGone`, and that the owned `ConsumerConfig` carries the
   documented defaults. Unblocks svc-notifier's intake migrating off raw
   `async-nats` (#80). (#90)
+- **`br-util-nats-fabric` — tunable durable ack timing + the JetStream working
+  ack for long-running handlers.** The durable consumer hardcoded `ack_wait = 30s`
+  and `max_ack_pending = 256`, so a service whose handler legitimately outlasts 30s
+  had no way to stop the server redelivering the frame mid-processing. Two additions,
+  both purely additive on the unreleased v1.0.2 surface:
+  - `ConsumerTuning { ack_wait: Duration, max_ack_pending: i64 }` is the **only**
+    caller-tunable slice of the durable's config; `ConsumerTuning::default()` is the
+    `30s` / `256` defaults. `max_deliver = -1`, `ack_policy = Explicit`,
+    `deliver_policy = All` and `replay_policy = Instant` stay fixed (semantic, not
+    knobs), and the raw `async_nats` `pull::Config` is **never** exposed — the escape
+    hatch stays closed. Each consumer entry point gains a `_with` variant taking
+    `&ConsumerTuning` — `ensure_command_consumer_with`, `ensure_event_consumer_with`,
+    `ensure_event_consumer_many_with`, `run_commands_with`, `run_events_with`; the
+    no-suffix forms delegate with `ConsumerTuning::default()`, so existing callers
+    are unaffected.
+  - `Delivered::progress(&self) -> Result<(), FabricError>` sends the JetStream
+    working/in-progress ack, **resetting the server's `ack_wait` timer** without
+    acking or consuming the frame, so a handler that may exceed `ack_wait` calls it
+    periodically to avoid redelivery-while-processing; a final `ack()` / `nak()` /
+    `term()` is still required, and the transport failure maps to `FabricError` like
+    `ack` does. No raw `AckKind` crosses the public API.
+  Proven by real-`nats-server` integration tests: `ensure_event_consumer_with` a
+  custom `ack_wait` / `max_ack_pending` reflected on the real `consumer_info().config`
+  (with `max_deliver` left fixed), and `progress()` holding a frame in flight well
+  past a 2s `ack_wait` with no redelivery before the final `ack`. (#90)
 - **`br-util-nats-fabric` — the one-shot correlated awaiter now binds the command
   stream too.** `await_event(s)` / `CorrelatedAwaiter` covered `INTEGRATION_EVT`
   only, so a consumer needing to observe a command in flight (e.g. a `declare` a

@@ -1,4 +1,5 @@
 use crate::consumer::bind::ensure_durable;
+use crate::consumer::config::ConsumerTuning;
 use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::FabricError;
 use crate::fabric::Fabric;
@@ -10,7 +11,14 @@ impl Fabric {
         coords: &CommandCoords,
         durable: &str,
     ) -> Result<(), FabricError> {
-        ensure_durable(self.context(), INTEGRATION_CMD, durable, &coords.subject()).await?;
+        ensure_durable(
+            self.context(),
+            INTEGRATION_CMD,
+            durable,
+            &coords.subject(),
+            &ConsumerTuning::default(),
+        )
+        .await?;
         Ok(())
     }
 
@@ -19,7 +27,14 @@ impl Fabric {
         coords: &EventCoords,
         durable: &str,
     ) -> Result<(), FabricError> {
-        ensure_durable(self.context(), INTEGRATION_EVT, durable, &coords.subject()).await?;
+        ensure_durable(
+            self.context(),
+            INTEGRATION_EVT,
+            durable,
+            &coords.subject(),
+            &ConsumerTuning::default(),
+        )
+        .await?;
         Ok(())
     }
 
