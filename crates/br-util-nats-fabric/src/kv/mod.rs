@@ -1,18 +1,22 @@
 mod bucket;
 mod codec;
 mod consumer;
+mod ephemeral_auth;
 mod health;
 mod key;
 mod publisher;
 mod reader;
 mod reconcile;
+mod revision;
 mod sink;
 
-pub use bucket::KV_PUBLISHED_LANGUAGE;
+pub use bucket::{KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE};
 pub use consumer::PublishedLanguageConsumer;
+pub use ephemeral_auth::EphemeralAuthStore;
 pub use health::{WatchHealth, WatchHealthReceiver};
 pub use key::{KvKey, KvKeyError, KvPrefix};
 pub use publisher::PublishedLanguagePublisher;
 pub use reader::PublishedLanguageReader;
 pub use reconcile::{KvOp, reconcile};
+pub use revision::Revision;
 pub use sink::{ProjectionError, ProjectionSink};

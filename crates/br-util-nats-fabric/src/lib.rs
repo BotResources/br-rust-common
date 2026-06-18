@@ -19,8 +19,9 @@ pub use coords::{
 pub use error::{ConsumeErrorKind, FabricError, PublishErrorKind};
 pub use fabric::Fabric;
 pub use kv::{
-    KV_PUBLISHED_LANGUAGE, KvKey, KvKeyError, KvOp, KvPrefix, ProjectionError, ProjectionSink,
-    PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, WatchHealth,
+    EphemeralAuthStore, KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE, KvKey, KvKeyError, KvOp,
+    KvPrefix, ProjectionError, ProjectionSink, PublishedLanguageConsumer,
+    PublishedLanguagePublisher, PublishedLanguageReader, Revision, WatchHealth,
     WatchHealthReceiver, reconcile,
 };
 pub use outbox::OutboxRecord;

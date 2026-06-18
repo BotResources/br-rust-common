@@ -42,7 +42,7 @@ composition logic.
 
 ```toml
 [dependencies]
-br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "v1.0.1" }
+br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "v1.0.2" }
 ```
 
 ---

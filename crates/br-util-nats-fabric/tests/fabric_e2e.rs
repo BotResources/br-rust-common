@@ -5,9 +5,10 @@ use std::time::Duration;
 use br_core_integration::{EventMetadata, IntegrationCommand, IntegrationEvent, MessageOutcome};
 use br_core_kernel::{Actor, UserId};
 use br_util_nats_fabric::{
-    Aggregate, Bc, CommandCoords, EventCoords, Fabric, FabricError, INTEGRATION_CMD,
-    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, KvKey, KvPrefix, PastFact, ProjectionSink,
-    PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, Verb,
+    Aggregate, Bc, CommandCoords, EphemeralAuthStore, EventCoords, Fabric, FabricError,
+    INTEGRATION_CMD, INTEGRATION_EVT, KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE, KvKey, KvPrefix,
+    PastFact, ProjectionSink, PublishedLanguageConsumer, PublishedLanguagePublisher,
+    PublishedLanguageReader, Revision, Verb,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -430,4 +431,275 @@ async fn watch_delivers_a_live_slash_keyed_directory_put() {
 
     watcher.abort();
     let _ = store.purge(&key).await;
+}
+
+async fn ensure_ephemeral_auth_bucket(
+    js: &async_nats::jetstream::Context,
+) -> async_nats::jetstream::kv::Store {
+    if let Ok(store) = js.get_key_value(KV_EPHEMERAL_AUTH).await {
+        return store;
+    }
+    js.create_key_value(async_nats::jetstream::kv::Config {
+        bucket: KV_EPHEMERAL_AUTH.to_string(),
+        history: 8,
+        max_age: Duration::from_secs(3600),
+        ..Default::default()
+    })
+    .await
+    .expect("create ephemeral-auth bucket")
+}
+
+fn ephemeral_key(suffix: &str) -> KvKey {
+    KvKey::new(format!("auth/refresh/{}/{suffix}", Uuid::now_v7().simple())).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ephemeral_auth_binds_existing_bucket_and_fails_loud_when_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let _ = js.delete_key_value(KV_EPHEMERAL_AUTH).await;
+
+    let fabric = fabric().await;
+    let absent = EphemeralAuthStore::<Payload>::open(&fabric).await;
+    assert!(matches!(absent, Err(FabricError::Kv(_))));
+
+    ensure_ephemeral_auth_bucket(&js).await;
+    assert!(EphemeralAuthStore::<Payload>::open(&fabric).await.is_ok());
+
+    let _ = js.delete_key_value(KV_EPHEMERAL_AUTH).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn concurrent_update_if_on_the_same_revision_has_exactly_one_winner() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("family");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "seed".to_string(),
+            },
+        )
+        .await
+        .expect("seed create");
+
+    let (_, rev) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+
+    let value_a = Payload {
+        label: "rotation-a".to_string(),
+    };
+    let value_b = Payload {
+        label: "rotation-b".to_string(),
+    };
+    let a = store.update_if(&key, &value_a, rev);
+    let b = store.update_if(&key, &value_b, rev);
+    let (ra, rb) = tokio::join!(a, b);
+
+    let outcomes = [ra, rb];
+    let winners = outcomes.iter().filter(|r| r.is_ok()).count();
+    let conflicts = outcomes
+        .iter()
+        .filter(|r| matches!(r, Err(FabricError::RevisionConflict { .. })))
+        .count();
+    assert_eq!(winners, 1, "exactly one writer wins on the same revision");
+    assert_eq!(conflicts, 1, "the loser gets the distinguishable conflict");
+
+    let _ = store
+        .put(
+            &key,
+            &Payload {
+                label: "wipe".into(),
+            },
+        )
+        .await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn put_performs_the_unconditional_revoke_family_wipe() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("revoke");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    store
+        .put(
+            &key,
+            &Payload {
+                label: "revoked".to_string(),
+            },
+        )
+        .await
+        .expect("unconditional put ignores the revision chain");
+
+    let (value, _) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+    assert_eq!(value.label, "revoked");
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn create_re_creates_through_a_post_delete_tombstone_where_absent_update_if_conflicts() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("recreate");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "first-life".to_string(),
+            },
+        )
+        .await
+        .expect("first create");
+
+    raw.delete(key.as_str())
+        .await
+        .expect("delete leaves a tombstone at seq>0");
+
+    assert_eq!(
+        store.get_with_revision(&key).await.expect("get"),
+        None,
+        "a deleted key reads as absent"
+    );
+
+    let conflict = store
+        .update_if(
+            &key,
+            &Payload {
+                label: "via-absent-update".to_string(),
+            },
+            Revision::ABSENT,
+        )
+        .await;
+    assert!(
+        matches!(conflict, Err(FabricError::RevisionConflict { .. })),
+        "update_if(ABSENT) conflicts forever against the tombstone — this is why create() is needed: {conflict:?}"
+    );
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "second-life".to_string(),
+            },
+        )
+        .await
+        .expect("create re-creates through the tombstone");
+
+    let (value, _) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+    assert_eq!(value.label, "second-life");
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn create_on_a_live_key_returns_key_already_exists() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("live");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "occupant".to_string(),
+            },
+        )
+        .await
+        .expect("first create");
+
+    let again = store
+        .create(
+            &key,
+            &Payload {
+                label: "intruder".to_string(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(again, Err(FabricError::KeyAlreadyExists { .. })),
+        "create on a live key is a distinguishable conflict: {again:?}"
+    );
+
+    let _ = store
+        .put(
+            &key,
+            &Payload {
+                label: "wipe".into(),
+            },
+        )
+        .await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn get_with_revision_fails_closed_on_an_undecodable_value() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let key = ephemeral_key("garbage");
+    raw.put(key.as_str(), b"{ not json".to_vec().into())
+        .await
+        .expect("put garbage");
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    match store.get_with_revision(&key).await {
+        Err(FabricError::Decode { subject, .. }) => assert_eq!(subject, key.as_str()),
+        other => panic!("expected Decode naming the key, got {other:?}"),
+    }
 }

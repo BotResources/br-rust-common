@@ -2,9 +2,11 @@
 
 The **Project NATS Fabric API** — the single, restricted, typed application-facing
 way a BR service touches NATS. It owns all `async_nats` coupling and exposes a
-small surface (`Fabric`) over two concerns: **integration messaging** (commands
-and events on fixed streams under a fixed grammar) and the **Published-Language
-KV** (generic publisher + consumer mechanics over one fixed bucket).
+small surface (`Fabric`) over three concerns: **integration messaging** (commands
+and events on fixed streams under a fixed grammar), the **Published-Language KV**
+(generic publisher + consumer mechanics over the fixed `PUBLISHED_LANGUAGE`
+bucket), and the **Ephemeral-Auth KV** (compare-and-swap mechanics over the fixed
+`EPHEMERAL_AUTH` bucket).
 
 Tier `util`: it may depend on `core` (`br-core-integration`, `br-core-events`),
 never the reverse. It builds on the integration envelopes and the pure outbox
@@ -16,8 +18,9 @@ The fabric **never** creates infrastructure. There is no `create_stream`,
 `ensure_stream`, `create_bucket`, or `ensure_bucket` anywhere in this crate. A
 `Fabric` is constructed *from* an already-connected
 `async_nats::jetstream::Context` — it never connects. Streams, durable
-consumers, and the KV bucket are **declared out of band** and assumed to exist;
-every entry point **binds** an existing object and **fails loud** (a
+consumers, and the two KV buckets (`PUBLISHED_LANGUAGE`, `EPHEMERAL_AUTH`,
+including the latter's TTL `max_age`) are **declared out of band** and assumed to
+exist; every entry point **binds** an existing object and **fails loud** (a
 `FabricError`) when it is absent. Readiness gates this, not runtime auto-repair.
 
 ## What the caller may provide — and what it may never provide
@@ -185,6 +188,61 @@ directory manifest `identity/_meta`) rather than a prefix scan. Semantics:
 - **bind-existing** — the fixed `PUBLISHED_LANGUAGE` bucket is bound internally,
   failing loud if absent; no provisioning.
 
+## Surface 3 — Ephemeral Auth over KV (compare-and-swap)
+
+`EphemeralAuthStore::<V>::open(&fabric)` is the only way in. It binds the fixed
+bucket `EPHEMERAL_AUTH` **internally** and fails loud if it is absent; the
+bucket's TTL (`max_age`) is declared at provisioning and the opener only binds,
+never provisions. As with the Published-Language facades, the raw `async_nats`
+KV `Store` is never handed to a caller — there is no untyped escape hatch, and
+the compare-and-swap contract below is the **only** sanctioned revision-aware
+path.
+
+This surface exists for credential state that needs **optimistic concurrency**
+— the canonical consumer is svc-auth refresh-token rotation, whose
+family-reuse-detection requires that two concurrent rotations on the same family
+cannot both win (a last-write-wins clobber would break the revision chain and
+blind reuse-detection).
+
+- `get_with_revision(&KvKey) -> Result<Option<(V, Revision)>, FabricError>` reads
+  the current value and its `Revision`. A genuinely absent key (or a deleted /
+  purged tombstone) is `Ok(None)`; an undecodable value is **fail-closed**
+  (`FabricError::Decode` naming the key), never a silent `None`; a broker/KV
+  outage surfaces as `FabricError::Kv`.
+- `create(&KvKey, &V) -> Result<(), FabricError>` is the **create path** and the
+  only correct way to occupy a key the caller believes is free. It succeeds when
+  the key has never lived **and** when it previously lived then expired (TTL
+  `max_age`) or was deleted — both leave a KV tombstone at a sequence `> 0`, and
+  `create` re-creates against that tombstone, which is the nominal refresh-family
+  lifecycle. A key that is currently **live** is a distinguishable, matchable
+  `FabricError::KeyAlreadyExists { key }`. **Use `create` for family creation /
+  re-creation; do not drive creation through `update_if(.., Revision::ABSENT)`** —
+  `Revision::ABSENT` asserts "last sequence is exactly 0", so it conflicts forever
+  against the post-expiry/post-delete tombstone (sequence `> 0`) even though
+  `get_with_revision` reads `Ok(None)`. `Revision::ABSENT` therefore covers only
+  the strictly never-written slot; the broker-correct create-after-expiry belongs
+  to `create`.
+- `update_if(&KvKey, &V, Revision) -> Result<(), FabricError>` is the
+  **rotate path**: a revision-checked write that succeeds only if the supplied
+  `Revision` is still the last revision for the key (read it from
+  `get_with_revision`, write it back here). On a revision mismatch it returns the
+  first-class, matchable `FabricError::RevisionConflict { key, expected }` —
+  distinct from not-found (`Ok(None)` on read), `KeyAlreadyExists`, transport
+  (`Kv`) and `Decode`, so the caller can drive reuse-detection on it.
+- `put(&KvKey, &V)` is the **unconditional** write, ignoring the revision chain —
+  for the `revoke_family` wipe that must land regardless of concurrent rotations.
+- `status()` exposes the **bound bucket's cached KV state** in the bind-existing
+  posture — it reads `async_nats`'s locally-cached stream info and does **not**
+  round-trip the broker, so it is **not** a live reachability probe and must not
+  back a liveness gate. The fail-loud liveness check is `open()` (the real bind
+  round-trip): if the bucket is unreachable at startup, `open()` fails and
+  readiness stays DOWN.
+
+`Revision` is an opaque newtype over the NATS KV sequence — the caller reads it
+from `get_with_revision` and passes it back to `update_if`. The only value a
+caller may mint by hand is `Revision::ABSENT` (the never-written slot); every
+other revision originates from `get_with_revision`.
+
 ## Generic mechanics vs caller seams (summary)
 
 | Generic (this crate owns)                              | Caller seam                                  |
@@ -194,13 +252,14 @@ directory manifest `identity/_meta`) rather than a prefix scan. Semantics:
 | reconcile op computation, orphan detection             | the desired set                              |
 | bootstrap scan + watch loop, fail-closed codec         | the prefix selection                         |
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
+| compare-and-swap KV (`EphemeralAuthStore`, `Revision`) | the `KvKey`, the value, the observed revision |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
 
 ## Dependency
 
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.0.1", version = "1.0.1" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.0.2", version = "1.0.2" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.0.1", version = "1.0.1", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.0.2", version = "1.0.2", features = ["outbox"] }
 ```

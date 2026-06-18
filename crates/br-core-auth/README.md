@@ -230,7 +230,7 @@ binary; enable it as a dev-dependency:
 
 ```toml
 [dev-dependencies]
-br-core-auth = { git = "...", package = "br-core-auth", tag = "v1.0.1", features = ["test-support"] }
+br-core-auth = { git = "...", package = "br-core-auth", tag = "v1.0.2", features = ["test-support"] }
 ```
 
 ## Usage
@@ -262,7 +262,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v1.0.1" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v1.0.2" }
 ```
 
 ---

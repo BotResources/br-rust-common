@@ -11,6 +11,55 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-06-18
+
+### Added
+
+- **`br-util-nats-fabric` — typed `KV_EPHEMERAL_AUTH` surface with
+  optimistic-concurrency (compare-and-swap) writes.** The Fabric now fixes a
+  second KV bucket, `EPHEMERAL_AUTH` (`KV_EPHEMERAL_AUTH`), alongside
+  `PUBLISHED_LANGUAGE`, exposed through a new `EphemeralAuthStore<V>` facade
+  (`open` binds the fixed bucket internally and fails loud if it is absent — no
+  auto-provisioning; the bucket-level TTL is declared at provisioning and the
+  opener only binds). The facade adds a **revision-checked write primitive** so a
+  consumer can drive optimistic concurrency:
+  - `get_with_revision(&KvKey) -> Result<Option<(V, Revision)>, FabricError>`
+    reads the current value and its `Revision` (fail-closed decode, consistent
+    with `PublishedLanguageReader`);
+  - `create(&KvKey, &V) -> Result<(), FabricError>` is the create path: it
+    occupies a key the caller believes free, succeeding both for a never-written
+    key and for one that previously lived then expired (TTL `max_age`) or was
+    deleted — both leave a KV tombstone at sequence `> 0`, and `create`
+    re-creates against it (the nominal refresh-family lifecycle). A currently
+    live key returns the new matchable `FabricError::KeyAlreadyExists { key }`.
+    Creation must go through `create`, not `update_if(.., Revision::ABSENT)`,
+    which asserts "last sequence == 0" and so would conflict forever against a
+    post-expiry/post-delete tombstone;
+  - `update_if(&KvKey, &V, Revision) -> Result<(), FabricError>` is the rotate
+    path: it writes only when the supplied `Revision` is still the last one,
+    returning the new first-class, matchable
+    `FabricError::RevisionConflict { key, expected }` on a revision mismatch —
+    distinct from not-found, `KeyAlreadyExists`, transport (`Kv`) and `Decode`;
+  - `put(&KvKey, &V)` is the unconditional write for the `revoke_family` wipe;
+  - `status()` exposes the bound bucket's **cached** KV state in the
+    bind-existing posture; it does not round-trip the broker and is **not** a
+    live reachability probe. The fail-loud liveness gate is `open()` (the real
+    bind round-trip), the same bind-existing, fail-loud posture as the other
+    facades.
+  `Revision` is a new public newtype over the NATS KV sequence
+  (`Revision::ABSENT` is the never-written slot; its `new`/sequence accessor are
+  crate-internal so a non-`ABSENT` revision can only originate from
+  `get_with_revision`). The raw `async_nats` KV `Store` is still never handed to
+  a caller — the CAS contract is the only sanctioned revision-aware path. This
+  unblocks svc-auth's refresh-token rotation moving off raw `async-nats` with the
+  family-reuse-detection property (atomic CAS, no degrade to last-write-wins)
+  intact. Purely additive. Proven by real-`nats-server` integration tests:
+  concurrent `update_if` on the same revision yields exactly one winner and one
+  `RevisionConflict`, `create` re-creates through a post-delete tombstone where
+  `update_if(.., Revision::ABSENT)` conflicts, `create` on a live key returns
+  `KeyAlreadyExists`, the unconditional revoke wipe, bind-existing fail-loud when
+  the bucket is absent, and fail-closed decode on a malformed value. (#86)
+
 ## [1.0.1] — 2026-06-18
 
 ### Fixed

@@ -80,6 +80,10 @@ pub enum FabricError {
     },
     #[error("payload on '{subject}' failed to deserialize: {detail}")]
     Decode { subject: String, detail: String },
+    #[error("revision conflict on kv key '{key}' (expected {expected})")]
+    RevisionConflict { key: String, expected: u64 },
+    #[error("kv key '{key}' already exists")]
+    KeyAlreadyExists { key: String },
     #[error("key/value store error: {0}")]
     Kv(String),
     #[error("serialization failed: {0}")]
@@ -110,6 +114,17 @@ impl FabricError {
 
     pub(crate) fn kv(detail: impl std::fmt::Display) -> Self {
         Self::Kv(detail.to_string())
+    }
+
+    pub(crate) fn revision_conflict(key: impl Into<String>, expected: u64) -> Self {
+        Self::RevisionConflict {
+            key: key.into(),
+            expected,
+        }
+    }
+
+    pub(crate) fn key_already_exists(key: impl Into<String>) -> Self {
+        Self::KeyAlreadyExists { key: key.into() }
     }
 }
 
