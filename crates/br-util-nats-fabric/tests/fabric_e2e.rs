@@ -1,11 +1,13 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use br_core_integration::{EventMetadata, IntegrationCommand, IntegrationEvent, MessageOutcome};
 use br_core_kernel::{Actor, UserId};
 use br_util_nats_fabric::{
     Aggregate, Bc, CommandCoords, EventCoords, Fabric, FabricError, INTEGRATION_CMD,
-    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, KvKey, PastFact, PublishedLanguagePublisher,
-    PublishedLanguageReader, Verb,
+    INTEGRATION_EVT, KV_PUBLISHED_LANGUAGE, KvKey, KvPrefix, PastFact, ProjectionSink,
+    PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, Verb,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -343,4 +345,89 @@ async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
         reader.get(&sibling).await.expect("get"),
         Some(sibling_value)
     );
+}
+
+#[derive(Clone, Default)]
+struct RecordingSink {
+    projected: Arc<Mutex<BTreeMap<KvKey, Payload>>>,
+}
+
+#[async_trait::async_trait]
+impl ProjectionSink<Payload> for RecordingSink {
+    type Error = std::convert::Infallible;
+
+    async fn project(&self, key: &KvKey, value: &Payload) -> Result<(), Self::Error> {
+        self.projected
+            .lock()
+            .unwrap()
+            .insert(key.clone(), value.clone());
+        Ok(())
+    }
+
+    async fn retract(&self, key: &KvKey) -> Result<(), Self::Error> {
+        self.projected.lock().unwrap().remove(key);
+        Ok(())
+    }
+
+    async fn known_keys(&self) -> Result<BTreeSet<KvKey>, Self::Error> {
+        Ok(self.projected.lock().unwrap().keys().cloned().collect())
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn watch_delivers_a_live_slash_keyed_directory_put() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let sink = RecordingSink::default();
+    let projected = sink.projected.clone();
+    let consumer = PublishedLanguageConsumer::<Payload, _, _>::open(
+        &fabric,
+        vec![KvPrefix::new("identity/users/").unwrap()],
+        |_: &Payload| true,
+        sink,
+    )
+    .await
+    .expect("open consumer");
+    let watcher = tokio::spawn(async move {
+        let _ = consumer.watch().await;
+    });
+
+    let id = Uuid::now_v7();
+    let key = format!("identity/users/{id}");
+    let kvkey = KvKey::new(key.clone()).unwrap();
+    let value = Payload {
+        label: "live".to_string(),
+    };
+    let body = serde_json::to_vec(&value).unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        store.put(&key, body.clone().into()).await.expect("put");
+        let delivered = tokio::time::timeout(Duration::from_millis(400), async {
+            loop {
+                if projected.lock().unwrap().contains_key(&kvkey) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok();
+        if delivered {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "live watch never delivered the slash-keyed put {key} — KvPrefix::watch_subject regression (#82)"
+        );
+    }
+
+    assert_eq!(projected.lock().unwrap().get(&kvkey), Some(&value));
+
+    watcher.abort();
+    let _ = store.purge(&key).await;
 }

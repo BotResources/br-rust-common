@@ -11,6 +11,29 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-06-18
+
+### Fixed
+
+- **`br-util-nats-fabric` — Published-Language live KV `watch()` now delivers
+  `/`-keyed entries.** `PublishedLanguageConsumer::watch()` built its JetStream
+  subscription from `KvPrefix::watch_subject()` (`"{prefix}>"`), but NATS subject
+  wildcards match only across `.`-delimited tokens; the directory keys are
+  `/`-delimited (`identity/users/<id>` is a single token), so the rendered
+  `identity/users/>` matched **nothing** and live updates were silently dropped
+  after bootstrap. `watch()` now watches the whole `PUBLISHED_LANGUAGE` bucket
+  (`watch_all`) and filters entries by the consumer-selected prefixes client-side
+  (`KvPrefix::matches`) — **no wire or key-scheme change**. The bootstrap/catch-up
+  scan was unaffected (a reconcile-on-interval consumer already converged), but
+  any consumer relying on the live watch for promptness — the real
+  `br-util-directory` roster consumer — went stale until the next reconcile.
+  Found by the black-box real-`nats-server` `conformance-nats-fabric` suite
+  (br-e2e-harness), the class of bug the mocked-map unit tests cannot catch;
+  proven fixed by a new real-`nats-server` regression test
+  (`watch_delivers_a_live_slash_keyed_directory_put`). `KvPrefix::watch_subject()`
+  is retained (unchanged public surface) but no longer used by the consumer.
+  (#82)
+
 ## [1.0.0] — 2026-06-17
 
 ### Added
