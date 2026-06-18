@@ -116,7 +116,7 @@ release; they remain reachable through the historical per-crate tags
     key expires well before the longer bucket `max_age`, `keys`/`entries` enumerate
     live keys and exclude a tombstoned one, `entries` fails closed on a malformed
     value, the watch yields a `Set` then `Removed` change on put/delete, and a
-    `Removed` change on per-key TTL expiry. (#86)
+    `Removed` change on per-key TTL expiry. (#91)
 - **`br-util-nats-fabric` — typed durable consumer for the integration command /
   event streams (the production work loop).** The Fabric covered publish and the
   one-shot correlated awaiter but had no typed surface to *durably consume* the
@@ -240,7 +240,7 @@ release; they remain reachable through the historical per-crate tags
   `aggregate.verb`) and the wildcard subscription stays rejected. Purely additive.
   Proven by a real-`nats-server` integration test: two facts consumed and acked on
   one durable with no redelivery, and a durable whose filter set does not match
-  rejected with `FilterMismatch`.
+  rejected with `FilterMismatch`. (#91)
 - **`br-util-nats-fabric` — graceful consumer drain (SIGTERM-safe shutdown).**
   `IntegrationConsumer::drain(self)` consumes the consumer and closes the
   underlying subscription cleanly (the pull task is aborted and the inbox
@@ -254,7 +254,7 @@ release; they remain reachable through the historical per-crate tags
   after `ack_wait` (at-least-once preserved, no silent drop). The shutdown
   contract is documented in the README. Purely additive. Proven by a
   real-`nats-server` integration test: an in-flight message acked before drain is
-  not redelivered after a rebind.
+  not redelivered after a rebind. (#91)
 - **`br-util-nats-fabric` — idempotent publish (`Nats-Msg-Id` dedup).**
   `Fabric::publish_command_with_id` / `publish_event_with_id` are the plain
   `publish_*` variants that additionally set the JetStream `Nats-Msg-Id` header
@@ -266,7 +266,7 @@ release; they remain reachable through the historical per-crate tags
   dedup-id variants are for callers managing their own idempotency. The caller
   owns the id; the fabric never mints one. Purely additive. Proven by a
   real-`nats-server` integration test: the same `Nats-Msg-Id` published twice
-  within the window yields exactly one stored message.
+  within the window yields exactly one stored message. (#91)
 - **`br-util-nats-fabric` — fabric reachability probe.**
   `Fabric::reachable() -> bool` and `Fabric::connection_state() -> ConnectionState`
   expose the client's **locally-cached** connection view for a readiness/liveness
