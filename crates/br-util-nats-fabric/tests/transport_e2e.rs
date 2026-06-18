@@ -42,24 +42,6 @@ async fn recreate_event_stream(js: &async_nats::jetstream::Context, duplicate_wi
     .expect("create fixed event stream");
 }
 
-async fn create_event_durable(
-    js: &async_nats::jetstream::Context,
-    durable: &str,
-    filters: &[&str],
-) {
-    let stream = js.get_stream(INTEGRATION_EVT).await.unwrap();
-    stream
-        .create_consumer(async_nats::jetstream::consumer::pull::Config {
-            durable_name: Some(durable.to_string()),
-            filter_subjects: filters.iter().map(|s| s.to_string()).collect(),
-            ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-            ack_wait: Duration::from_secs(2),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-}
-
 fn user_created_coords() -> EventCoords {
     EventCoords {
         producer: Bc::new("identity").unwrap(),
@@ -93,22 +75,12 @@ fn event(label: &str) -> IntegrationEvent<Payload> {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn fan_in_durable_consumes_both_facts_on_one_consumer() {
+async fn ensure_creates_the_durable_then_fan_in_consumes_both_facts_on_one_consumer() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
     let durable = format!("fanin_{}", Uuid::now_v7().simple());
-    create_event_durable(
-        &js,
-        &durable,
-        &[
-            "integration.evt.identity.user.created.v1",
-            "integration.evt.identity.group.created.v1",
-        ],
-    )
-    .await;
-
     let user = user_created_coords();
     let group = group_created_coords();
     let fabric = fabric().await;
@@ -122,9 +94,9 @@ async fn fan_in_durable_consumes_both_facts_on_one_consumer() {
         .expect("publish group event");
 
     let mut consumer = fabric
-        .bind_event_consumer_many::<Payload>(&[&user, &group], &durable)
+        .ensure_event_consumer_many::<Payload>(&[&user, &group], &durable)
         .await
-        .expect("bind fan-in durable");
+        .expect("ensure fan-in durable (lib creates it)");
 
     let mut seen = Vec::new();
     for _ in 0..2 {
@@ -150,19 +122,99 @@ async fn fan_in_durable_consumes_both_facts_on_one_consumer() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn fan_in_rejects_a_durable_whose_filter_set_does_not_match() {
+async fn two_ensure_calls_on_the_same_durable_share_one_consumer() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
-    let durable = format!("fanin_bad_{}", Uuid::now_v7().simple());
-    create_event_durable(&js, &durable, &["integration.evt.identity.user.created.v1"]).await;
-
+    let durable = format!("shared_{}", Uuid::now_v7().simple());
     let user = user_created_coords();
-    let group = group_created_coords();
+    let fabric = fabric().await;
+
+    let first = fabric
+        .ensure_event_consumer::<Payload>(&user, &durable)
+        .await
+        .expect("first ensure creates the durable");
+    first.drain().await;
+
+    fabric
+        .publish_event(&user, &event("shared"))
+        .await
+        .expect("publish event");
+
+    let mut second = fabric
+        .ensure_event_consumer::<Payload>(&user, &durable)
+        .await
+        .expect("second ensure converges to the same durable, no error");
+
+    let delivery = tokio::time::timeout(Duration::from_secs(5), second.recv())
+        .await
+        .expect("recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery from the shared durable");
+    assert_eq!(delivery.payload().unwrap().payload.label, "shared");
+    delivery.ack().await.expect("ack");
+
+    let stream = js.get_stream(INTEGRATION_EVT).await.unwrap();
+    let info = stream.consumer_info(&durable).await.expect("consumer info");
+    assert_eq!(
+        info.config.filter_subject, "integration.evt.identity.user.created.v1",
+        "the lib's config is authoritative for the durable's filter"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn two_concurrent_ensure_calls_on_the_same_durable_converge_to_one_consumer() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_event_stream(&js, Duration::from_secs(2)).await;
+
+    let durable = format!("concurrent_{}", Uuid::now_v7().simple());
+    let user = user_created_coords();
+    let fabric = fabric().await;
+
+    let (first, second) = tokio::join!(
+        fabric.ensure_event_consumer::<Payload>(&user, &durable),
+        fabric.ensure_event_consumer::<Payload>(&user, &durable),
+    );
+    let first = first.expect("first concurrent ensure ok");
+    let second = second.expect("second concurrent ensure ok");
+    first.drain().await;
+    second.drain().await;
+
+    let stream = js.get_stream(INTEGRATION_EVT).await.unwrap();
+    let mut consumers = stream.consumers();
+    let mut count = 0usize;
+    while let Some(consumer) = futures_util::StreamExt::next(&mut consumers).await {
+        let consumer = consumer.expect("consumer info");
+        assert_eq!(
+            consumer.name, durable,
+            "the only consumer on the stream is the shared durable"
+        );
+        count += 1;
+    }
+    assert_eq!(
+        count, 1,
+        "two concurrent ensure calls on the same durable + identical config converge to exactly one broker consumer (multi-pod overlap is safe)"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ensure_rejects_an_empty_coordinate_set() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_event_stream(&js, Duration::from_secs(2)).await;
+
+    let durable = format!("empty_{}", Uuid::now_v7().simple());
     let fabric = fabric().await;
     let result = fabric
-        .bind_event_consumer_many::<Payload>(&[&user, &group], &durable)
+        .ensure_event_consumer_many::<Payload>(&[], &durable)
         .await;
     assert!(matches!(
         result.err(),
@@ -180,8 +232,6 @@ async fn graceful_drain_acks_the_in_flight_message_and_stops_without_redelivery(
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
     let durable = format!("drain_{}", Uuid::now_v7().simple());
-    create_event_durable(&js, &durable, &["integration.evt.identity.user.created.v1"]).await;
-
     let user = user_created_coords();
     let fabric = fabric().await;
     fabric
@@ -190,9 +240,9 @@ async fn graceful_drain_acks_the_in_flight_message_and_stops_without_redelivery(
         .expect("publish event");
 
     let mut consumer = fabric
-        .bind_event_consumer::<Payload>(&user, &durable)
+        .ensure_event_consumer::<Payload>(&user, &durable)
         .await
-        .expect("bind durable");
+        .expect("ensure durable");
 
     let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
         .await
@@ -205,9 +255,9 @@ async fn graceful_drain_acks_the_in_flight_message_and_stops_without_redelivery(
     consumer.drain().await;
 
     let mut rebound = fabric
-        .bind_event_consumer::<Payload>(&user, &durable)
+        .ensure_event_consumer::<Payload>(&user, &durable)
         .await
-        .expect("rebind durable after drain");
+        .expect("re-ensure durable after drain");
     let after = tokio::time::timeout(Duration::from_secs(2), rebound.recv()).await;
     assert!(
         after.is_err(),
@@ -219,51 +269,55 @@ async fn graceful_drain_acks_the_in_flight_message_and_stops_without_redelivery(
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn graceful_drain_leaves_an_unacked_frame_for_redelivery() {
+async fn graceful_drain_leaves_an_unacked_frame_held_under_ack_wait() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
     let durable = format!("drain_unacked_{}", Uuid::now_v7().simple());
-    create_event_durable(&js, &durable, &["integration.evt.identity.user.created.v1"]).await;
-
     let user = user_created_coords();
     let fabric = fabric().await;
     fabric
-        .publish_event(&user, &event("redeliver-me"))
+        .publish_event(&user, &event("held-me"))
         .await
         .expect("publish event");
 
     let mut consumer = fabric
-        .bind_event_consumer::<Payload>(&user, &durable)
+        .ensure_event_consumer::<Payload>(&user, &durable)
         .await
-        .expect("bind durable");
+        .expect("ensure durable");
 
     let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
         .await
         .expect("recv within deadline")
         .expect("recv ok")
         .expect("a delivery");
-    assert_eq!(delivery.payload().unwrap().payload.label, "redeliver-me");
+    assert_eq!(delivery.payload().unwrap().payload.label, "held-me");
     drop(delivery);
 
     consumer.drain().await;
 
     let mut rebound = fabric
-        .bind_event_consumer::<Payload>(&user, &durable)
+        .ensure_event_consumer::<Payload>(&user, &durable)
         .await
-        .expect("rebind durable after drain");
-    let redelivered = tokio::time::timeout(Duration::from_secs(5), rebound.recv())
+        .expect("re-ensure durable after drain");
+    let within_ack_wait = tokio::time::timeout(Duration::from_secs(3), rebound.recv()).await;
+    assert!(
+        within_ack_wait.is_err(),
+        "an un-acked frame is held in-flight under the lib's 30s ack_wait, not redelivered immediately (at-least-once preserved, no silent loss)"
+    );
+
+    let redelivered = tokio::time::timeout(Duration::from_secs(35), rebound.recv())
         .await
-        .expect("recv within deadline after ack_wait")
+        .expect("the un-acked frame is redelivered past the 30s ack_wait")
         .expect("recv ok")
-        .expect("the un-acked frame is redelivered");
+        .expect("a redelivered delivery");
     assert_eq!(
         redelivered.payload().unwrap().payload.label,
-        "redeliver-me",
-        "an un-acked frame at drain must be left for redelivery after ack_wait"
+        "held-me",
+        "the un-acked frame IS redelivered after ack_wait elapses (at-least-once guarantee)"
     );
-    redelivered.ack().await.expect("ack on redelivery");
+    redelivered.ack().await.expect("ack the redelivered frame");
 
     let _ = js.delete_stream(INTEGRATION_EVT).await;
 }

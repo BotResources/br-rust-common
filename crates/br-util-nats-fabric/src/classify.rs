@@ -12,18 +12,11 @@ pub(crate) fn classify_get_stream(
     }
 }
 
-pub(crate) fn classify_consumer_info(
-    err: &async_nats::jetstream::context::ConsumerInfoError,
+pub(crate) fn classify_create_consumer(
+    err: &async_nats::jetstream::stream::ConsumerError,
 ) -> ConsumeErrorKind {
-    use async_nats::jetstream::context::ConsumerInfoErrorKind as K;
+    use async_nats::jetstream::stream::ConsumerErrorKind as K;
     match err.kind() {
-        K::NotFound => ConsumeErrorKind::NoConsumer,
-        K::StreamNotFound => ConsumeErrorKind::NoStream,
-        K::JetStream(e)
-            if e.error_code() == async_nats::jetstream::ErrorCode::CONSUMER_NOT_FOUND =>
-        {
-            ConsumeErrorKind::NoConsumer
-        }
         K::JetStream(e) if e.error_code() == async_nats::jetstream::ErrorCode::STREAM_NOT_FOUND => {
             ConsumeErrorKind::NoStream
         }

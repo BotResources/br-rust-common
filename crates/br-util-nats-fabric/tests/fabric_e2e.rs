@@ -86,17 +86,6 @@ async fn command_renders_grammar_and_a_matching_durable_consumes_it() {
         version: 1,
     };
     let durable = format!("test_{}", Uuid::now_v7().simple());
-    let stream = js.get_stream(INTEGRATION_CMD).await.unwrap();
-    stream
-        .create_consumer(async_nats::jetstream::consumer::pull::Config {
-            durable_name: Some(durable.clone()),
-            filter_subject: "integration.cmd.notifier.notification.deliver.v1".to_string(),
-            ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-
     let fabric = fabric().await;
     let correlation = Uuid::now_v7();
     fabric
@@ -137,7 +126,7 @@ async fn command_renders_grammar_and_a_matching_durable_consumes_it() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn a_widened_durable_is_rejected_on_bind() {
+async fn a_pre_existing_widened_durable_converges_to_the_libs_filter() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_EVT, "integration.evt.>").await;
@@ -161,11 +150,16 @@ async fn a_widened_durable_is_rejected_on_bind() {
         version: 1,
     };
     let fabric = fabric().await;
-    let err = fabric
-        .verify_event_durable(&coords, &durable)
+    fabric
+        .ensure_event_durable(&coords, &durable)
         .await
-        .unwrap_err();
-    assert!(matches!(err, FabricError::FilterMismatch { .. }));
+        .expect("ensure converges the pre-existing widened durable to the lib config");
+
+    let info = stream.consumer_info(&durable).await.expect("consumer info");
+    assert_eq!(
+        info.config.filter_subject, "integration.evt.identity.user.created.v1",
+        "the lib's config is authoritative; a pre-existing widened durable is narrowed, never left widened"
+    );
 
     let _ = js.delete_stream(INTEGRATION_EVT).await;
 }
@@ -1075,36 +1069,14 @@ fn deliver_coords() -> CommandCoords {
     }
 }
 
-async fn create_deliver_durable(
-    js: &async_nats::jetstream::Context,
-    durable: &str,
-    max_deliver: i64,
-    ack_wait: Duration,
-) {
-    let stream = js.get_stream(INTEGRATION_CMD).await.unwrap();
-    stream
-        .create_consumer(async_nats::jetstream::consumer::pull::Config {
-            durable_name: Some(durable.to_string()),
-            filter_subject: DELIVER_FILTER.to_string(),
-            ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-            max_deliver,
-            ack_wait,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-}
-
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn bind_command_consumer_acks_and_the_message_is_not_redelivered() {
+async fn ensure_command_consumer_acks_and_the_message_is_not_redelivered() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
     let durable = format!("ack_{}", Uuid::now_v7().simple());
-    create_deliver_durable(&js, &durable, 5, Duration::from_secs(1)).await;
-
     let coords = deliver_coords();
     let fabric = fabric().await;
     fabric
@@ -1113,9 +1085,9 @@ async fn bind_command_consumer_acks_and_the_message_is_not_redelivered() {
         .expect("publish command");
 
     let mut consumer = fabric
-        .bind_command_consumer::<Payload>(&coords, &durable)
+        .ensure_command_consumer::<Payload>(&coords, &durable)
         .await
-        .expect("bind durable");
+        .expect("ensure durable (lib creates it)");
 
     let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
         .await
@@ -1143,8 +1115,6 @@ async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
     let durable = format!("nak_{}", Uuid::now_v7().simple());
-    create_deliver_durable(&js, &durable, 5, Duration::from_secs(30)).await;
-
     let coords = deliver_coords();
     let fabric = fabric().await;
     fabric
@@ -1153,9 +1123,9 @@ async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
         .expect("publish command");
 
     let mut consumer = fabric
-        .bind_command_consumer::<Payload>(&coords, &durable)
+        .ensure_command_consumer::<Payload>(&coords, &durable)
         .await
-        .expect("bind durable");
+        .expect("ensure durable (lib creates it)");
 
     let first = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
         .await
@@ -1191,8 +1161,6 @@ async fn a_poison_frame_is_routable_to_term_and_the_loop_survives() {
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
     let durable = format!("poison_{}", Uuid::now_v7().simple());
-    create_deliver_durable(&js, &durable, 5, Duration::from_secs(1)).await;
-
     let coords = deliver_coords();
     let fabric = fabric().await;
 
@@ -1207,9 +1175,9 @@ async fn a_poison_frame_is_routable_to_term_and_the_loop_survives() {
         .expect("publish good command");
 
     let mut consumer = fabric
-        .bind_command_consumer::<Payload>(&coords, &durable)
+        .ensure_command_consumer::<Payload>(&coords, &durable)
         .await
-        .expect("bind durable");
+        .expect("ensure durable (lib creates it)");
 
     let poison = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
         .await
@@ -1241,14 +1209,12 @@ async fn a_poison_frame_is_routable_to_term_and_the_loop_survives() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn delivered_count_increments_across_redeliveries_up_to_the_budget() {
+async fn delivered_count_increments_across_redeliveries() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
     let durable = format!("budget_{}", Uuid::now_v7().simple());
-    create_deliver_durable(&js, &durable, 3, Duration::from_secs(30)).await;
-
     let coords = deliver_coords();
     let fabric = fabric().await;
     fabric
@@ -1257,9 +1223,9 @@ async fn delivered_count_increments_across_redeliveries_up_to_the_budget() {
         .expect("publish command");
 
     let mut consumer = fabric
-        .bind_command_consumer::<Payload>(&coords, &durable)
+        .ensure_command_consumer::<Payload>(&coords, &durable)
         .await
-        .expect("bind durable");
+        .expect("ensure durable (lib creates it)");
 
     for expected in 1..=3 {
         let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
@@ -1270,19 +1236,13 @@ async fn delivered_count_increments_across_redeliveries_up_to_the_budget() {
         assert_eq!(
             delivery.delivered_count(),
             Some(expected),
-            "delivered_count tracks the attempt number"
+            "delivered_count tracks the attempt number across redeliveries (lib max_deliver is unlimited; poison handling is the caller's term())"
         );
         delivery
             .nak(Some(Duration::from_millis(200)))
             .await
             .expect("nak");
     }
-
-    let exhausted = tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await;
-    assert!(
-        exhausted.is_err(),
-        "no further delivery once max_deliver is exhausted"
-    );
 
     let _ = js.delete_stream(INTEGRATION_CMD).await;
 }
@@ -1291,7 +1251,6 @@ async fn round_trip_a_command(fabric: &Fabric, js: &async_nats::jetstream::Conte
     recreate_stream(js, INTEGRATION_CMD, "integration.cmd.>").await;
     let coords = deliver_coords();
     let durable = format!("connect_{}", Uuid::now_v7().simple());
-    create_deliver_durable(js, &durable, 5, Duration::from_secs(1)).await;
 
     fabric
         .publish_command(&coords, &command("dialed", Uuid::now_v7()))
@@ -1299,9 +1258,9 @@ async fn round_trip_a_command(fabric: &Fabric, js: &async_nats::jetstream::Conte
         .expect("publish over the dialled fabric");
 
     let mut consumer = fabric
-        .bind_command_consumer::<Payload>(&coords, &durable)
+        .ensure_command_consumer::<Payload>(&coords, &durable)
         .await
-        .expect("bind durable");
+        .expect("ensure durable (lib creates it)");
     let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
         .await
         .expect("recv within deadline")
@@ -1354,32 +1313,37 @@ async fn connect_fails_loud_with_a_distinct_variant_on_an_unreachable_broker() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn bind_command_consumer_fails_loud_when_the_durable_is_absent() {
+async fn ensure_command_consumer_creates_an_absent_durable_and_consumes() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
     let coords = deliver_coords();
     let fabric = fabric().await;
-    let absent = format!("missing_{}", Uuid::now_v7().simple());
-    match fabric
-        .bind_command_consumer::<Payload>(&coords, &absent)
+    let durable = format!("created_{}", Uuid::now_v7().simple());
+    fabric
+        .publish_command(&coords, &command("created", Uuid::now_v7()))
         .await
-    {
-        Err(FabricError::Consume {
-            kind: ConsumeErrorKind::NoConsumer,
-            ..
-        }) => {}
-        Err(other) => panic!("expected NoConsumer, got {other:?}"),
-        Ok(_) => panic!("binding an absent durable must fail loud, never auto-create"),
-    }
+        .expect("publish command");
+
+    let mut consumer = fabric
+        .ensure_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("ensure creates the absent durable, never fails loud on its absence");
+    let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery from the just-created durable");
+    assert_eq!(delivery.payload().unwrap().payload.label, "created");
+    delivery.ack().await.expect("ack");
 
     let _ = js.delete_stream(INTEGRATION_CMD).await;
 }
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn bind_command_consumer_fails_loud_when_the_stream_is_absent() {
+async fn ensure_command_consumer_fails_loud_when_the_stream_is_absent() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     let _ = js.delete_stream(INTEGRATION_CMD).await;
@@ -1388,7 +1352,7 @@ async fn bind_command_consumer_fails_loud_when_the_stream_is_absent() {
     let fabric = fabric().await;
     let durable = format!("orphan_{}", Uuid::now_v7().simple());
     match fabric
-        .bind_command_consumer::<Payload>(&coords, &durable)
+        .ensure_command_consumer::<Payload>(&coords, &durable)
         .await
     {
         Err(FabricError::Consume {
@@ -1396,6 +1360,6 @@ async fn bind_command_consumer_fails_loud_when_the_stream_is_absent() {
             ..
         }) => {}
         Err(other) => panic!("expected NoStream, got {other:?}"),
-        Ok(_) => panic!("binding on an absent stream must fail loud, never auto-create"),
+        Ok(_) => panic!("the stream is gitops; an absent stream must fail loud, never auto-create"),
     }
 }

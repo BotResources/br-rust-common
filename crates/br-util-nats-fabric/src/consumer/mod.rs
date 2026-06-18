@@ -1,5 +1,6 @@
 mod bind;
 mod bound;
+mod config;
 mod handle;
 mod open;
 mod run;

@@ -12,17 +12,26 @@ Tier `util`: it may depend on `core` (`br-core-integration`, `br-core-events`),
 never the reverse. It builds on the integration envelopes and the pure outbox
 state machine from `br-core-integration`; it does **not** restate them.
 
-## The no-provisioning guarantee
+## The provisioning boundary
 
-The fabric **never** creates infrastructure. There is no `create_stream`,
+The fabric **never** creates **infra**. There is no `create_stream`,
 `ensure_stream`, `create_bucket`, or `ensure_bucket` anywhere in this crate.
 Connecting to the broker is **not** provisioning: the fabric dials an existing
 NATS server (`Fabric::connect`/`connect_with`) but creates no JetStream object.
-Streams, durable consumers, and the two KV buckets (`PUBLISHED_LANGUAGE`,
-`EPHEMERAL_AUTH`, including the latter's TTL `max_age`) are **declared out of
-band** and assumed to exist; every entry point **binds** an existing object and
-**fails loud** (a `FabricError`) when it is absent. Readiness gates this, not
-runtime auto-repair.
+**Streams and the two KV buckets** (`PUBLISHED_LANGUAGE`, `EPHEMERAL_AUTH`,
+including the latter's TTL `max_age`) are **declared out of band by gitops** and
+assumed to exist; every entry point **binds** an existing one and **fails loud**
+(a `FabricError`) when it is absent. Readiness gates this, not runtime
+auto-repair.
+
+The boundary falls at the **durable consumer**: a durable carries the *service's*
+processing semantics (ack policy, `ack_wait`, `max_ack_pending`, `max_deliver`,
+deliver/replay) — not infra — and is cheap + idempotent to (re)create, so the
+fabric **does** create its durable consumers (via `create_consumer`, create-or-
+update, so replicas share and a pre-existing durable converges to the fabric's
+config). The fabric owns the `ConsumerConfig`; the caller passes only typed coords
+plus a durable name, never a raw config. So the rule is: **streams plus buckets
+are gitops-declared, bind-only, fail-loud; durable consumers are fabric-created.**
 
 ## Constructing a `Fabric`
 
@@ -132,15 +141,36 @@ consumer's stream. The caller owns the id; the fabric never mints one.
 
 ### Consuming
 
-`run_commands` / `run_events` bind a **caller-named durable** on the fixed
-stream with a **coordinate filter** (the fabric computes the filter subject; the
-caller never passes a stream name). The bind **verifies the durable's configured
-filter is exactly the expected coordinate subject** — a durable that has been
-misconfigured to widen its delivery (e.g. left on `integration.evt.>`) is
-rejected with `FabricError::FilterMismatch`, so a consumer can never silently
-receive more than its declared coordinates. `verify_command_durable` /
-`verify_event_durable` perform the same bind-and-verify without running, for a
-readiness gate.
+`run_commands` / `run_events` **create-or-bind** a **caller-named durable** on the
+fixed stream with a **coordinate filter** (the fabric computes the filter subject
+from the typed coords; the caller never passes a stream name nor a raw config).
+The durable is the **dimensioning boundary**: a stream and a KV bucket are infra,
+declared out of band by gitops and only ever **bound** (fail-loud if absent); a
+durable consumer carries the *service's* processing semantics and is cheap +
+idempotent to (re)create, so the fabric **creates it** — `stream.create_consumer`
+is create-or-update, so two replicas creating the same durable with the same
+config share it, and a pre-existing durable converges to the fabric's config (the
+fabric's config is authoritative — a durable left widened on `integration.evt.>`
+is narrowed to the coordinate filter, never left widened). The stream must still
+exist (gitops); an absent stream fails loud with
+`FabricError::Consume { kind: NoStream }`. An **empty coordinate set** is rejected
+before any create (it would make the consumer vacuum the whole stream) with
+`FabricError::FilterMismatch`. `ensure_command_durable` / `ensure_event_durable`
+(and the retained `verify_command_durable` / `verify_event_durable` aliases)
+perform the same create-or-bind without running, for a readiness gate.
+
+The fabric owns the durable's `ConsumerConfig` — the contract is:
+
+| Setting          | Value                          | Why                                                            |
+| ---------------- | ------------------------------ | -------------------------------------------------------------- |
+| `durable_name`   | the caller's durable           | the only caller input besides the coords                       |
+| `filter_subject(s)` | the rendered coordinate set | the fabric derives it; a single coord on `filter_subject`, a fan-in set on `filter_subjects` |
+| `ack_policy`     | `Explicit`                     | per-delivery ack, the pull work-loop contract                  |
+| `ack_wait`       | 30s                            | redelivery grace for a frame in flight                         |
+| `max_ack_pending`| 256                            | bounded in-flight pull window, back-pressure                   |
+| `max_deliver`    | -1 (unlimited)                 | poison handling is the caller's `term()`, not a silent drop-on-budget |
+| `deliver_policy` | `All`                          | a fresh durable replays the stream from the start              |
+| `replay_policy`  | `Instant`                      | catch-up at full speed, not original pacing                    |
 
 The handler returns a `br_core_integration::MessageOutcome`
 (`Ack` / `Nak` / `Term`); a payload that fails to decode is `Term`-ed and routed
@@ -150,19 +180,19 @@ to the caller's poison handler — it is never silently dropped.
 
 For the production work loop that needs to inspect the redelivery count and own
 the ack decision per delivery (a poison budget, a transactional side effect
-before ack), bind a typed consumer and pull deliveries explicitly. The durable's
-own `max_deliver` is the authoritative budget; the app-side `term()` below is an
-**optional second barrier** the caller may add when it wants to stop a frame
-before the broker's `max_deliver` is reached (e.g. a tighter per-handler ceiling):
+before ack), create-or-bind a typed consumer and pull deliveries explicitly. The
+fabric's `max_deliver` default is **unlimited** — poison handling is the caller's
+`term()`, never a silent drop-on-budget — so the app-side `term()` below is the
+authoritative poison ceiling, applied when the redelivery count crosses a tighter
+per-handler budget:
 
 ```rust,ignore
 const APP_MAX_DELIVER: i64 = 5;
 const NAK_DELAY: Duration = Duration::from_secs(2);
 
-let mut consumer = fabric.bind_command_consumer::<T>(&coords, "svc-notifier").await?;
+let mut consumer = fabric.ensure_command_consumer::<T>(&coords, "svc-notifier").await?;
 while let Some(delivery) = consumer.recv().await? {
     match (delivery.delivered_count(), delivery.payload()) {
-        // Optional second barrier: stop before the durable's own max_deliver.
         (Some(count), _) if count > APP_MAX_DELIVER => delivery.term().await?,
         (Some(_), Ok(command)) => {
             if do_work(command).await.is_ok() {
@@ -171,30 +201,27 @@ while let Some(delivery) = consumer.recv().await? {
                 delivery.nak(Some(NAK_DELAY)).await?;
             }
         }
-        // Fail-closed: a poison frame, or one whose delivery info is absent
-        // (so its budget cannot be tracked), is routed to term.
         (_, Err(_unprocessable)) | (None, _) => delivery.term().await?,
     }
 }
 ```
 
-- `bind_command_consumer::<T>(&CommandCoords, durable)` /
-  `bind_event_consumer::<T>(&EventCoords, durable)` **bind an existing durable**
-  and **fail loud** — the same coordinate-filter verification as
-  `run_commands`/`run_events` (a widened durable is rejected with
-  `FilterMismatch`), and a `FabricError::Consume` (`NoConsumer` / `NoStream`)
-  when the durable or stream is absent. The fabric never creates the consumer.
-- `bind_event_consumer_many::<T>(&[&EventCoords], durable)` binds one durable
-  that **fans in several event coordinates** — the svc-pm-style consumer that
-  reads `user.created` + `user.updated` + `group.created` on a single durable.
-  `T` is the caller's union type, deserialized per frame and **fail-closed**
-  exactly as the single-coordinate path. The bind verifies the durable's
-  configured `filter_subjects` equal the rendered set **exactly, order-insensitive
-  (set equality)** — a durable that filters more, fewer, or different subjects
-  (including the wildcard `integration.evt.>`) is rejected with `FilterMismatch`,
-  so a fan-in consumer still cannot silently widen beyond its declared
-  coordinates. `bind_event_consumer` is the 1-coordinate case of this. There is
-  **no command-side fan-in**: a command durable is receiver-owned, one
+- `ensure_command_consumer::<T>(&CommandCoords, durable)` /
+  `ensure_event_consumer::<T>(&EventCoords, durable)` **create-or-bind the
+  durable** with the fabric's authoritative config (the table above), and
+  **fail loud only on an absent stream** (`FabricError::Consume`,
+  `kind: NoStream` — the stream is gitops). A pre-existing durable converges to
+  the fabric's coordinate filter; two replicas calling the same durable share it.
+- `ensure_event_consumer_many::<T>(&[&EventCoords], durable)` creates-or-binds one
+  durable that **fans in several event coordinates** — the svc-pm-style consumer
+  that reads `user.created` + `user.updated` + `group.created` on a single
+  durable. `T` is the caller's union type, deserialized per frame and
+  **fail-closed** exactly as the single-coordinate path. The fabric sets the
+  durable's `filter_subjects` to the rendered set, so the consumer can never
+  silently widen beyond its declared coordinates. `ensure_event_consumer` is the
+  1-coordinate case of this. An **empty coordinate set** is rejected before any
+  create with `FabricError::FilterMismatch` (it would vacuum the whole stream).
+  There is **no command-side fan-in**: a command durable is receiver-owned, one
   `aggregate.verb` per durable. The wildcard subscription stays **rejected** —
   generic/wildcard delivery is a gitops concern, not a fabric one.
 - `recv()` yields the next `Delivered<E>` (`None` once the stream ends; a
@@ -492,7 +519,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | Generic (this crate owns)                              | Caller seam                                  |
 | ------------------------------------------------------ | -------------------------------------------- |
 | the v1 grammar, fixed streams, fixed bucket            | the business coordinates + payload type      |
-| subject rendering, durable filter verification         | the durable name                             |
+| subject rendering, durable create-or-bind + its config | the durable name                             |
 | reconcile op computation, orphan detection             | the desired set                              |
 | bootstrap scan + watch loop, fail-closed codec         | the prefix selection                         |
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
