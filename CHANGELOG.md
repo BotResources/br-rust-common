@@ -118,18 +118,38 @@ release; they remain reachable through the historical per-crate tags
     value, the watch yields a `Set` then `Removed` change on put/delete, and a
     `Removed` change on per-key TTL expiry. (#91)
 - **`br-util-nats-fabric` — typed durable consumer for the integration command /
-  event streams (the production work loop).** The Fabric covered publish and the
-  one-shot correlated awaiter but had no typed surface to *durably consume* the
-  integration command stream, so a receiver (svc-notifier's intake) hand-rolled
-  the whole loop on raw `async_nats`. New entry points bind an **existing,
-  out-of-band-declared durable** and hand back a typed consumer:
-  - `Fabric::bind_command_consumer::<T>(&CommandCoords, durable) -> Result<CommandConsumer<T>, FabricError>`
-    and `Fabric::bind_event_consumer::<T>(&EventCoords, durable) -> Result<EventConsumer<T>, FabricError>`
-    bind-existing and **fail loud** — they reuse the same coordinate-filter
-    verification as `run_commands`/`run_events` (a widened durable is rejected
-    with `FilterMismatch`) and never create the consumer (`NoConsumer` /
-    `NoStream` `FabricError::Consume` variants on absence; gitops declares the
-    durable, the test-harness provisioner is #87);
+  event streams (the production work loop), create-or-bind.** The Fabric covered
+  publish and the one-shot correlated awaiter but had no typed surface to *durably
+  consume* the integration command stream, so a receiver (svc-notifier's intake)
+  hand-rolled the whole loop on raw `async_nats`. New entry points
+  **create-or-bind** a caller-named durable and hand back a typed consumer. The
+  **dimensioning boundary**: a stream and a KV bucket are infra (gitops-declared,
+  bind-only, fail-loud); a **durable consumer carries the service's processing
+  semantics** (ack policy, `ack_wait`, `max_ack_pending`, `max_deliver`,
+  deliver/replay) and is cheap + idempotent to (re)create, so the **fabric creates
+  it** (via `create_consumer`, create-or-update — two replicas creating the same
+  durable with the same config share it; a pre-existing durable converges to the
+  fabric's config, narrowing a durable left widened on `integration.evt.>` to the
+  coordinate filter). The fabric **owns the `ConsumerConfig`** (the contract):
+  durable name = the caller's durable, `filter_subject(s)` = the rendered
+  coordinate set, `ack_policy = Explicit`, `ack_wait = 30s`,
+  `max_ack_pending = 256`, `max_deliver = -1` (unlimited — poison handling is the
+  caller's `term()`, never a silent drop-on-budget), `deliver_policy = All`,
+  `replay_policy = Instant`. The raw `async_nats` `Config` is **never** in a public
+  signature — the caller passes only typed coords + a durable name:
+  - `Fabric::ensure_command_consumer::<T>(&CommandCoords, durable) -> Result<CommandConsumer<T>, FabricError>`
+    and `Fabric::ensure_event_consumer::<T>(&EventCoords, durable) -> Result<EventConsumer<T>, FabricError>`
+    create-or-bind the durable with the fabric's config and **fail loud only on an
+    absent stream** (`FabricError::Consume { kind: NoStream }` — the stream is
+    gitops);
+  - `Fabric::ensure_event_consumer_many::<T>(&[&EventCoords], durable)` is the
+    fan-in case — one durable over several event coordinates (the svc-pm-style
+    consumer reading `user.created` + `user.updated` + `group.created`); the fabric
+    sets `filter_subjects` to the rendered set, so the consumer cannot silently
+    widen. An **empty coordinate set** is rejected before any create with
+    `FabricError::FilterMismatch` (it would vacuum the whole stream). There is
+    **no command-side fan-in** (a command durable is receiver-owned, one
+    `aggregate.verb`); `ensure_event_consumer` is the 1-coordinate case;
   - `IntegrationConsumer<E>::recv(&mut self) -> Result<Option<Delivered<E>>, FabricError>`
     yields the next typed delivery (`None` when the stream ends, a matchable
     transport `FabricError::Consume` on a broker/consumer-gone error);
@@ -150,17 +170,30 @@ release; they remain reachable through the historical per-crate tags
     `async_nats` `Message` / `Consumer` / `Context` / `AckKind` is exposed; the
     escape hatch stays closed, same posture as the KV facades and the awaiter.
   Type aliases `CommandConsumer<T> = IntegrationConsumer<IntegrationCommand<T>>`
-  and `EventConsumer<T> = IntegrationConsumer<IntegrationEvent<T>>`. This is a new
-  surface alongside the existing closure-based `run_commands`/`run_events`, which
-  are unchanged. Purely additive (the new `ConsumeErrorKind::NoDeliveryInfo` rides
-  the `#[non_exhaustive]` enum). Proven by real-`nats-server` integration tests:
-  ack with no redelivery, `nak(delay)` redelivery with `delivered_count`
-  increment, a poison frame routed to `term` with the loop surviving and the next
-  frame still delivered, `delivered_count` tracking attempts up to the
-  `max_deliver` budget, and bind fail-loud when the durable **or the stream** is
-  absent (`NoConsumer` / `NoStream`); plus unit tests that the info-absent path
-  surfaces `NoDeliveryInfo` (not a fabricated count) and that a `Send` ack failure
-  classifies as `ConsumerGone`. Unblocks svc-notifier's intake migrating off raw
+  and `EventConsumer<T> = IntegrationConsumer<IntegrationEvent<T>>`. The existing
+  closure-based `run_commands`/`run_events` keep their signatures and are now
+  create-or-bind on the same config. The retained `verify_command_durable` /
+  `verify_event_durable` (now create-or-bind readiness gates) delegate to the
+  honestly-named `ensure_command_durable` / `ensure_event_durable`. Purely
+  additive vs `v1.0.1` (the `ensure_*` consumer entry points are new this version;
+  the new `ConsumeErrorKind::NoDeliveryInfo` rides the `#[non_exhaustive]` enum;
+  the unused-since-create-or-bind `FilterMismatch` variant is retained). With
+  create-or-bind replacing `get_consumer` (fail-loud) on the consumer path,
+  `ConsumeErrorKind::NoConsumer` is no longer produced by the consumer path —
+  binding never fails on an absent durable, it creates it — but the variant is
+  retained on the `#[non_exhaustive]` enum for compatibility (removing it would be
+  breaking). Proven by
+  real-`nats-server` integration tests: create-or-bind then ack with no
+  redelivery, two `ensure_*` calls on the same durable sharing one consumer,
+  `nak(delay)` redelivery with `delivered_count` increment, a poison frame routed
+  to `term` with the loop surviving and the next frame still delivered,
+  `delivered_count` tracking attempts across redeliveries, a pre-existing widened
+  durable converging to the fabric's filter, `ensure_*` creating an absent durable
+  and consuming, an empty-coordinate-set rejection, and fail-loud only when the
+  **stream** is absent (`NoStream`); plus unit tests that the info-absent path
+  surfaces `NoDeliveryInfo` (not a fabricated count), that a `Send` ack failure
+  classifies as `ConsumerGone`, and that the owned `ConsumerConfig` carries the
+  documented defaults. Unblocks svc-notifier's intake migrating off raw
   `async-nats` (#80). (#90)
 - **`br-util-nats-fabric` — the one-shot correlated awaiter now binds the command
   stream too.** `await_event(s)` / `CorrelatedAwaiter` covered `INTEGRATION_EVT`
@@ -224,23 +257,22 @@ release; they remain reachable through the historical per-crate tags
   portable error-contract test. Unblocks svc-auth and svc-notifier confining
   their boot dial to the lib (#89).
 - **`br-util-nats-fabric` — fan-in event consumer over several coordinates on one
-  durable.** `Fabric::bind_event_consumer_many::<T>(&[&EventCoords], durable) ->
-  Result<EventConsumer<T>, FabricError>` binds **one** existing durable that fans
+  durable (create-or-bind).** `Fabric::ensure_event_consumer_many::<T>(&[&EventCoords], durable) ->
+  Result<EventConsumer<T>, FabricError>` create-or-binds **one** durable that fans
   in several event coordinates (the svc-pm-style consumer reading
   `user.created` + `user.updated` + `group.created` on a single durable). The
-  bind verifies the durable's configured `filter_subjects` equal the rendered set
-  **exactly, order-insensitive (set equality)**; a durable that filters more,
-  fewer, or different subjects — including the wildcard `integration.evt.>` —
-  is rejected with `FabricError::FilterMismatch`, so a fan-in consumer still
-  cannot silently widen beyond its declared coordinates. `T` is the caller's union
-  type, deserialized per frame and **fail-closed** exactly as the single-coordinate
-  path. `bind_event_consumer` now delegates to this as the 1-coordinate case
-  (`verify_filter` became order-insensitive set equality). There is **no
-  command-side fan-in** (a command durable is receiver-owned, one
+  fabric sets the durable's `filter_subjects` to the rendered set, so a fan-in
+  consumer cannot silently widen beyond its declared coordinates — a pre-existing
+  durable (even one left widened on `integration.evt.>`) converges to that set.
+  An **empty coordinate set** is rejected before any create with
+  `FabricError::FilterMismatch` (it would vacuum the whole stream). `T` is the
+  caller's union type, deserialized per frame and **fail-closed** exactly as the
+  single-coordinate path. `ensure_event_consumer` is the 1-coordinate case. There
+  is **no command-side fan-in** (a command durable is receiver-owned, one
   `aggregate.verb`) and the wildcard subscription stays rejected. Purely additive.
   Proven by a real-`nats-server` integration test: two facts consumed and acked on
-  one durable with no redelivery, and a durable whose filter set does not match
-  rejected with `FilterMismatch`. (#91)
+  one durable with no redelivery, and an empty-coordinate-set rejected with
+  `FilterMismatch`. (#91)
 - **`br-util-nats-fabric` — graceful consumer drain (SIGTERM-safe shutdown).**
   `IntegrationConsumer::drain(self)` consumes the consumer and closes the
   underlying subscription cleanly (the pull task is aborted and the inbox

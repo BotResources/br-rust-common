@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use br_core_integration::{IntegrationCommand, IntegrationEvent, MessageOutcome};
 
 use crate::classify::classify_messages_error;
-use crate::consumer::bind::bind_durable;
+use crate::consumer::bind::ensure_durable;
 use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::{ConsumeErrorKind, FabricError};
 use crate::fabric::Fabric;
@@ -34,7 +34,7 @@ impl Fabric {
         P: FnMut(FabricError),
     {
         let consumer =
-            bind_durable(self.context(), INTEGRATION_CMD, durable, &coords.subject()).await?;
+            ensure_durable(self.context(), INTEGRATION_CMD, durable, &coords.subject()).await?;
         run_inner::<IntegrationCommand<T>, _, _, _>(consumer, &mut handler, &mut on_poison).await
     }
 
@@ -52,7 +52,7 @@ impl Fabric {
         P: FnMut(FabricError),
     {
         let consumer =
-            bind_durable(self.context(), INTEGRATION_EVT, durable, &coords.subject()).await?;
+            ensure_durable(self.context(), INTEGRATION_EVT, durable, &coords.subject()).await?;
         run_inner::<IntegrationEvent<T>, _, _, _>(consumer, &mut handler, &mut on_poison).await
     }
 }
