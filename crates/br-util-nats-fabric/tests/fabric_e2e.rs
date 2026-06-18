@@ -478,6 +478,122 @@ async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
     );
 }
 
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn enumeration_returns_only_the_prefix_scoped_keys_and_entries() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = KvPrefix::new(format!("plenum/{run}/users/")).unwrap();
+    let inside = [
+        (
+            KvKey::new(format!("plenum/{run}/users/ada")).unwrap(),
+            Payload {
+                label: "ada".to_string(),
+            },
+        ),
+        (
+            KvKey::new(format!("plenum/{run}/users/grace")).unwrap(),
+            Payload {
+                label: "grace".to_string(),
+            },
+        ),
+    ];
+    let outside = (
+        KvKey::new(format!("plenum/{run}/groups/admins")).unwrap(),
+        Payload {
+            label: "admins".to_string(),
+        },
+    );
+    for (key, value) in inside.iter().chain(std::iter::once(&outside)) {
+        store
+            .put(key.as_str(), serde_json::to_vec(value).unwrap().into())
+            .await
+            .expect("put");
+    }
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+
+    let keys = reader.keys(&prefix).await.expect("keys");
+    assert_eq!(
+        keys,
+        vec![inside[0].0.clone(), inside[1].0.clone()],
+        "keys must be exactly the prefix-scoped set, sorted"
+    );
+
+    let entries = reader.entries(&prefix).await.expect("entries");
+    let expected: BTreeMap<KvKey, Payload> = inside.iter().cloned().collect();
+    assert_eq!(entries, expected);
+    assert!(
+        !entries.contains_key(&outside.0),
+        "an entry outside the prefix must never be enumerated"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn enumeration_entries_fails_closed_on_an_undecodable_value() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = KvPrefix::new(format!("plenum/{run}/users/")).unwrap();
+    let good = KvKey::new(format!("plenum/{run}/users/ada")).unwrap();
+    let bad = KvKey::new(format!("plenum/{run}/users/garbage")).unwrap();
+    store
+        .put(
+            good.as_str(),
+            serde_json::to_vec(&Payload {
+                label: "ada".to_string(),
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .expect("put good");
+    store
+        .put(bad.as_str(), b"{ not json".to_vec().into())
+        .await
+        .expect("put bad");
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+    match reader.entries(&prefix).await {
+        Err(FabricError::Decode { subject, .. }) => assert_eq!(subject, bad.as_str()),
+        other => panic!("expected Decode naming the bad key, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn enumeration_on_an_unmatched_prefix_returns_a_legitimate_empty() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = KvPrefix::new(format!("plenum/{run}/never-written/")).unwrap();
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+
+    assert_eq!(reader.keys(&prefix).await.expect("keys"), Vec::new());
+    assert_eq!(
+        reader.entries(&prefix).await.expect("entries"),
+        BTreeMap::new()
+    );
+}
+
 #[derive(Clone, Default)]
 struct RecordingSink {
     projected: Arc<Mutex<BTreeMap<KvKey, Payload>>>,

@@ -110,4 +110,10 @@ mod tests {
     fn prefix_rejects_wildcard_like_input() {
         assert!(KvPrefix::new("identity/>").is_err());
     }
+
+    #[test]
+    fn prefix_boundary_is_the_caller_supplied_slash() {
+        assert!(!KvPrefix::new("a/b/").unwrap().matches("a/bextra"));
+        assert!(KvPrefix::new("a/b").unwrap().matches("a/bextra"));
+    }
 }
