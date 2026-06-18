@@ -346,6 +346,56 @@ blind reuse-detection).
   concurrent rotations, the delete counterpart of `put`.
 - `put(&KvKey, &V)` is the **unconditional** write, ignoring the revision chain —
   for the `revoke_family` wipe that must land regardless of concurrent rotations.
+- `create_with_ttl(&KvKey, &V, Duration)` is `create` with a **per-message TTL**:
+  the freshly-created value carries a TTL header so the key expires after `ttl`
+  instead of riding the bucket-wide `max_age`. The TTL is set **per message**, so
+  it only **shortens** expiry **below** the bucket's `max_age` — it cannot extend a
+  key past it — and requires the bucket to have been declared with per-message-TTL
+  support at provisioning. The lib **binds and sets** the per-message TTL; it never
+  creates or configures the bucket — gitops declares the bucket with
+  `max_age ≥ longest TTL` and per-message-TTL support. Same matchable
+  `FabricError::KeyAlreadyExists { key }` on a live key as `create`.
+  **The per-message TTL does not survive a CAS rotation.** The only public rotation
+  path, `update_if` → `async-nats` `Store::update`, rewrites the key **without** a
+  TTL header, so a key created with `create_with_ttl(family, v, 30d)` and later
+  rotated via `update_if` **loses** its per-key TTL and reverts to the bucket
+  `max_age` — there is no public CAS-update-with-TTL path in `async-nats` (0.48 and
+  0.49.1; `update_maybe_ttl` is private). Position `create_with_ttl` on its
+  truly-covered case: a **one-time code** (created once, never rewritten, expires at
+  `ttl`). For a **refresh family** whose TTL must be stable across rotations, the
+  effective TTL is the bucket `max_age`, not the initial `create_with_ttl` value —
+  size the bucket `max_age` to the family lifetime and let rotations ride it. There
+  is no `put_with_ttl`: an unconditional last-writer-wins write carrying a per-key
+  TTL is not part of the public `async-nats` KV surface at any current version (only
+  the CAS-flavoured `create_with_ttl` is), so use `create_with_ttl` for the one-time
+  code lifecycle (see the CHANGELOG note).
+- `keys(&KvPrefix) -> Result<Vec<KvKey>, FabricError>` enumerates the live keys
+  under the prefix **without decoding** values — tombstoned (deleted / purged /
+  TTL-expired) keys are excluded, consistent with `get_with_revision`. Identical
+  prefix-scoped shape to `PublishedLanguageReader::keys`.
+- `entries(&KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError>` enumerates the
+  live keys under the prefix **and decodes** each value, **fail-closed** — an
+  undecodable value surfaces as a `FabricError::Decode` naming the key, never a
+  silent skip — also excluding tombstones. Identical shape to
+  `PublishedLanguageReader::entries`.
+- `watcher() -> EphemeralAuthWatcher<V>` opens a change watch over the bound
+  bucket so a service reacts to "this family was just revoked / rotated elsewhere"
+  **without polling**. `EphemeralAuthWatcher::watch(on_change)` runs the watch
+  loop, invoking the caller's `FnMut(EphemeralAuthChange<V>)` per change —
+  `EphemeralAuthChange::Set { key, value }` for a put (fail-closed decode, same as
+  `entries`) and `EphemeralAuthChange::Removed { key }` for a delete / purge,
+  mirroring the Published-Language watch (same fail-closed decode, same
+  `health()` degraded/healthy transitions, same cancel-safety). The raw
+  `async_nats` `Entry` is never handed to the caller — only the typed change.
+  `EphemeralAuthChange::Removed` covers **TTL-expiry only when the bucket is
+  declared with delete-marker TTL** (`limit_markers` / `allow_msg_ttl`): a
+  TTL-expired key surfaces as a delete/purge marker on the watch only if the bucket
+  emits one, so a consumer reacting to a revoke-by-expiry is coupled to that gitops
+  provisioning constraint — the lib never provisions the bucket and cannot
+  guarantee the marker. The watch loops until error or stream-end and has **no
+  cancellation token**: a caller stops it by **dropping the `watch` future** (it is
+  cancel-safe — a read-only stream plus a health channel, no partial write), so
+  place it under a `tokio::select!` / `CancellationToken` on the caller side.
 - `status()` exposes the **bound bucket's cached KV state** in the bind-existing
   posture — it reads `async_nats`'s locally-cached stream info and does **not**
   round-trip the broker, so it is **not** a live reachability probe and must not
@@ -369,6 +419,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
 | prefix enumeration (`PublishedLanguageReader::keys`/`entries`) | the `KvPrefix` to scan                 |
 | compare-and-swap KV (`EphemeralAuthStore`, `Revision`) | the `KvKey`, the value, the observed revision |
+| per-key TTL on create, enumeration, change-watch (`EphemeralAuthStore`, `EphemeralAuthWatcher`) | the `Duration`, the `KvPrefix`, the `on_change` handler |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
 

@@ -67,6 +67,56 @@ release; they remain reachable through the historical per-crate tags
   leaving the key intact against a stale one), `create` on a live key returns
   `KeyAlreadyExists`, the unconditional revoke wipe, bind-existing fail-loud when
   the bucket is absent, and fail-closed decode on a malformed value. (#86)
+- **`br-util-nats-fabric` — per-key TTL, enumeration, and a change-watch on the
+  `EPHEMERAL_AUTH` store, completing the KV side of "talk to what exists, entirely
+  through the Fabric".** All purely additive on `EphemeralAuthStore<V>`:
+  - `create_with_ttl(&KvKey, &V, Duration)` is `create` carrying a **per-message
+    TTL** so a key can expire before the bucket-wide `max_age`. It uses NATS 2.11
+    per-message TTL via the native `async_nats` `create_with_ttl`; the TTL is set
+    per message, so it only **shortens** expiry below the bucket `max_age` and
+    requires the bucket to have been declared with per-message-TTL support at
+    provisioning. The lib binds and sets the TTL, it **never** provisions or
+    configures the bucket (gitops declares `max_age ≥ longest TTL` + TTL support).
+    Same matchable `KeyAlreadyExists` on a live key as `create`. **The per-message
+    TTL does not survive a CAS rotation:** the only public rotation path,
+    `update_if` → `async-nats` `Store::update`, rewrites without a TTL header
+    (there is no public CAS-update-with-TTL — `update_maybe_ttl` is private in
+    0.48 and 0.49.1), so a key rotated via `update_if` loses its `create_with_ttl`
+    TTL and reverts to the bucket `max_age`. `create_with_ttl` is therefore
+    positioned on its truly-covered case — a **one-time code** created once and
+    never rewritten; a refresh family whose TTL must be stable across rotations
+    gets its effective TTL from the bucket `max_age`, not the initial value.
+    **No `put_with_ttl` is offered:** an unconditional last-writer-wins write
+    carrying a per-key TTL is not part of the public `async-nats` KV API at any
+    current version (verified against 0.48.0, locked, and 0.49.1, latest — only the
+    CAS-flavoured `create_with_ttl` / `purge_*_with_ttl` exist publicly; the fields
+    needed to hand-roll an unconditional TTL'd put are `pub(crate)`). Faking it via
+    a uniform-TTL fallback is explicitly refused;
+  - `keys(&KvPrefix) -> Result<Vec<KvKey>, FabricError>` and
+    `entries(&KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError>` give the store
+    the same prefix-scoped enumeration as `PublishedLanguageReader` (reusing the
+    shared `kv::scan` helper): `keys` does not decode; `entries` is **fail-closed**
+    on an undecodable value (`FabricError::Decode` naming the key). Both exclude
+    deleted / purged / TTL-expired tombstones, consistent with `get_with_revision`;
+  - `watcher() -> EphemeralAuthWatcher<V>` opens a **change-watch** so a service
+    reacts to a revoke / rotation made elsewhere **without polling**.
+    `EphemeralAuthWatcher::watch(on_change)` runs the loop and invokes a
+    `FnMut(EphemeralAuthChange<V>)` per change — `EphemeralAuthChange::Set { key,
+    value }` (fail-closed decode) on a put, `EphemeralAuthChange::Removed { key }`
+    on a delete / purge — mirroring the Published-Language watch (same fail-closed
+    decode, same `health()` degraded/healthy transitions, same cancel-safety). The
+    watch loops until error or stream-end with no cancellation token; a caller stops
+    it by **dropping the future** (cancel-safe). `Removed` covers **TTL-expiry only
+    when the bucket is declared with delete-marker TTL** (`limit_markers` /
+    `allow_msg_ttl`) — a gitops provisioning constraint the lib never controls. The
+    raw `async_nats` KV `Store` / `Entry` is still never exposed; the typed change
+    is the only path. New public types `EphemeralAuthWatcher<V>` and
+    `EphemeralAuthChange<V>`. Purely additive (semver-checks vs `v1.0.1`:
+    non-breaking). Proven by real-`nats-server` integration tests: a `create_with_ttl`
+    key expires well before the longer bucket `max_age`, `keys`/`entries` enumerate
+    live keys and exclude a tombstoned one, `entries` fails closed on a malformed
+    value, the watch yields a `Set` then `Removed` change on put/delete, and a
+    `Removed` change on per-key TTL expiry. (#86)
 - **`br-util-nats-fabric` — typed durable consumer for the integration command /
   event streams (the production work loop).** The Fabric covered publish and the
   one-shot correlated awaiter but had no typed surface to *durably consume* the

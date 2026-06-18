@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
+use std::time::Duration;
 
 use async_nats::jetstream::kv::{
     CreateErrorKind, DeleteErrorKind, Operation, Store, UpdateErrorKind,
@@ -9,12 +11,20 @@ use serde::de::DeserializeOwned;
 use crate::error::FabricError;
 use crate::fabric::Fabric;
 use crate::kv::codec::{decode, encode};
-use crate::kv::key::KvKey;
+use crate::kv::ephemeral_auth_watch::EphemeralAuthWatcher;
+use crate::kv::key::{KvKey, KvPrefix};
 use crate::kv::revision::Revision;
+use crate::kv::scan::{scan_entries, scan_keys};
 
 pub struct EphemeralAuthStore<V> {
     kv: Store,
     _value: PhantomData<V>,
+}
+
+impl<V> EphemeralAuthStore<V> {
+    pub(crate) fn store(&self) -> &Store {
+        &self.kv
+    }
 }
 
 impl<V> EphemeralAuthStore<V>
@@ -111,5 +121,37 @@ where
             .await
             .map_err(FabricError::kv)?;
         Ok(())
+    }
+
+    pub async fn create_with_ttl(
+        &self,
+        key: &KvKey,
+        value: &V,
+        ttl: Duration,
+    ) -> Result<(), FabricError> {
+        let bytes = encode(value)?;
+        match self
+            .kv
+            .create_with_ttl(key.as_str(), bytes.into(), ttl)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) if err.kind() == CreateErrorKind::AlreadyExists => {
+                Err(FabricError::key_already_exists(key.as_str()))
+            }
+            Err(err) => Err(FabricError::kv(err)),
+        }
+    }
+
+    pub async fn keys(&self, prefix: &KvPrefix) -> Result<Vec<KvKey>, FabricError> {
+        scan_keys(&self.kv, prefix).await
+    }
+
+    pub async fn entries(&self, prefix: &KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError> {
+        scan_entries(&self.kv, prefix).await
+    }
+
+    pub fn watcher(&self) -> EphemeralAuthWatcher<V> {
+        EphemeralAuthWatcher::bind(self)
     }
 }
