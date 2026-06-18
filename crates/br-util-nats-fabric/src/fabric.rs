@@ -6,6 +6,12 @@ use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::FabricError;
 
 #[derive(Clone)]
+pub struct NatsAuth {
+    pub user: String,
+    pub password: String,
+}
+
+#[derive(Clone)]
 pub struct Fabric {
     jetstream: async_nats::jetstream::Context,
 }
@@ -13,6 +19,24 @@ pub struct Fabric {
 impl Fabric {
     pub fn new(jetstream: async_nats::jetstream::Context) -> Self {
         Self { jetstream }
+    }
+
+    pub async fn connect(url: &str) -> Result<Self, FabricError> {
+        let client = async_nats::connect(url)
+            .await
+            .map_err(|e| FabricError::connect(&e))?;
+        Ok(Self::new(async_nats::jetstream::new(client)))
+    }
+
+    pub async fn connect_with(url: &str, auth: &NatsAuth) -> Result<Self, FabricError> {
+        let client = async_nats::ConnectOptions::with_user_and_password(
+            auth.user.clone(),
+            auth.password.clone(),
+        )
+        .connect(url)
+        .await
+        .map_err(|e| FabricError::connect(&e))?;
+        Ok(Self::new(async_nats::jetstream::new(client)))
     }
 
     pub(crate) fn context(&self) -> &async_nats::jetstream::Context {

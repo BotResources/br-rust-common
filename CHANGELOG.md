@@ -93,6 +93,22 @@ release; they remain reachable through the historical per-crate tags
   frame still delivered, `delivered_count` tracking attempts up to the
   `max_deliver` budget, and bind fail-loud when the durable is absent. Unblocks
   svc-notifier's intake migrating off raw `async-nats` (#80). (#90)
+- **`br-util-nats-fabric` — boot-time connection helpers on `Fabric`.** The
+  fabric now owns the boot dial so a service never reaches for `async_nats`
+  directly: `Fabric::connect(url: &str) -> Result<Fabric, FabricError>` dials
+  anonymously, and `Fabric::connect_with(url: &str, auth: &NatsAuth) ->
+  Result<Fabric, FabricError>` dials with a user/password
+  (`NatsAuth { user, password }` — a typed pair that keeps `async_nats` /
+  `ConnectOptions` out of the public signature). Both build the JetStream context
+  internally and return a ready `Fabric`. A failed dial surfaces as the distinct,
+  matchable `FabricError::Connect(String)` (never conflated with publish/consume/
+  kv). Connecting is not provisioning — no JetStream object is created; in-cluster
+  transport is plaintext per the trust model, so there is no TLS/credentials-file
+  surface. `Fabric::new(jetstream::Context)` is unchanged (tests and advanced
+  callers that already own a context). Purely additive. Proven by real-`nats-
+  server` integration tests: a `connect` round-trip (publish + consume), a
+  `connect_with` round-trip, and a fail-loud `Connect` on an unreachable broker.
+  Unblocks svc-auth and svc-notifier confining their boot dial to the lib (#89).
 
 ## [1.0.1] — 2026-06-18
 
