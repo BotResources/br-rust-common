@@ -285,6 +285,9 @@ without dropping to a raw `async_nats` `Store` key-scan. Semantics:
   returned; an entry outside the prefix is never included;
 - `keys` returns the validated `KvKey`s (sorted); `entries` returns a
   `BTreeMap<KvKey, V>` of the decoded values;
+- **decode contract** — `keys()` enumerates keys **without decoding values** (it
+  cannot fail-closed on a value), while `entries()` materializes the values and
+  **fail-closes** with a `FabricError::Decode` naming the undecodable key;
 - **fail-closed decode** — `entries` surfaces an undecodable value as an explicit
   `FabricError::Decode` naming the key, **never** a silent skip;
 - **store-access failure surfaces** — a broker/KV outage during the scan is an
