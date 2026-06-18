@@ -9,10 +9,10 @@ use uuid::Uuid;
 use br_core_integration::EventMetadata;
 
 use crate::classify::classify_get_stream;
-use crate::coords::{EventCoords, IntegrationSubject};
+use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::{ConsumeErrorKind, FabricError};
 use crate::fabric::Fabric;
-use crate::stream::INTEGRATION_EVT;
+use crate::stream::{INTEGRATION_CMD, INTEGRATION_EVT};
 
 #[non_exhaustive]
 pub struct CorrelatedMatch {
@@ -42,17 +42,41 @@ impl Fabric {
         &self,
         coords: &[&EventCoords],
     ) -> Result<CorrelatedAwaiter, FabricError> {
+        self.await_on_stream(INTEGRATION_EVT, coords.iter().map(|c| c.subject()))
+            .await
+    }
+
+    pub async fn await_command(
+        &self,
+        coords: &CommandCoords,
+    ) -> Result<CorrelatedAwaiter, FabricError> {
+        self.await_commands(std::slice::from_ref(&coords)).await
+    }
+
+    pub async fn await_commands(
+        &self,
+        coords: &[&CommandCoords],
+    ) -> Result<CorrelatedAwaiter, FabricError> {
+        self.await_on_stream(INTEGRATION_CMD, coords.iter().map(|c| c.subject()))
+            .await
+    }
+
+    async fn await_on_stream(
+        &self,
+        stream_name: &'static str,
+        subjects: impl Iterator<Item = String>,
+    ) -> Result<CorrelatedAwaiter, FabricError> {
         let jetstream = self.context();
         jetstream
-            .get_stream(INTEGRATION_EVT)
+            .get_stream(stream_name)
             .await
             .map_err(|e| FabricError::consume(classify_get_stream(&e), e.to_string()))?;
 
         let mut messages = SelectAll::new();
-        for coord in coords {
+        for subject in subjects {
             let subscriber = jetstream
                 .client()
-                .subscribe(coord.subject())
+                .subscribe(subject)
                 .await
                 .map_err(|e| FabricError::consume(ConsumeErrorKind::Other, e.to_string()))?;
             messages.push(subscriber);

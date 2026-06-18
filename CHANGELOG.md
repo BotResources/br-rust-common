@@ -93,6 +93,28 @@ release; they remain reachable through the historical per-crate tags
   frame still delivered, `delivered_count` tracking attempts up to the
   `max_deliver` budget, and bind fail-loud when the durable is absent. Unblocks
   svc-notifier's intake migrating off raw `async-nats` (#80). (#90)
+- **`br-util-nats-fabric` — the one-shot correlated awaiter now binds the command
+  stream too.** `await_event(s)` / `CorrelatedAwaiter` covered `INTEGRATION_EVT`
+  only, so a consumer needing to observe a command in flight (e.g. a `declare` a
+  service is about to consume) had to drop to raw `async_nats`. New symmetric
+  command-side entry points mirror the event surface:
+  - `Fabric::await_command(&CommandCoords) -> Result<CorrelatedAwaiter, FabricError>`
+    opens a subscription scoped to one `CommandCoords` on the fixed command
+    stream;
+  - `Fabric::await_commands(&[&CommandCoords]) -> Result<CorrelatedAwaiter, FabricError>`
+    awaits **one of several** commands.
+  Both bind the fixed `INTEGRATION_CMD` stream, **fail loud** with the matchable
+  `FabricError::Consume { kind: NoStream, .. }` when it is absent (never
+  auto-create), and reuse the existing `CorrelatedAwaiter` /
+  `await_correlation(correlation_id, deadline)` — the returned awaiter, its
+  `CorrelatedMatch`, and the correlation probe are shared with the event side
+  unchanged (both envelopes carry an `EventMetadata`). The caller still passes
+  typed coordinates, never a stream or filter string, and no raw `async_nats`
+  `Message` / `Subscriber` / `Context` is exposed. This promotes the command-await
+  stand-in the e2e harness hand-rolled on raw `async-nats` into the frozen lib.
+  Purely additive. Proven by real-`nats-server` integration tests: match by
+  correlation on the command stream, one-of-several coords selection, `None` at
+  the deadline, and bind fail-loud when the command stream is absent. (#84)
 
 ## [1.0.1] — 2026-06-18
 
