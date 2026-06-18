@@ -79,20 +79,31 @@ release; they remain reachable through the historical per-crate tags
     surface: `payload() -> Result<&E, &FabricError>` (a malformed wire frame is
     **fail-closed** — it surfaces as a `FabricError::Decode` the caller can route
     to `term()`, never a silent drop and never a panic that kills the loop),
-    `subject()`, `delivered_count() -> i64` (from `message.info().delivered`, to
-    drive redelivery-budget / poison logic), and the three JetStream ack outcomes
-    typed as methods — `ack()`, `nak(Option<Duration>)`, `term()`. No raw
+    `subject()`, `delivered_count() -> Option<i64>` (from
+    `message.info().delivered`; **`None` when the delivery info is absent** — the
+    count that drives the poison budget is never fabricated, so the absence is
+    observable and the frame is independently routable to `term`, with
+    `payload()` then a `FabricError::Consume { kind: NoDeliveryInfo }` — never a
+    silent `1` that would let a poison frame evade the redelivery budget
+    forever), and the three JetStream ack outcomes typed as methods — `ack()`,
+    `nak(Option<Duration>)`, `term()`. An ack-path transport failure is
+    classified (`ConsumerGone` when the consumer/responders are gone, `Other`
+    otherwise), the same granularity the `recv()` side already surfaces. No raw
     `async_nats` `Message` / `Consumer` / `Context` / `AckKind` is exposed; the
     escape hatch stays closed, same posture as the KV facades and the awaiter.
   Type aliases `CommandConsumer<T> = IntegrationConsumer<IntegrationCommand<T>>`
   and `EventConsumer<T> = IntegrationConsumer<IntegrationEvent<T>>`. This is a new
   surface alongside the existing closure-based `run_commands`/`run_events`, which
-  are unchanged. Purely additive. Proven by real-`nats-server` integration tests:
+  are unchanged. Purely additive (the new `ConsumeErrorKind::NoDeliveryInfo` rides
+  the `#[non_exhaustive]` enum). Proven by real-`nats-server` integration tests:
   ack with no redelivery, `nak(delay)` redelivery with `delivered_count`
   increment, a poison frame routed to `term` with the loop surviving and the next
   frame still delivered, `delivered_count` tracking attempts up to the
-  `max_deliver` budget, and bind fail-loud when the durable is absent. Unblocks
-  svc-notifier's intake migrating off raw `async-nats` (#80). (#90)
+  `max_deliver` budget, and bind fail-loud when the durable **or the stream** is
+  absent (`NoConsumer` / `NoStream`); plus unit tests that the info-absent path
+  surfaces `NoDeliveryInfo` (not a fabricated count) and that a `Send` ack failure
+  classifies as `ConsumerGone`. Unblocks svc-notifier's intake migrating off raw
+  `async-nats` (#80). (#90)
 
 ## [1.0.1] — 2026-06-18
 

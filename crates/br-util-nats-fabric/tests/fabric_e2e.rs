@@ -763,7 +763,7 @@ async fn bind_command_consumer_acks_and_the_message_is_not_redelivered() {
         .expect("recv ok")
         .expect("a delivery");
     assert_eq!(delivery.payload().unwrap().payload.label, "hello");
-    assert_eq!(delivery.delivered_count(), 1);
+    assert_eq!(delivery.delivered_count(), Some(1));
     delivery.ack().await.expect("ack");
 
     let after_ack = tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await;
@@ -802,7 +802,7 @@ async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
         .expect("first recv within deadline")
         .expect("recv ok")
         .expect("a delivery");
-    assert_eq!(first.delivered_count(), 1);
+    assert_eq!(first.delivered_count(), Some(1));
     first
         .nak(Some(Duration::from_millis(500)))
         .await
@@ -815,7 +815,7 @@ async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
         .expect("a redelivery");
     assert_eq!(
         second.delivered_count(),
-        2,
+        Some(2),
         "delivered_count increments on redelivery"
     );
     second.ack().await.expect("ack");
@@ -909,7 +909,7 @@ async fn delivered_count_increments_across_redeliveries_up_to_the_budget() {
             .expect("a delivery");
         assert_eq!(
             delivery.delivered_count(),
-            expected,
+            Some(expected),
             "delivered_count tracks the attempt number"
         );
         delivery
@@ -950,4 +950,27 @@ async fn bind_command_consumer_fails_loud_when_the_durable_is_absent() {
     }
 
     let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn bind_command_consumer_fails_loud_when_the_stream_is_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+
+    let coords = deliver_coords();
+    let fabric = fabric().await;
+    let durable = format!("orphan_{}", Uuid::now_v7().simple());
+    match fabric
+        .bind_command_consumer::<Payload>(&coords, &durable)
+        .await
+    {
+        Err(FabricError::Consume {
+            kind: ConsumeErrorKind::NoStream,
+            ..
+        }) => {}
+        Err(other) => panic!("expected NoStream, got {other:?}"),
+        Ok(_) => panic!("binding on an absent stream must fail loud, never auto-create"),
+    }
 }

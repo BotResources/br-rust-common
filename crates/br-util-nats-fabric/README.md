@@ -95,22 +95,30 @@ to the caller's poison handler — it is never silently dropped.
 
 For the production work loop that needs to inspect the redelivery count and own
 the ack decision per delivery (a poison budget, a transactional side effect
-before ack), bind a typed consumer and pull deliveries explicitly:
+before ack), bind a typed consumer and pull deliveries explicitly. The durable's
+own `max_deliver` is the authoritative budget; the app-side `term()` below is an
+**optional second barrier** the caller may add when it wants to stop a frame
+before the broker's `max_deliver` is reached (e.g. a tighter per-handler ceiling):
 
 ```rust,ignore
+const APP_MAX_DELIVER: i64 = 5;
+const NAK_DELAY: Duration = Duration::from_secs(2);
+
 let mut consumer = fabric.bind_command_consumer::<T>(&coords, "svc-notifier").await?;
 while let Some(delivery) = consumer.recv().await? {
-    match delivery.payload() {
-        Ok(command) => {
-            if delivery.delivered_count() > MAX_DELIVER {
-                delivery.term().await?;        // redelivery budget exhausted
-            } else if do_work(command).await.is_ok() {
+    match (delivery.delivered_count(), delivery.payload()) {
+        // Optional second barrier: stop before the durable's own max_deliver.
+        (Some(count), _) if count > APP_MAX_DELIVER => delivery.term().await?,
+        (Some(_), Ok(command)) => {
+            if do_work(command).await.is_ok() {
                 delivery.ack().await?;
             } else {
                 delivery.nak(Some(NAK_DELAY)).await?;
             }
         }
-        Err(_decode) => delivery.term().await?, // fail-closed: route the poison frame to term
+        // Fail-closed: a poison frame, or one whose delivery info is absent
+        // (so its budget cannot be tracked), is routed to term.
+        (_, Err(_unprocessable)) | (None, _) => delivery.term().await?,
     }
 }
 ```
@@ -126,9 +134,16 @@ while let Some(delivery) = consumer.recv().await? {
 - `Delivered<E>` exposes `payload() -> Result<&E, &FabricError>` — a malformed
   wire frame is **fail-closed**: it surfaces as a `FabricError::Decode` naming
   the subject that the caller routes to `term()`, **never** a silent drop and
-  **never** a panic that ends the loop. `subject()` and `delivered_count()`
-  (the JetStream delivery attempt count) drive logging and the poison budget;
-  `ack()`, `nak(Option<Duration>)`, `term()` are the three typed ack outcomes.
+  **never** a panic that ends the loop.
+- `delivered_count() -> Option<i64>` is the JetStream delivery attempt count.
+  It is `None` when the frame's delivery info is **absent** — the count that
+  drives the poison budget cannot be fabricated, so the absence is **observable**
+  and the frame is independently routable to `term()`
+  (`payload()` is then a `FabricError::Consume { kind: NoDeliveryInfo }`),
+  never a silent `1` that would let a poison frame evade the budget forever.
+- `ack()`, `nak(Option<Duration>)`, `term()` are the three typed ack outcomes.
+  An ack-path transport failure is classified: `ConsumerGone` when the
+  consumer/responders are gone, `Other` otherwise.
 - No raw `async_nats` `Message` / `Consumer` / `Context` / `AckKind` is exposed.
   `CommandConsumer<T>` / `EventConsumer<T>` alias
   `IntegrationConsumer<IntegrationCommand<T>>` /

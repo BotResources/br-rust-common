@@ -38,6 +38,7 @@ pub enum ConsumeErrorKind {
     NoConsumer,
     ConsumerGone,
     Other,
+    NoDeliveryInfo,
 }
 
 impl std::fmt::Display for ConsumeErrorKind {
@@ -46,6 +47,7 @@ impl std::fmt::Display for ConsumeErrorKind {
             Self::NoStream => "no such stream",
             Self::NoConsumer => "no such consumer",
             Self::ConsumerGone => "consumer gone",
+            Self::NoDeliveryInfo => "delivery info absent",
             Self::Other => "consume failed",
         };
         f.write_str(s)

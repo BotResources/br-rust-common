@@ -18,7 +18,7 @@ pub struct IntegrationConsumer<E> {
 }
 
 impl<E: DeserializeOwned> IntegrationConsumer<E> {
-    pub(crate) async fn bind(consumer: PullConsumer) -> Result<Self, FabricError> {
+    pub(crate) async fn open_stream(consumer: PullConsumer) -> Result<Self, FabricError> {
         let messages = consumer
             .messages()
             .await

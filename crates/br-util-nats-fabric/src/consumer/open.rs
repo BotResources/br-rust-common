@@ -15,7 +15,7 @@ impl Fabric {
     ) -> Result<CommandConsumer<T>, FabricError> {
         let consumer =
             bind_durable(self.context(), INTEGRATION_CMD, durable, &coords.subject()).await?;
-        CommandConsumer::<T>::bind(consumer).await
+        CommandConsumer::<T>::open_stream(consumer).await
     }
 
     pub async fn bind_event_consumer<T: DeserializeOwned>(
@@ -25,6 +25,6 @@ impl Fabric {
     ) -> Result<EventConsumer<T>, FabricError> {
         let consumer =
             bind_durable(self.context(), INTEGRATION_EVT, durable, &coords.subject()).await?;
-        EventConsumer::<T>::bind(consumer).await
+        EventConsumer::<T>::open_stream(consumer).await
     }
 }
