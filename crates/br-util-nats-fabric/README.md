@@ -15,13 +15,37 @@ state machine from `br-core-integration`; it does **not** restate them.
 ## The no-provisioning guarantee
 
 The fabric **never** creates infrastructure. There is no `create_stream`,
-`ensure_stream`, `create_bucket`, or `ensure_bucket` anywhere in this crate. A
-`Fabric` is constructed *from* an already-connected
-`async_nats::jetstream::Context` — it never connects. Streams, durable
-consumers, and the two KV buckets (`PUBLISHED_LANGUAGE`, `EPHEMERAL_AUTH`,
-including the latter's TTL `max_age`) are **declared out of band** and assumed to
-exist; every entry point **binds** an existing object and **fails loud** (a
-`FabricError`) when it is absent. Readiness gates this, not runtime auto-repair.
+`ensure_stream`, `create_bucket`, or `ensure_bucket` anywhere in this crate.
+Connecting to the broker is **not** provisioning: the fabric dials an existing
+NATS server (`Fabric::connect`/`connect_with`) but creates no JetStream object.
+Streams, durable consumers, and the two KV buckets (`PUBLISHED_LANGUAGE`,
+`EPHEMERAL_AUTH`, including the latter's TTL `max_age`) are **declared out of
+band** and assumed to exist; every entry point **binds** an existing object and
+**fails loud** (a `FabricError`) when it is absent. Readiness gates this, not
+runtime auto-repair.
+
+## Constructing a `Fabric`
+
+The boot-time dial is confined to this crate — a service never reaches for
+`async_nats` directly:
+
+```rust,ignore
+let fabric = Fabric::connect("nats://nats:4222").await?;
+let fabric = Fabric::connect_with(
+    "nats://nats:4222",
+    &NatsAuth { user, password },
+).await?;
+```
+
+`connect` dials anonymously; `connect_with` dials with a user/password
+(`NatsAuth { user, password }` — a typed pair that keeps `async_nats` out of the
+public signature). `NatsAuth` carries a hand-written `Debug` that masks the
+password (`password: "***"`) so the credential can never leak through a
+debug-print or a structured log. Both build the JetStream context internally and
+return a ready `Fabric`. A failed dial surfaces as the distinct, matchable
+`FabricError::Connect`. In-cluster transport is plaintext per the trust model, so
+there is no TLS/credentials-file surface. `Fabric::new(jetstream::Context)`
+remains for tests and advanced callers that already own a context.
 
 ## What the caller may provide — and what it may never provide
 

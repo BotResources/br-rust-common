@@ -57,6 +57,8 @@ impl std::fmt::Display for ConsumeErrorKind {
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum FabricError {
+    #[error("connection to NATS failed: {0}")]
+    Connect(String),
     #[error("invalid coordinate: {0}")]
     Coord(#[from] CoordError),
     #[error("invalid kv key: {0}")]
@@ -93,6 +95,10 @@ pub enum FabricError {
 }
 
 impl FabricError {
+    pub(crate) fn connect(err: &async_nats::ConnectError) -> Self {
+        Self::Connect(err.to_string())
+    }
+
     pub(crate) fn from_publish(err: &async_nats::jetstream::context::PublishError) -> Self {
         Self::Publish {
             kind: err.kind().into(),

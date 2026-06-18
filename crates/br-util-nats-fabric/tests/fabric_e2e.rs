@@ -7,8 +7,8 @@ use br_core_kernel::{Actor, UserId};
 use br_util_nats_fabric::{
     Aggregate, Bc, CommandCoords, ConsumeErrorKind, EphemeralAuthStore, EventCoords, Fabric,
     FabricError, INTEGRATION_CMD, INTEGRATION_EVT, KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE, KvKey,
-    KvPrefix, PastFact, ProjectionSink, PublishedLanguageConsumer, PublishedLanguagePublisher,
-    PublishedLanguageReader, Revision, Verb,
+    KvPrefix, NatsAuth, PastFact, ProjectionSink, PublishedLanguageConsumer,
+    PublishedLanguagePublisher, PublishedLanguageReader, Revision, Verb,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -1171,6 +1171,71 @@ async fn delivered_count_increments_across_redeliveries_up_to_the_budget() {
     );
 
     let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+async fn round_trip_a_command(fabric: &Fabric, js: &async_nats::jetstream::Context) {
+    recreate_stream(js, INTEGRATION_CMD, "integration.cmd.>").await;
+    let coords = deliver_coords();
+    let durable = format!("connect_{}", Uuid::now_v7().simple());
+    create_deliver_durable(js, &durable, 5, Duration::from_secs(1)).await;
+
+    fabric
+        .publish_command(&coords, &command("dialed", Uuid::now_v7()))
+        .await
+        .expect("publish over the dialled fabric");
+
+    let mut consumer = fabric
+        .bind_command_consumer::<Payload>(&coords, &durable)
+        .await
+        .expect("bind durable");
+    let delivery = tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+        .await
+        .expect("recv within deadline")
+        .expect("recv ok")
+        .expect("a delivery");
+    assert_eq!(delivery.payload().unwrap().payload.label, "dialed");
+    delivery.ack().await.expect("ack");
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn connect_dials_and_the_returned_fabric_publishes_and_consumes() {
+    let Some(url) = nats_url() else { return };
+    let fabric = Fabric::connect(&url).await.expect("Fabric::connect dials");
+    let js = jetstream().await;
+    round_trip_a_command(&fabric, &js).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn connect_with_credentials_dials_and_the_returned_fabric_round_trips() {
+    let Some(url) = nats_url() else { return };
+    let auth = NatsAuth {
+        user: std::env::var("NATS_USER").unwrap_or_else(|_| "fabric".to_string()),
+        password: std::env::var("NATS_PASSWORD").unwrap_or_else(|_| "fabric".to_string()),
+    };
+    let fabric = Fabric::connect_with(&url, &auth)
+        .await
+        .expect("Fabric::connect_with dials");
+    let js = jetstream().await;
+    round_trip_a_command(&fabric, &js).await;
+}
+
+#[tokio::test]
+async fn connect_fails_loud_with_a_distinct_variant_on_an_unreachable_broker() {
+    let dialled = tokio::time::timeout(
+        Duration::from_secs(5),
+        Fabric::connect("nats://127.0.0.1:1"),
+    )
+    .await
+    .expect("dialling a closed port must fail fast, never hang");
+    match dialled {
+        Err(FabricError::Connect(_)) => {}
+        Err(other) => panic!("expected a distinct Connect variant, got {other:?}"),
+        Ok(_) => panic!("dialling an unreachable broker must fail loud"),
+    }
 }
 
 #[tokio::test]
