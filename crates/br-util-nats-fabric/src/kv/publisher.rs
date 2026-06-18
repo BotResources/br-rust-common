@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 use async_nats::jetstream::kv::Store;
-use futures_util::StreamExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::error::FabricError;
 use crate::fabric::Fabric;
-use crate::kv::codec::{decode, encode};
+use crate::kv::codec::encode;
 use crate::kv::key::{KvKey, KvPrefix};
 use crate::kv::reconcile::{KvOp, reconcile};
+use crate::kv::scan::scan_entries;
 
 pub struct PublishedLanguagePublisher<V> {
     kv: Store,
@@ -77,20 +77,6 @@ where
     }
 
     async fn observed(&self, prefix: &KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError> {
-        let mut keys = self.kv.keys().await.map_err(FabricError::kv)?;
-        let mut entries = BTreeMap::new();
-        while let Some(key) = keys.next().await {
-            let key = key.map_err(FabricError::kv)?;
-            if !prefix.matches(&key) {
-                continue;
-            }
-            let Some(bytes) = self.kv.get(&key).await.map_err(FabricError::kv)? else {
-                continue;
-            };
-            let value = decode(&key, &bytes)?;
-            let typed = KvKey::new(key)?;
-            entries.insert(typed, value);
-        }
-        Ok(entries)
+        scan_entries(&self.kv, prefix).await
     }
 }

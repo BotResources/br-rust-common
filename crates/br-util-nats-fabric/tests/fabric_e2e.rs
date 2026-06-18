@@ -442,6 +442,28 @@ async fn enumeration_entries_fails_closed_on_an_undecodable_value() {
     }
 }
 
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn enumeration_on_an_unmatched_prefix_returns_a_legitimate_empty() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = KvPrefix::new(format!("plenum/{run}/never-written/")).unwrap();
+
+    let reader = PublishedLanguageReader::<Payload>::open(&fabric)
+        .await
+        .expect("open reader");
+
+    assert_eq!(reader.keys(&prefix).await.expect("keys"), Vec::new());
+    assert_eq!(
+        reader.entries(&prefix).await.expect("entries"),
+        BTreeMap::new()
+    );
+}
+
 #[derive(Clone, Default)]
 struct RecordingSink {
     projected: Arc<Mutex<BTreeMap<KvKey, Payload>>>,
