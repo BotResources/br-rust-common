@@ -11,7 +11,7 @@ mod outbox;
 mod stream;
 
 pub use awaiter::{CorrelatedAwaiter, CorrelatedMatch};
-pub use consumer::Delivery;
+pub use consumer::{CommandConsumer, Delivered, Delivery, EventConsumer, IntegrationConsumer};
 pub use coords::{
     Aggregate, Bc, CommandCoords, CoordError, EventCoords, EventSubjectParseError, PastFact, Verb,
     command_subject, event_subject, parse_event_subject,

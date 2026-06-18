@@ -91,6 +91,49 @@ The handler returns a `br_core_integration::MessageOutcome`
 (`Ack` / `Nak` / `Term`); a payload that fails to decode is `Term`-ed and routed
 to the caller's poison handler — it is never silently dropped.
 
+#### The durable consumer (explicit per-delivery acknowledgement)
+
+For the production work loop that needs to inspect the redelivery count and own
+the ack decision per delivery (a poison budget, a transactional side effect
+before ack), bind a typed consumer and pull deliveries explicitly:
+
+```rust,ignore
+let mut consumer = fabric.bind_command_consumer::<T>(&coords, "svc-notifier").await?;
+while let Some(delivery) = consumer.recv().await? {
+    match delivery.payload() {
+        Ok(command) => {
+            if delivery.delivered_count() > MAX_DELIVER {
+                delivery.term().await?;        // redelivery budget exhausted
+            } else if do_work(command).await.is_ok() {
+                delivery.ack().await?;
+            } else {
+                delivery.nak(Some(NAK_DELAY)).await?;
+            }
+        }
+        Err(_decode) => delivery.term().await?, // fail-closed: route the poison frame to term
+    }
+}
+```
+
+- `bind_command_consumer::<T>(&CommandCoords, durable)` /
+  `bind_event_consumer::<T>(&EventCoords, durable)` **bind an existing durable**
+  and **fail loud** — the same coordinate-filter verification as
+  `run_commands`/`run_events` (a widened durable is rejected with
+  `FilterMismatch`), and a `FabricError::Consume` (`NoConsumer` / `NoStream`)
+  when the durable or stream is absent. The fabric never creates the consumer.
+- `recv()` yields the next `Delivered<E>` (`None` once the stream ends; a
+  matchable transport `FabricError::Consume` on a broker/consumer-gone error).
+- `Delivered<E>` exposes `payload() -> Result<&E, &FabricError>` — a malformed
+  wire frame is **fail-closed**: it surfaces as a `FabricError::Decode` naming
+  the subject that the caller routes to `term()`, **never** a silent drop and
+  **never** a panic that ends the loop. `subject()` and `delivered_count()`
+  (the JetStream delivery attempt count) drive logging and the poison budget;
+  `ack()`, `nak(Option<Duration>)`, `term()` are the three typed ack outcomes.
+- No raw `async_nats` `Message` / `Consumer` / `Context` / `AckKind` is exposed.
+  `CommandConsumer<T>` / `EventConsumer<T>` alias
+  `IntegrationConsumer<IntegrationCommand<T>>` /
+  `IntegrationConsumer<IntegrationEvent<T>>`.
+
 ### Correlated awaiter
 
 `Fabric::await_event(&coords)` opens a subscription scoped to one `EventCoords`

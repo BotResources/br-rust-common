@@ -59,6 +59,40 @@ release; they remain reachable through the historical per-crate tags
   `update_if(.., Revision::ABSENT)` conflicts, `create` on a live key returns
   `KeyAlreadyExists`, the unconditional revoke wipe, bind-existing fail-loud when
   the bucket is absent, and fail-closed decode on a malformed value. (#86)
+- **`br-util-nats-fabric` — typed durable consumer for the integration command /
+  event streams (the production work loop).** The Fabric covered publish and the
+  one-shot correlated awaiter but had no typed surface to *durably consume* the
+  integration command stream, so a receiver (svc-notifier's intake) hand-rolled
+  the whole loop on raw `async_nats`. New entry points bind an **existing,
+  out-of-band-declared durable** and hand back a typed consumer:
+  - `Fabric::bind_command_consumer::<T>(&CommandCoords, durable) -> Result<CommandConsumer<T>, FabricError>`
+    and `Fabric::bind_event_consumer::<T>(&EventCoords, durable) -> Result<EventConsumer<T>, FabricError>`
+    bind-existing and **fail loud** — they reuse the same coordinate-filter
+    verification as `run_commands`/`run_events` (a widened durable is rejected
+    with `FilterMismatch`) and never create the consumer (`NoConsumer` /
+    `NoStream` `FabricError::Consume` variants on absence; gitops declares the
+    durable, the test-harness provisioner is #87);
+  - `IntegrationConsumer<E>::recv(&mut self) -> Result<Option<Delivered<E>>, FabricError>`
+    yields the next typed delivery (`None` when the stream ends, a matchable
+    transport `FabricError::Consume` on a broker/consumer-gone error);
+  - `Delivered<E>` carries the per-delivery acknowledgement and inspection
+    surface: `payload() -> Result<&E, &FabricError>` (a malformed wire frame is
+    **fail-closed** — it surfaces as a `FabricError::Decode` the caller can route
+    to `term()`, never a silent drop and never a panic that kills the loop),
+    `subject()`, `delivered_count() -> i64` (from `message.info().delivered`, to
+    drive redelivery-budget / poison logic), and the three JetStream ack outcomes
+    typed as methods — `ack()`, `nak(Option<Duration>)`, `term()`. No raw
+    `async_nats` `Message` / `Consumer` / `Context` / `AckKind` is exposed; the
+    escape hatch stays closed, same posture as the KV facades and the awaiter.
+  Type aliases `CommandConsumer<T> = IntegrationConsumer<IntegrationCommand<T>>`
+  and `EventConsumer<T> = IntegrationConsumer<IntegrationEvent<T>>`. This is a new
+  surface alongside the existing closure-based `run_commands`/`run_events`, which
+  are unchanged. Purely additive. Proven by real-`nats-server` integration tests:
+  ack with no redelivery, `nak(delay)` redelivery with `delivered_count`
+  increment, a poison frame routed to `term` with the loop surviving and the next
+  frame still delivered, `delivered_count` tracking attempts up to the
+  `max_deliver` budget, and bind fail-loud when the durable is absent. Unblocks
+  svc-notifier's intake migrating off raw `async-nats` (#80). (#90)
 
 ## [1.0.1] — 2026-06-18
 
