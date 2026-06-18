@@ -426,10 +426,13 @@ blind reuse-detection).
   the freshly-created value carries a TTL header so the key expires after `ttl`
   instead of riding the bucket-wide `max_age`. The TTL is set **per message**, so
   it only **shortens** expiry **below** the bucket's `max_age` — it cannot extend a
-  key past it — and requires the bucket to have been declared with per-message-TTL
-  support at provisioning. The lib **binds and sets** the per-message TTL; it never
-  creates or configures the bucket — gitops declares the bucket with
-  `max_age ≥ longest TTL` and per-message-TTL support. Same matchable
+  key past it. Per-message-TTL support is enabled at provisioning through the
+  delete-marker TTL (`subject_delete_marker_ttl` / `limit_markers`), and that marker
+  TTL is a **floor**: a per-key TTL shorter than it is silently clamped **up** to it.
+  The lib **binds and sets** the per-message TTL; it never creates or configures the
+  bucket — gitops declares it with `max_age ≥ longest TTL` **and**
+  `subject_delete_marker_ttl ≤ shortest per-key TTL` (otherwise a short
+  `create_with_ttl` rides the longer marker TTL). Same matchable
   `FabricError::KeyAlreadyExists { key }` on a live key as `create`.
   **The per-message TTL does not survive a CAS rotation.** The only public rotation
   path, `update_if` → `async-nats` `Store::update`, rewrites the key **without** a

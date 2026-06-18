@@ -37,7 +37,7 @@ async fn ensure_ttl_bucket(
         bucket: KV_EPHEMERAL_AUTH.to_string(),
         history: 8,
         max_age: Duration::from_secs(3600),
-        limit_markers: Some(Duration::from_secs(3600)),
+        limit_markers: Some(Duration::from_secs(1)),
         ..Default::default()
     })
     .await
@@ -67,7 +67,7 @@ async fn create_with_ttl_expires_a_key_before_the_bucket_max_age() {
             &Payload {
                 label: "one-time".to_string(),
             },
-            Duration::from_secs(1),
+            Duration::from_secs(2),
         )
         .await
         .expect("create with ttl");
@@ -77,7 +77,7 @@ async fn create_with_ttl_expires_a_key_before_the_bucket_max_age() {
         "key is live immediately after the ttl write"
     );
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     assert!(
         store.get_with_revision(&k).await.expect("get").is_none(),
@@ -204,12 +204,12 @@ async fn watch_yields_removed_on_ttl_expiry() {
             &Payload {
                 label: "short-lived".to_string(),
             },
-            Duration::from_secs(1),
+            Duration::from_secs(2),
         )
         .await
         .expect("create with ttl");
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(6)).await;
     handle.abort();
 
     let changes = seen.lock().unwrap().clone();
