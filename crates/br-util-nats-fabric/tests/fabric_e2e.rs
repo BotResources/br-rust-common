@@ -978,12 +978,14 @@ async fn connect_with_credentials_dials_and_the_returned_fabric_round_trips() {
 }
 
 #[tokio::test]
-#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn connect_fails_loud_with_a_distinct_variant_on_an_unreachable_broker() {
-    if nats_url().is_none() {
-        return;
-    }
-    match Fabric::connect("nats://127.0.0.1:1").await {
+    let dialled = tokio::time::timeout(
+        Duration::from_secs(5),
+        Fabric::connect("nats://127.0.0.1:1"),
+    )
+    .await
+    .expect("dialling a closed port must fail fast, never hang");
+    match dialled {
         Err(FabricError::Connect(_)) => {}
         Err(other) => panic!("expected a distinct Connect variant, got {other:?}"),
         Ok(_) => panic!("dialling an unreachable broker must fail loud"),

@@ -11,6 +11,15 @@ pub struct NatsAuth {
     pub password: String,
 }
 
+impl std::fmt::Debug for NatsAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NatsAuth")
+            .field("user", &self.user)
+            .field("password", &"***")
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct Fabric {
     jetstream: async_nats::jetstream::Context,
@@ -103,5 +112,31 @@ impl Fabric {
                 "fabric publish failed; dropping"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nats_auth_debug_masks_the_password_and_never_prints_it() {
+        let auth = NatsAuth {
+            user: "fabric".to_string(),
+            password: "s3cr3t-rotation-key".to_string(),
+        };
+        let rendered = format!("{auth:?}");
+        assert!(
+            !rendered.contains("s3cr3t-rotation-key"),
+            "Debug leaked the password: {rendered}"
+        );
+        assert!(
+            rendered.contains("***"),
+            "Debug must mask the password with ***: {rendered}"
+        );
+        assert!(
+            rendered.contains("fabric"),
+            "Debug keeps the user for diagnostics: {rendered}"
+        );
     }
 }

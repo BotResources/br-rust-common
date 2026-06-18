@@ -39,8 +39,10 @@ let fabric = Fabric::connect_with(
 
 `connect` dials anonymously; `connect_with` dials with a user/password
 (`NatsAuth { user, password }` — a typed pair that keeps `async_nats` out of the
-public signature). Both build the JetStream context internally and return a
-ready `Fabric`. A failed dial surfaces as the distinct, matchable
+public signature). `NatsAuth` carries a hand-written `Debug` that masks the
+password (`password: "***"`) so the credential can never leak through a
+debug-print or a structured log. Both build the JetStream context internally and
+return a ready `Fabric`. A failed dial surfaces as the distinct, matchable
 `FabricError::Connect`. In-cluster transport is plaintext per the trust model, so
 there is no TLS/credentials-file surface. `Fabric::new(jetstream::Context)`
 remains for tests and advanced callers that already own a context.

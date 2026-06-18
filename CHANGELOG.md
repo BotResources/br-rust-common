@@ -108,7 +108,11 @@ release; they remain reachable through the historical per-crate tags
   callers that already own a context). Purely additive. Proven by real-`nats-
   server` integration tests: a `connect` round-trip (publish + consume), a
   `connect_with` round-trip, and a fail-loud `Connect` on an unreachable broker.
-  Unblocks svc-auth and svc-notifier confining their boot dial to the lib (#89).
+  `NatsAuth` carries a manual `Debug` that masks the password (renders it as
+  `***`, never the cleartext value) so a later debug-print can never leak the
+  credential, and the fail-loud `Connect` test runs broker-free everywhere as a
+  portable error-contract test. Unblocks svc-auth and svc-notifier confining
+  their boot dial to the lib (#89).
 
 ## [1.0.1] — 2026-06-18
 
