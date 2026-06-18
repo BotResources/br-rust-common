@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use async_nats::jetstream::kv::{CreateErrorKind, Operation, Store, UpdateErrorKind};
+use async_nats::jetstream::kv::{
+    CreateErrorKind, DeleteErrorKind, Operation, Store, UpdateErrorKind,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -74,6 +76,28 @@ where
         {
             Ok(_) => Ok(()),
             Err(err) if err.kind() == UpdateErrorKind::WrongLastRevision => {
+                Err(FabricError::revision_conflict(key.as_str(), expected.get()))
+            }
+            Err(err) => Err(FabricError::kv(err)),
+        }
+    }
+
+    pub async fn delete(&self, key: &KvKey) -> Result<(), FabricError> {
+        self.kv
+            .delete(key.as_str())
+            .await
+            .map_err(FabricError::kv)?;
+        Ok(())
+    }
+
+    pub async fn delete_if(&self, key: &KvKey, expected: Revision) -> Result<(), FabricError> {
+        match self
+            .kv
+            .delete_expect_revision(key.as_str(), Some(expected.get()))
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == DeleteErrorKind::WrongLastRevision => {
                 Err(FabricError::revision_conflict(key.as_str(), expected.get()))
             }
             Err(err) => Err(FabricError::kv(err)),

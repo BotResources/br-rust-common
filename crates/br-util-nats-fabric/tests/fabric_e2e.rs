@@ -8,7 +8,7 @@ use br_util_nats_fabric::{
     Aggregate, Bc, CommandCoords, ConsumeErrorKind, EphemeralAuthStore, EventCoords, Fabric,
     FabricError, INTEGRATION_CMD, INTEGRATION_EVT, KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE, KvKey,
     KvPrefix, NatsAuth, PastFact, ProjectionSink, PublishedLanguageConsumer,
-    PublishedLanguagePublisher, PublishedLanguageReader, Revision, Verb,
+    PublishedLanguagePublisher, PublishedLanguageReader, Verb,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -817,7 +817,41 @@ async fn put_performs_the_unconditional_revoke_family_wipe() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn create_re_creates_through_a_post_delete_tombstone_where_absent_update_if_conflicts() {
+async fn delete_then_get_with_revision_reads_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("delete-absent");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "live".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    store.delete(&key).await.expect("delete");
+
+    assert_eq!(
+        store.get_with_revision(&key).await.expect("get"),
+        None,
+        "a deleted key reads as absent"
+    );
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn create_re_creates_through_a_post_delete_tombstone() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     let raw = ensure_ephemeral_auth_bucket(&js).await;
@@ -838,29 +872,10 @@ async fn create_re_creates_through_a_post_delete_tombstone_where_absent_update_i
         .await
         .expect("first create");
 
-    raw.delete(key.as_str())
+    store
+        .delete(&key)
         .await
         .expect("delete leaves a tombstone at seq>0");
-
-    assert_eq!(
-        store.get_with_revision(&key).await.expect("get"),
-        None,
-        "a deleted key reads as absent"
-    );
-
-    let conflict = store
-        .update_if(
-            &key,
-            &Payload {
-                label: "via-absent-update".to_string(),
-            },
-            Revision::ABSENT,
-        )
-        .await;
-    assert!(
-        matches!(conflict, Err(FabricError::RevisionConflict { .. })),
-        "update_if(ABSENT) conflicts forever against the tombstone — this is why create() is needed: {conflict:?}"
-    );
 
     store
         .create(
@@ -878,6 +893,105 @@ async fn create_re_creates_through_a_post_delete_tombstone_where_absent_update_i
         .expect("get")
         .expect("present");
     assert_eq!(value.label, "second-life");
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn delete_if_with_the_current_revision_removes_the_key() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("delete-if-ok");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "live".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    let (_, revision) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+
+    store.delete_if(&key, revision).await.expect("delete_if");
+
+    assert_eq!(
+        store.get_with_revision(&key).await.expect("get"),
+        None,
+        "delete_if with the current revision removes the key"
+    );
+
+    let _ = raw.purge(key.as_str()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn delete_if_with_a_stale_revision_conflicts_and_keeps_the_key() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let raw = ensure_ephemeral_auth_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let store = EphemeralAuthStore::<Payload>::open(&fabric)
+        .await
+        .expect("open store");
+    let key = ephemeral_key("delete-if-stale");
+
+    store
+        .create(
+            &key,
+            &Payload {
+                label: "first".to_string(),
+            },
+        )
+        .await
+        .expect("create");
+
+    let (_, stale) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+
+    store
+        .update_if(
+            &key,
+            &Payload {
+                label: "second".to_string(),
+            },
+            stale,
+        )
+        .await
+        .expect("update advances the revision past the stale handle");
+
+    let conflict = store.delete_if(&key, stale).await;
+    assert!(
+        matches!(conflict, Err(FabricError::RevisionConflict { .. })),
+        "delete_if with a stale revision conflicts: {conflict:?}"
+    );
+
+    let (value, _) = store
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("present");
+    assert_eq!(
+        value.label, "second",
+        "the loser did not delete — the key is still present"
+    );
 
     let _ = raw.purge(key.as_str()).await;
 }

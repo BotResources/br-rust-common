@@ -31,32 +31,40 @@ release; they remain reachable through the historical per-crate tags
     key and for one that previously lived then expired (TTL `max_age`) or was
     deleted — both leave a KV tombstone at sequence `> 0`, and `create`
     re-creates against it (the nominal refresh-family lifecycle). A currently
-    live key returns the new matchable `FabricError::KeyAlreadyExists { key }`.
-    Creation must go through `create`, not `update_if(.., Revision::ABSENT)`,
-    which asserts "last sequence == 0" and so would conflict forever against a
-    post-expiry/post-delete tombstone;
+    live key returns the new matchable `FabricError::KeyAlreadyExists { key }`;
   - `update_if(&KvKey, &V, Revision) -> Result<(), FabricError>` is the rotate
     path: it writes only when the supplied `Revision` is still the last one,
     returning the new first-class, matchable
     `FabricError::RevisionConflict { key, expected }` on a revision mismatch —
     distinct from not-found, `KeyAlreadyExists`, transport (`Kv`) and `Decode`;
+  - `delete_if(&KvKey, Revision) -> Result<(), FabricError>` is the
+    revision-checked delete: it writes a delete tombstone (so a later
+    `get_with_revision` reads `Ok(None)`) only when the supplied `Revision` is
+    still the last one, returning the same matchable
+    `FabricError::RevisionConflict { key, expected }` on a mismatch and leaving
+    the key untouched — for logout-vs-rotation, where an explicit session
+    invalidation must not clobber a concurrent rotation;
+  - `delete(&KvKey) -> Result<(), FabricError>` is the unconditional delete
+    (delete counterpart of `put`), writing a delete tombstone regardless of the
+    revision chain;
   - `put(&KvKey, &V)` is the unconditional write for the `revoke_family` wipe;
   - `status()` exposes the bound bucket's **cached** KV state in the
     bind-existing posture; it does not round-trip the broker and is **not** a
     live reachability probe. The fail-loud liveness gate is `open()` (the real
     bind round-trip), the same bind-existing, fail-loud posture as the other
     facades.
-  `Revision` is a new public newtype over the NATS KV sequence
-  (`Revision::ABSENT` is the never-written slot; its `new`/sequence accessor are
-  crate-internal so a non-`ABSENT` revision can only originate from
-  `get_with_revision`). The raw `async_nats` KV `Store` is still never handed to
-  a caller — the CAS contract is the only sanctioned revision-aware path. This
-  unblocks svc-auth's refresh-token rotation moving off raw `async-nats` with the
-  family-reuse-detection property (atomic CAS, no degrade to last-write-wins)
-  intact. Purely additive. Proven by real-`nats-server` integration tests:
-  concurrent `update_if` on the same revision yields exactly one winner and one
-  `RevisionConflict`, `create` re-creates through a post-delete tombstone where
-  `update_if(.., Revision::ABSENT)` conflicts, `create` on a live key returns
+  `Revision` is a new public newtype over the NATS KV sequence; its
+  `new`/sequence accessor are crate-internal so a revision can only originate
+  from `get_with_revision` and be passed back to `update_if`/`delete_if`. The raw
+  `async_nats` KV `Store` is still never handed to a caller — the CAS contract is
+  the only sanctioned revision-aware path. This unblocks svc-auth's refresh-token
+  rotation moving off raw `async-nats` with the family-reuse-detection property
+  (atomic CAS, no degrade to last-write-wins) intact. Purely additive. Proven by
+  real-`nats-server` integration tests: concurrent `update_if` on the same
+  revision yields exactly one winner and one `RevisionConflict`, `create`
+  re-creates through a post-delete tombstone, `delete`/`delete_if` write a
+  tombstone (`delete_if` only against the current revision, conflicting and
+  leaving the key intact against a stale one), `create` on a live key returns
   `KeyAlreadyExists`, the unconditional revoke wipe, bind-existing fail-loud when
   the bucket is absent, and fail-closed decode on a malformed value. (#86)
 - **`br-util-nats-fabric` — typed durable consumer for the integration command /

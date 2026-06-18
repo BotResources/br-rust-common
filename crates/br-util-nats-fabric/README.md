@@ -323,12 +323,9 @@ blind reuse-detection).
   `create` re-creates against that tombstone, which is the nominal refresh-family
   lifecycle. A key that is currently **live** is a distinguishable, matchable
   `FabricError::KeyAlreadyExists { key }`. **Use `create` for family creation /
-  re-creation; do not drive creation through `update_if(.., Revision::ABSENT)`** —
-  `Revision::ABSENT` asserts "last sequence is exactly 0", so it conflicts forever
-  against the post-expiry/post-delete tombstone (sequence `> 0`) even though
-  `get_with_revision` reads `Ok(None)`. `Revision::ABSENT` therefore covers only
-  the strictly never-written slot; the broker-correct create-after-expiry belongs
-  to `create`.
+  re-creation** — it is the broker-correct way to occupy a key whether it never
+  lived or previously lived then expired/was deleted (both leave a tombstone at a
+  sequence `> 0`).
 - `update_if(&KvKey, &V, Revision) -> Result<(), FabricError>` is the
   **rotate path**: a revision-checked write that succeeds only if the supplied
   `Revision` is still the last revision for the key (read it from
@@ -336,6 +333,17 @@ blind reuse-detection).
   first-class, matchable `FabricError::RevisionConflict { key, expected }` —
   distinct from not-found (`Ok(None)` on read), `KeyAlreadyExists`, transport
   (`Kv`) and `Decode`, so the caller can drive reuse-detection on it.
+- `delete_if(&KvKey, Revision) -> Result<(), FabricError>` is the
+  **revision-checked delete**: it writes a delete tombstone (so a subsequent
+  `get_with_revision` reads `Ok(None)`) only if the supplied `Revision` is still
+  the last revision for the key. On a revision mismatch it returns the same
+  first-class, matchable `FabricError::RevisionConflict { key, expected }` as
+  `update_if`, and the key is left untouched — the canonical use is
+  logout-vs-rotation, where an explicit session invalidation must not clobber a
+  concurrent rotation.
+- `delete(&KvKey) -> Result<(), FabricError>` is the **unconditional** delete,
+  ignoring the revision chain — it writes a delete tombstone regardless of
+  concurrent rotations, the delete counterpart of `put`.
 - `put(&KvKey, &V)` is the **unconditional** write, ignoring the revision chain —
   for the `revoke_family` wipe that must land regardless of concurrent rotations.
 - `status()` exposes the **bound bucket's cached KV state** in the bind-existing
@@ -346,9 +354,9 @@ blind reuse-detection).
   readiness stays DOWN.
 
 `Revision` is an opaque newtype over the NATS KV sequence — the caller reads it
-from `get_with_revision` and passes it back to `update_if`. The only value a
-caller may mint by hand is `Revision::ABSENT` (the never-written slot); every
-other revision originates from `get_with_revision`.
+from `get_with_revision` and passes it back to `update_if` or `delete_if`. A
+caller never mints a `Revision` by hand; every revision originates from
+`get_with_revision`.
 
 ## Generic mechanics vs caller seams (summary)
 

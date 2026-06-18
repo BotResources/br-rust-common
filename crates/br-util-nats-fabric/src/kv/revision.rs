@@ -2,8 +2,6 @@
 pub struct Revision(u64);
 
 impl Revision {
-    pub const ABSENT: Revision = Revision(0);
-
     pub(crate) fn new(value: u64) -> Self {
         Self(value)
     }
@@ -16,11 +14,6 @@ impl Revision {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn absent_is_revision_zero() {
-        assert_eq!(Revision::ABSENT.get(), 0);
-    }
 
     #[test]
     fn wraps_and_exposes_the_sequence() {
