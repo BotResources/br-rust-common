@@ -203,6 +203,136 @@ async fn awaiter_matches_by_correlation_id() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_matches_by_correlation_id() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let coords = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let fabric = fabric().await;
+    let mut awaiter = fabric.await_command(&coords).await.expect("await_command");
+
+    let correlation = Uuid::now_v7();
+    fabric
+        .publish_command(&coords, &command("cmd", correlation))
+        .await
+        .expect("publish command");
+
+    let matched = awaiter
+        .await_correlation(correlation, Duration::from_secs(5))
+        .await
+        .expect("await_correlation");
+    assert!(matched.is_some());
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_matches_one_of_several_coords() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let deliver = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let retract = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("retract").unwrap(),
+        version: 1,
+    };
+
+    let fabric = fabric().await;
+    let mut awaiter = fabric
+        .await_commands(&[&deliver, &retract])
+        .await
+        .expect("await_commands");
+
+    let correlation = Uuid::now_v7();
+    fabric
+        .publish_command(&retract, &command("retract", correlation))
+        .await
+        .expect("publish command");
+
+    let matched = awaiter
+        .await_correlation(correlation, Duration::from_secs(5))
+        .await
+        .expect("await_correlation")
+        .expect("a matching command");
+    assert_eq!(
+        matched.subject,
+        "integration.cmd.notifier.notification.retract.v1"
+    );
+    assert_eq!(matched.metadata.correlation_id, correlation);
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_returns_none_at_the_deadline() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+
+    let coords = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let fabric = fabric().await;
+    let mut awaiter = fabric.await_command(&coords).await.expect("await_command");
+
+    let absent = Uuid::now_v7();
+    let matched = awaiter
+        .await_correlation(absent, Duration::from_millis(300))
+        .await
+        .expect("await_correlation");
+    assert!(
+        matched.is_none(),
+        "no command published → None at the deadline"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn command_awaiter_fails_loud_when_the_command_stream_is_absent() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+
+    let coords = CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
+        version: 1,
+    };
+    let fabric = fabric().await;
+    match fabric.await_command(&coords).await {
+        Err(FabricError::Consume {
+            kind: ConsumeErrorKind::NoStream,
+            ..
+        }) => {}
+        Err(other) => panic!("expected NoStream, got {other:?}"),
+        Ok(_) => panic!("awaiting on an absent command stream must fail loud, never auto-create"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn published_language_binds_existing_bucket_and_fails_loud_when_absent() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;

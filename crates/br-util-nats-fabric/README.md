@@ -154,7 +154,11 @@ while let Some(delivery) = consumer.recv().await? {
 `Fabric::await_event(&coords)` opens a subscription scoped to one `EventCoords`
 on the fixed event stream; `Fabric::await_events(&[&EventCoords])` awaits **one
 of several** reply facts (e.g. a request/reply that resolves on either an
-`accepted` or a `rejected` event). `await_correlation(correlation_id, deadline)`
+`accepted` or a `rejected` event). The symmetric command-side surface,
+`Fabric::await_command(&coords)` / `Fabric::await_commands(&[&CommandCoords])`,
+binds the fixed command stream instead — for observing a command in flight (e.g.
+a `declare` a service is about to consume). Both fail loud if the bound stream is
+absent and never auto-create it. `await_correlation(correlation_id, deadline)`
 returns the first matching envelope or `None` at the deadline. The caller passes
 coordinates, never a stream or filter string.
 
