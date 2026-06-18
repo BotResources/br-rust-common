@@ -17,7 +17,7 @@ pub use coords::{
     command_subject, event_subject, parse_event_subject,
 };
 pub use error::{ConsumeErrorKind, FabricError, PublishErrorKind};
-pub use fabric::{Fabric, NatsAuth};
+pub use fabric::{ConnectionState, Fabric, NatsAuth};
 pub use kv::{
     EphemeralAuthStore, KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE, KvKey, KvKeyError, KvOp,
     KvPrefix, ProjectionError, ProjectionSink, PublishedLanguageConsumer,

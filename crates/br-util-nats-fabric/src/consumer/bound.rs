@@ -39,4 +39,8 @@ impl<E: DeserializeOwned> IntegrationConsumer<E> {
             )),
         }
     }
+
+    pub async fn drain(self) {
+        drop(self.messages);
+    }
 }

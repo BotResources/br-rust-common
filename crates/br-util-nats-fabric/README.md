@@ -47,6 +47,21 @@ return a ready `Fabric`. A failed dial surfaces as the distinct, matchable
 there is no TLS/credentials-file surface. `Fabric::new(jetstream::Context)`
 remains for tests and advanced callers that already own a context.
 
+### Reachability probe
+
+`Fabric::reachable() -> bool` and `Fabric::connection_state() -> ConnectionState`
+expose the client's **locally-cached** connection view for a readiness/liveness
+gate. `ConnectionState` is the fabric's own enum (`Pending` / `Connected` /
+`Disconnected`) — the raw `async_nats` `State` is never exposed across the public
+API. Be honest about what this is: it is the **cached** view `async_nats`
+maintains from its connection loop, **not** a guaranteed live round-trip — a probe
+in the millisecond after a silent disconnect can still read `Connected` until the
+client's own ping/health detects it. For a **true round-trip**, `Fabric::ping()` flushes the
+client to the server and surfaces a `FabricError::Connect` if the broker does not
+answer — distinctly named so a caller never mistakes the cheap cached view for the
+round-trip. The fail-loud startup check remains `connect` (the real dial): an
+unreachable broker at boot fails `connect` and readiness stays DOWN.
+
 ## What the caller may provide — and what it may never provide
 
 The caller supplies **only business coordinates**: the receiver/producer
@@ -91,6 +106,9 @@ comparison/logging); there is no freestyle string subject builder.
 ```rust,ignore
 fabric.publish_command(&coords, &command).await?;
 fabric.publish_event(&coords, &event).await?;
+// idempotent (sets the Nats-Msg-Id dedup header; caller owns the id):
+fabric.publish_command_with_id(&coords, &command, &message_id).await?;
+fabric.publish_event_with_id(&coords, &event, &message_id).await?;
 // fire-and-forget (best-effort, warns and drops on failure):
 fabric.publish_command_if_connected(&coords, &command).await;
 fabric.publish_event_if_connected(&coords, &event).await;
@@ -98,6 +116,19 @@ fabric.publish_event_if_connected(&coords, &event).await;
 
 The envelopes are `br_core_integration::IntegrationCommand<T>` /
 `IntegrationEvent<T>`, re-exported here.
+
+#### Idempotent publish (dedup id)
+
+`publish_command_with_id` / `publish_event_with_id` are the plain `publish_*`
+variants that additionally set the JetStream `Nats-Msg-Id` header from a
+caller-supplied id (typically the domain event's UUIDv7). Two publishes that
+carry the same id within the stream's configured duplicate window are deduped by
+the broker to a single stored message, so a retry after an ambiguous ack does not
+double-write. These variants are for callers managing their **own** idempotency;
+the **sanctioned reliable / exactly-once-ish path is the `outbox` feature** — its
+relay owns the staging, retry and at-least-once delivery, and a dedup id on the
+published frame collapses the at-least-once into effectively-once on the
+consumer's stream. The caller owns the id; the fabric never mints one.
 
 ### Consuming
 
@@ -153,6 +184,19 @@ while let Some(delivery) = consumer.recv().await? {
   `run_commands`/`run_events` (a widened durable is rejected with
   `FilterMismatch`), and a `FabricError::Consume` (`NoConsumer` / `NoStream`)
   when the durable or stream is absent. The fabric never creates the consumer.
+- `bind_event_consumer_many::<T>(&[&EventCoords], durable)` binds one durable
+  that **fans in several event coordinates** — the svc-pm-style consumer that
+  reads `user.created` + `user.updated` + `group.created` on a single durable.
+  `T` is the caller's union type, deserialized per frame and **fail-closed**
+  exactly as the single-coordinate path. The bind verifies the durable's
+  configured `filter_subjects` equal the rendered set **exactly, order-insensitive
+  (set equality)** — a durable that filters more, fewer, or different subjects
+  (including the wildcard `integration.evt.>`) is rejected with `FilterMismatch`,
+  so a fan-in consumer still cannot silently widen beyond its declared
+  coordinates. `bind_event_consumer` is the 1-coordinate case of this. There is
+  **no command-side fan-in**: a command durable is receiver-owned, one
+  `aggregate.verb` per durable. The wildcard subscription stays **rejected** —
+  generic/wildcard delivery is a gitops concern, not a fabric one.
 - `recv()` yields the next `Delivered<E>` (`None` once the stream ends; a
   matchable transport `FabricError::Consume` on a broker/consumer-gone error).
 - `Delivered<E>` exposes `payload() -> Result<&E, &FabricError>` — a malformed
@@ -172,6 +216,38 @@ while let Some(delivery) = consumer.recv().await? {
   `CommandConsumer<T>` / `EventConsumer<T>` alias
   `IntegrationConsumer<IntegrationCommand<T>>` /
   `IntegrationConsumer<IntegrationEvent<T>>`.
+
+#### Graceful shutdown (SIGTERM-safe)
+
+`recv()` is **cancel-safe**: it may be dropped at any `.await` point inside a
+`tokio::select!` without losing a message — a frame is only consumed once it has
+been yielded as a `Delivered<E>`, and the per-delivery `ack()` / `nak()` /
+`term()` lives on that owned `Delivered<E>`, not inside `recv()`. So the
+SIGTERM-safe shape is to race `recv()` against the shutdown signal, finish the
+**in-flight** frame's ack on the branch that already holds a `Delivered<E>`, then
+stop pulling:
+
+```rust,ignore
+loop {
+    tokio::select! {
+        biased;
+        _ = shutdown.recv() => break,
+        next = consumer.recv() => match next? {
+            Some(delivery) => { /* do_work + delivery.ack()/nak()/term() */ }
+            None => break,
+        },
+    }
+}
+consumer.drain().await;
+```
+
+`drain(self)` **consumes** the consumer and closes the underlying subscription
+cleanly (the pull task is aborted and the inbox unsubscribed on drop) — it stops
+pulling without panicking and without losing a message: a frame whose `ack()`
+already completed is not redelivered, and a frame still un-acked at drain is left
+**un-acked** and is redelivered after `ack_wait` (at-least-once is preserved, no
+silent drop). The contract is: **finish the in-flight ack on the held
+`Delivered<E>` first, then `drain()`.**
 
 ### Correlated awaiter
 
@@ -371,6 +447,12 @@ caller never mints a `Revision` by hand; every revision originates from
 | compare-and-swap KV (`EphemeralAuthStore`, `Revision`) | the `KvKey`, the value, the observed revision |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
+
+## Why
+
+| Thing | Why it is the way it is |
+| ----- | ----------------------- |
+| `IntegrationConsumer::drain()` is `async` though it currently only drops the pull stream | The signature reserves a future awaiting drain (in-flight-ack / unsubscribe flush) and avoids a later breaking sync→async change. |
 
 ## Dependency
 

@@ -9,6 +9,21 @@ pub(crate) async fn bind_durable(
     durable: &str,
     expected_filter: &str,
 ) -> Result<PullConsumer, FabricError> {
+    bind_durable_many(
+        jetstream,
+        stream_name,
+        durable,
+        std::slice::from_ref(&expected_filter),
+    )
+    .await
+}
+
+pub(crate) async fn bind_durable_many(
+    jetstream: &async_nats::jetstream::Context,
+    stream_name: &'static str,
+    durable: &str,
+    expected_filters: &[&str],
+) -> Result<PullConsumer, FabricError> {
     let stream = jetstream
         .get_stream(stream_name)
         .await
@@ -26,7 +41,7 @@ pub(crate) async fn bind_durable(
     verify_filter(
         stream_name,
         durable,
-        expected_filter,
+        expected_filters,
         &consumer.cached_info().config,
     )?;
     Ok(consumer)
@@ -35,19 +50,28 @@ pub(crate) async fn bind_durable(
 fn verify_filter(
     stream_name: &'static str,
     durable: &str,
-    expected_filter: &str,
+    expected_filters: &[&str],
     config: &async_nats::jetstream::consumer::Config,
 ) -> Result<(), FabricError> {
     let configured = configured_filters(config);
-    if configured.len() == 1 && configured[0] == expected_filter {
+    let expected = expected_set(expected_filters);
+    if !expected.is_empty() && filter_set(&configured) == expected {
         return Ok(());
     }
     Err(FabricError::FilterMismatch {
         stream: stream_name,
         durable: durable.to_string(),
-        expected: expected_filter.to_string(),
+        expected: expected_filters.join(", "),
         configured,
     })
+}
+
+fn filter_set(filters: &[String]) -> std::collections::BTreeSet<String> {
+    filters.iter().cloned().collect()
+}
+
+fn expected_set(filters: &[&str]) -> std::collections::BTreeSet<String> {
+    filters.iter().map(|s| s.to_string()).collect()
 }
 
 fn configured_filters(config: &async_nats::jetstream::consumer::Config) -> Vec<String> {
@@ -98,7 +122,7 @@ mod tests {
             verify_filter(
                 "INTEGRATION_CMD",
                 "notifier",
-                "integration.cmd.notifier.notification.deliver.v1",
+                &["integration.cmd.notifier.notification.deliver.v1"],
                 &cfg,
             )
             .is_ok()
@@ -111,7 +135,7 @@ mod tests {
         let err = verify_filter(
             "INTEGRATION_EVT",
             "svc-pm-users",
-            "integration.evt.identity.user.created.v1",
+            &["integration.evt.identity.user.created.v1"],
             &cfg,
         )
         .unwrap_err();
@@ -122,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_subject_durable_is_rejected_even_if_one_matches() {
+    fn a_multi_subject_durable_is_rejected_when_it_does_not_match_a_single_expectation() {
         let cfg = config_with(
             "",
             &[
@@ -133,7 +157,53 @@ mod tests {
         let err = verify_filter(
             "INTEGRATION_EVT",
             "svc-pm-users",
-            "integration.evt.identity.user.created.v1",
+            &["integration.evt.identity.user.created.v1"],
+            &cfg,
+        )
+        .unwrap_err();
+        assert!(matches!(err, FabricError::FilterMismatch { .. }));
+    }
+
+    #[test]
+    fn a_multi_subject_durable_passes_when_its_set_matches_order_insensitively() {
+        let cfg = config_with(
+            "",
+            &[
+                "integration.evt.identity.group.created.v1",
+                "integration.evt.identity.user.created.v1",
+            ],
+        );
+        assert!(
+            verify_filter(
+                "INTEGRATION_EVT",
+                "svc-pm-roster",
+                &[
+                    "integration.evt.identity.user.created.v1",
+                    "integration.evt.identity.group.created.v1",
+                ],
+                &cfg,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn an_empty_expected_set_is_rejected_even_against_an_unfiltered_durable() {
+        let cfg = config_with("", &[]);
+        let err = verify_filter("INTEGRATION_EVT", "svc-pm-roster", &[], &cfg).unwrap_err();
+        assert!(matches!(err, FabricError::FilterMismatch { .. }));
+    }
+
+    #[test]
+    fn a_multi_subject_durable_missing_one_expected_subject_is_rejected() {
+        let cfg = config_with("", &["integration.evt.identity.user.created.v1"]);
+        let err = verify_filter(
+            "INTEGRATION_EVT",
+            "svc-pm-roster",
+            &[
+                "integration.evt.identity.user.created.v1",
+                "integration.evt.identity.group.created.v1",
+            ],
             &cfg,
         )
         .unwrap_err();

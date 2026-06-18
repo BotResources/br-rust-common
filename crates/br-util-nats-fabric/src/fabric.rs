@@ -5,6 +5,25 @@ use br_core_integration::{IntegrationCommand, IntegrationEvent};
 use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
 use crate::error::FabricError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConnectionState {
+    Pending,
+    Connected,
+    Disconnected,
+}
+
+impl From<async_nats::connection::State> for ConnectionState {
+    fn from(state: async_nats::connection::State) -> Self {
+        use async_nats::connection::State as S;
+        match state {
+            S::Pending => Self::Pending,
+            S::Connected => Self::Connected,
+            S::Disconnected => Self::Disconnected,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct NatsAuth {
     pub user: String,
@@ -68,6 +87,26 @@ impl Fabric {
         self.publish(&coords.subject(), event).await
     }
 
+    pub async fn publish_command_with_id<T: Serialize>(
+        &self,
+        coords: &CommandCoords,
+        command: &IntegrationCommand<T>,
+        message_id: &str,
+    ) -> Result<(), FabricError> {
+        self.publish_with_id(&coords.subject(), command, message_id)
+            .await
+    }
+
+    pub async fn publish_event_with_id<T: Serialize>(
+        &self,
+        coords: &EventCoords,
+        event: &IntegrationEvent<T>,
+        message_id: &str,
+    ) -> Result<(), FabricError> {
+        self.publish_with_id(&coords.subject(), event, message_id)
+            .await
+    }
+
     pub async fn publish_command_if_connected<T: Serialize>(
         &self,
         coords: &CommandCoords,
@@ -93,11 +132,45 @@ impl Fabric {
         self.publish(&coords.subject(), payload).await
     }
 
+    pub fn connection_state(&self) -> ConnectionState {
+        self.jetstream.client().connection_state().into()
+    }
+
+    pub fn reachable(&self) -> bool {
+        self.connection_state() == ConnectionState::Connected
+    }
+
+    pub async fn ping(&self) -> Result<(), FabricError> {
+        self.jetstream
+            .client()
+            .flush()
+            .await
+            .map_err(|e| FabricError::Connect(e.to_string()))
+    }
+
     async fn publish<T: Serialize>(&self, subject: &str, envelope: &T) -> Result<(), FabricError> {
         let bytes = serde_json::to_vec(envelope)?;
         let ack = self
             .jetstream
             .publish(subject.to_string(), bytes.into())
+            .await
+            .map_err(|e| FabricError::from_publish(&e))?;
+        ack.await.map_err(|e| FabricError::from_publish(&e))?;
+        Ok(())
+    }
+
+    async fn publish_with_id<T: Serialize>(
+        &self,
+        subject: &str,
+        envelope: &T,
+        message_id: &str,
+    ) -> Result<(), FabricError> {
+        let bytes = serde_json::to_vec(envelope)?;
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert(async_nats::header::NATS_MESSAGE_ID, message_id);
+        let ack = self
+            .jetstream
+            .publish_with_headers(subject.to_string(), headers, bytes.into())
             .await
             .map_err(|e| FabricError::from_publish(&e))?;
         ack.await.map_err(|e| FabricError::from_publish(&e))?;

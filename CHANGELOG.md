@@ -173,6 +173,62 @@ release; they remain reachable through the historical per-crate tags
   credential, and the fail-loud `Connect` test runs broker-free everywhere as a
   portable error-contract test. Unblocks svc-auth and svc-notifier confining
   their boot dial to the lib (#89).
+- **`br-util-nats-fabric` — fan-in event consumer over several coordinates on one
+  durable.** `Fabric::bind_event_consumer_many::<T>(&[&EventCoords], durable) ->
+  Result<EventConsumer<T>, FabricError>` binds **one** existing durable that fans
+  in several event coordinates (the svc-pm-style consumer reading
+  `user.created` + `user.updated` + `group.created` on a single durable). The
+  bind verifies the durable's configured `filter_subjects` equal the rendered set
+  **exactly, order-insensitive (set equality)**; a durable that filters more,
+  fewer, or different subjects — including the wildcard `integration.evt.>` —
+  is rejected with `FabricError::FilterMismatch`, so a fan-in consumer still
+  cannot silently widen beyond its declared coordinates. `T` is the caller's union
+  type, deserialized per frame and **fail-closed** exactly as the single-coordinate
+  path. `bind_event_consumer` now delegates to this as the 1-coordinate case
+  (`verify_filter` became order-insensitive set equality). There is **no
+  command-side fan-in** (a command durable is receiver-owned, one
+  `aggregate.verb`) and the wildcard subscription stays rejected. Purely additive.
+  Proven by a real-`nats-server` integration test: two facts consumed and acked on
+  one durable with no redelivery, and a durable whose filter set does not match
+  rejected with `FilterMismatch`.
+- **`br-util-nats-fabric` — graceful consumer drain (SIGTERM-safe shutdown).**
+  `IntegrationConsumer::drain(self)` consumes the consumer and closes the
+  underlying subscription cleanly (the pull task is aborted and the inbox
+  unsubscribed on drop) — it stops pulling without panicking and without losing a
+  message. `recv()` is documented **cancel-safe** (a frame is only consumed once
+  yielded as a `Delivered<E>`, and the ack lives on that owned value, not inside
+  `recv()`), so the SIGTERM-safe shape races `recv()` against the shutdown signal
+  in a `tokio::select!`, finishes the in-flight frame's ack on the held
+  `Delivered<E>`, then `drain()`s. A frame whose ack already completed is not
+  redelivered; a frame still un-acked at drain is left un-acked and redelivered
+  after `ack_wait` (at-least-once preserved, no silent drop). The shutdown
+  contract is documented in the README. Purely additive. Proven by a
+  real-`nats-server` integration test: an in-flight message acked before drain is
+  not redelivered after a rebind.
+- **`br-util-nats-fabric` — idempotent publish (`Nats-Msg-Id` dedup).**
+  `Fabric::publish_command_with_id` / `publish_event_with_id` are the plain
+  `publish_*` variants that additionally set the JetStream `Nats-Msg-Id` header
+  from a caller-supplied id (typically the domain event's UUIDv7), so two
+  publishes carrying the same id within the stream's duplicate window are deduped
+  by the broker to a single stored message — a retry after an ambiguous ack does
+  not double-write. The existing `publish_*` are untouched. The README states the
+  **sanctioned reliable / exactly-once-ish path is the `outbox` feature**; these
+  dedup-id variants are for callers managing their own idempotency. The caller
+  owns the id; the fabric never mints one. Purely additive. Proven by a
+  real-`nats-server` integration test: the same `Nats-Msg-Id` published twice
+  within the window yields exactly one stored message.
+- **`br-util-nats-fabric` — fabric reachability probe.**
+  `Fabric::reachable() -> bool` and `Fabric::connection_state() -> ConnectionState`
+  expose the client's **locally-cached** connection view for a readiness/liveness
+  gate (`ConnectionState` is the fabric's own `Pending` / `Connected` /
+  `Disconnected` enum — the raw `async_nats` `State` is never exposed). The README
+  is honest that this is the cached view `async_nats` maintains, **not** a
+  guaranteed live round-trip. For a true round-trip, `Fabric::ping()` flushes the client to the
+  server and surfaces a `FabricError::Connect` if the broker does not answer —
+  distinctly named so the cheap cached view is never mistaken for the round-trip.
+  Purely additive. Proven by a real-`nats-server` integration test:
+  `connection_state()` reads `Connected`, `reachable()` is true, and `ping()`
+  round-trips against a live broker. (#91)
 
 ## [1.0.1] — 2026-06-18
 
