@@ -93,6 +93,25 @@ release; they remain reachable through the historical per-crate tags
   frame still delivered, `delivered_count` tracking attempts up to the
   `max_deliver` budget, and bind fail-loud when the durable is absent. Unblocks
   svc-notifier's intake migrating off raw `async-nats` (#80). (#90)
+- **`br-util-nats-fabric` — typed prefix enumeration on
+  `PublishedLanguageReader`.** The reader exposed only `get(&key)` (exact-key),
+  so a Published-Language consumer that must project **all** entries under a
+  prefix (e.g. the directory projecting every user/group during its
+  bootstrap/reconcile scan) had to drop to a raw `async_nats` `Store` key-scan.
+  Two additive methods close that gap, generic over `V: DeserializeOwned`:
+  - `keys(&KvPrefix) -> Result<Vec<KvKey>, FabricError>` returns the validated
+    `KvKey`s under the prefix (sorted, prefix-scoped by `KvPrefix::matches`);
+  - `entries(&KvPrefix) -> Result<BTreeMap<KvKey, V>, FabricError>` returns the
+    decoded values under the prefix, **fail-closed** — an undecodable value is an
+    explicit `FabricError::Decode` naming the key, never a silent skip, and a
+    broker/KV outage surfaces as `FabricError::Kv`, never an empty result.
+  Both bind the fixed `PUBLISHED_LANGUAGE` bucket internally (no provisioning) and
+  never expose the raw `Store`; the escape hatch stays closed. This is the surface
+  `br-util-directory` would use for its bootstrap/reconcile scan and lets the
+  `br-test-harness` `pl_list` stand-in retire its raw key-scan. Purely additive.
+  Proven by real-`nats-server` integration tests: a multi-entry prefix scan
+  returns exactly its own keys/entries (prefix-scoped, a sibling prefix excluded)
+  and fails closed on a malformed value. (#85)
 
 ## [1.0.1] — 2026-06-18
 

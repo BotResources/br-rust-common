@@ -231,6 +231,24 @@ directory manifest `identity/_meta`) rather than a prefix scan. Semantics:
 - **bind-existing** — the fixed `PUBLISHED_LANGUAGE` bucket is bound internally,
   failing loud if absent; no provisioning.
 
+### Enumeration
+
+`PublishedLanguageReader::<V>::keys(&prefix)` and `entries(&prefix)` are the typed
+prefix scan — for the consumer that must project **all** entries under a prefix
+(e.g. the directory projecting every user/group during its bootstrap/reconcile),
+without dropping to a raw `async_nats` `Store` key-scan. Semantics:
+
+- **prefix-scoped** — only keys under `prefix` (by `KvPrefix::matches`) are
+  returned; an entry outside the prefix is never included;
+- `keys` returns the validated `KvKey`s (sorted); `entries` returns a
+  `BTreeMap<KvKey, V>` of the decoded values;
+- **fail-closed decode** — `entries` surfaces an undecodable value as an explicit
+  `FabricError::Decode` naming the key, **never** a silent skip;
+- **store-access failure surfaces** — a broker/KV outage during the scan is an
+  explicit `FabricError::Kv`, never collapsed to an empty result;
+- **bind-existing** — the fixed `PUBLISHED_LANGUAGE` bucket is bound internally,
+  failing loud if absent; no provisioning.
+
 ## Surface 3 — Ephemeral Auth over KV (compare-and-swap)
 
 `EphemeralAuthStore::<V>::open(&fabric)` is the only way in. It binds the fixed
@@ -295,6 +313,7 @@ other revision originates from `get_with_revision`.
 | reconcile op computation, orphan detection             | the desired set                              |
 | bootstrap scan + watch loop, fail-closed codec         | the prefix selection                         |
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
+| prefix enumeration (`PublishedLanguageReader::keys`/`entries`) | the `KvPrefix` to scan                 |
 | compare-and-swap KV (`EphemeralAuthStore`, `Revision`) | the `KvKey`, the value, the observed revision |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
