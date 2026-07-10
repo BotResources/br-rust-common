@@ -11,7 +11,7 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
-## [1.0.3] — 2026-07-10
+## [1.1.0] — 2026-07-10
 
 ### Fixed
 

@@ -173,7 +173,7 @@ string itself via `GqlMoneyInput`'s `TryFrom` → `EdgeError`.
 
 **Reason-code casing on the `reason` channel is uniform `lower_snake_case`.**
 The three codes this crate mints (`locale_unknown`, `money_out_of_range`,
-`primary_content_missing` — `UPPER_SNAKE` before v1.0.3) and every value-object
+`primary_content_missing` — `UPPER_SNAKE` before v1.1.0) and every value-object
 rejection passed through verbatim (`unknown_currency`, `localized_empty`, …)
 share one casing, enforced at construction (see "Reason-code casing (enforced)"
 above). A client reading the `reason` field keys on the exact string.
@@ -219,7 +219,7 @@ this crate even when its own public surface is unchanged.
 
 ```toml
 [dependencies]
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.0.3", version = "1.0.3", features = ["graphql"] }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.1.0", version = "1.1.0", features = ["graphql"] }
 ```
 
 ---

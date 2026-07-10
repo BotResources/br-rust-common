@@ -593,7 +593,7 @@ caller never mints a `Revision` by hand; every revision originates from
 ## Dependency
 
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.0.3", version = "1.0.3" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.1.0", version = "1.1.0" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.0.3", version = "1.0.3", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.1.0", version = "1.1.0", features = ["outbox"] }
 ```
