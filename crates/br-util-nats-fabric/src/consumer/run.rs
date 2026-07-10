@@ -8,9 +8,10 @@ use br_core_integration::{IntegrationCommand, IntegrationEvent, MessageOutcome};
 use crate::consumer::backoff::Backoff;
 use crate::consumer::bind::ensure_durable;
 use crate::consumer::config::ConsumerTuning;
+use crate::consumer::recovery::{Recovery, should_recover};
 use crate::consumer::source::{MessageSource, PullSource, SourceFrame};
 use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
-use crate::error::{ConsumeErrorKind, FabricError};
+use crate::error::FabricError;
 use crate::fabric::Fabric;
 use crate::stream::{INTEGRATION_CMD, INTEGRATION_EVT};
 
@@ -142,7 +143,7 @@ pub(crate) async fn run_inner<E, S, H, HFut, P>(
     mut source: S,
     handler: &mut H,
     on_poison: &mut P,
-    mut backoff: Backoff,
+    backoff: Backoff,
 ) -> Result<(), FabricError>
 where
     E: DeserializeOwned,
@@ -151,12 +152,13 @@ where
     HFut: Future<Output = MessageOutcome>,
     P: FnMut(FabricError),
 {
+    let mut recovery = Recovery::new(backoff);
     loop {
         match source.next().await {
             None => return Ok(()),
             Some(Err(error)) => {
                 if should_recover(&error) {
-                    recover(&mut source, &error, &mut backoff).await?;
+                    recovery.recover(&mut source, error).await?;
                     continue;
                 }
                 return Err(error);
@@ -165,6 +167,7 @@ where
                 let subject = frame.subject().to_string();
                 match serde_json::from_slice::<E>(frame.payload()) {
                     Ok(envelope) => {
+                        recovery.note_delivery();
                         let outcome = handler(Delivery {
                             subject: subject.clone(),
                             envelope,
@@ -179,50 +182,6 @@ where
                 }
             }
         }
-    }
-}
-
-async fn recover<S: MessageSource>(
-    source: &mut S,
-    trigger: &FabricError,
-    backoff: &mut Backoff,
-) -> Result<(), FabricError> {
-    let kind = consume_kind(trigger);
-    let mut attempt: u32 = 0;
-    loop {
-        attempt += 1;
-        let delay = backoff.sleep().await;
-        tracing::warn!(
-            consume_kind = ?kind,
-            attempt,
-            delay_ms = delay.as_millis() as u64,
-            "re-binding durable consumer after a transient stream error"
-        );
-        match source.rebind().await {
-            Ok(()) => {
-                backoff.reset();
-                return Ok(());
-            }
-            Err(rebind_err) if should_recover(&rebind_err) => continue,
-            Err(rebind_err) => return Err(rebind_err),
-        }
-    }
-}
-
-fn should_recover(error: &FabricError) -> bool {
-    matches!(
-        error,
-        FabricError::Consume {
-            kind: ConsumeErrorKind::HeartbeatMissed | ConsumeErrorKind::Other,
-            ..
-        }
-    )
-}
-
-fn consume_kind(error: &FabricError) -> Option<ConsumeErrorKind> {
-    match error {
-        FabricError::Consume { kind, .. } => Some(*kind),
-        _ => None,
     }
 }
 

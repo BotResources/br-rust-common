@@ -4,6 +4,7 @@ mod bound;
 mod config;
 mod handle;
 mod open;
+mod recovery;
 mod run;
 mod source;
 mod verify;
