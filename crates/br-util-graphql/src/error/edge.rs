@@ -55,7 +55,9 @@ impl EdgeError {
 
     #[must_use]
     pub fn with_reason(mut self, reason_code: impl Into<String>) -> Self {
-        self.reason_code = Some(reason_code.into());
+        let reason_code = reason_code.into();
+        crate::reason_code::assert_lower_snake_reason(&reason_code);
+        self.reason_code = Some(reason_code);
         self
     }
 
@@ -106,6 +108,30 @@ mod tests {
             .with_param("name", "Acme");
         assert_eq!(err.reason_code(), Some("name_already_taken"));
         assert_eq!(err.params().get("name").map(String::as_str), Some("Acme"));
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn with_reason_rejects_screaming_code() {
+        let _ = EdgeError::conflict().with_reason("NAME_ALREADY_TAKEN");
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn with_reason_rejects_kebab_code() {
+        let _ = EdgeError::conflict().with_reason("name-already-taken");
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn with_reason_rejects_code_with_spaces() {
+        let _ = EdgeError::conflict().with_reason("name already taken");
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn with_reason_rejects_empty_code() {
+        let _ = EdgeError::conflict().with_reason("");
     }
 
     #[test]

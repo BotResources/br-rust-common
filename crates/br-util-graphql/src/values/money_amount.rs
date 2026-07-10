@@ -80,14 +80,14 @@ mod tests {
     fn refuses_string_beyond_i64_with_money_out_of_range() {
         let beyond = "99999999999999999999";
         let msg = parse_error_message(Value::String(beyond.to_owned()));
-        assert!(msg.contains("MONEY_OUT_OF_RANGE"), "got: {msg}");
+        assert!(msg.contains("money_out_of_range"), "got: {msg}");
     }
 
     #[test]
     fn refuses_non_numeric_string_with_money_out_of_range() {
         for bad in ["12.50", "abc", ""] {
             let msg = parse_error_message(Value::String(bad.to_owned()));
-            assert!(msg.contains("MONEY_OUT_OF_RANGE"), "bad={bad} got: {msg}");
+            assert!(msg.contains("money_out_of_range"), "bad={bad} got: {msg}");
         }
     }
 

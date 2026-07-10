@@ -4,6 +4,7 @@ mod affordance;
 mod error;
 mod mutation;
 mod pagination;
+mod reason_code;
 mod subscription;
 pub mod values;
 
