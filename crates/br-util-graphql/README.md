@@ -60,6 +60,25 @@ only the code — SQL / serialization / panic text never reaches a client.
 A consuming service writes one `impl From<MyDomainError> for EdgeError` and every
 resolver / handler / endpoint becomes uniform.
 
+### Reason-code casing (enforced)
+
+Two casings, two roles — never mixed:
+
+- The `ErrorCode` **category** (`extensions.code`) is `SCREAMING_SNAKE` — the
+  seven fixed values in the table above.
+- **Reason codes** (`Affordance.reason_code`, the `reason` on `EdgeError` and
+  `GqlValueError`) are **`lower_snake_case`** — the string is used verbatim as
+  the FE i18n key suffix `affordances.reasons.<code>`, so casing drift splits
+  the key namespace into untranslatable ghost keys.
+
+`Affordance::block` and `EdgeError::with_reason` **panic** on a
+non-`lower_snake_case` reason code: a reason code is a developer constant, not
+runtime data — the panic is fail-fast at first use (first test, first boot),
+never reachable from user input. The `From<GqlValueError>` conversion routes
+through a non-asserting internal setter (its codes are already guaranteed by
+contract and pinned by an anti-drift sweep over every `ValueError` variant), so
+a rejected user value can never turn into a panic.
+
 ## The other edge types
 
 - **`Affordance { action, allowed, reason_code, params? }`** — the dumb-frontend
@@ -109,13 +128,13 @@ missing primary content, and truncated `Money` i64→i32):
 | Wrapper | Conversion | Fails with |
 |---|---|---|
 | `GqlMoney` (output) | `From<&Money>` | **infallible** — the full `i64` minor-unit amount is carried by the `MoneyAmount` scalar (a decimal string), no ceiling, **never truncates** |
-| `GqlMoneyInput` (input) | `TryFrom<GqlMoneyInput> for Money` | `MONEY_OUT_OF_RANGE` if the inbound `MoneyAmount` string is non-numeric or overflows `i64`; the currency's own code (e.g. `unknown_currency`) if the ISO code is unknown — **never coerced, never truncated** |
-| `GqlLocalizedInput` (input) | `into_localized::<F, L>()` | `LOCALE_UNKNOWN` (any unknown locale) / `PRIMARY_CONTENT_MISSING` (no entry for the primary) / the value object's own code (empty, duplicate) |
+| `GqlMoneyInput` (input) | `TryFrom<GqlMoneyInput> for Money` | `money_out_of_range` if the inbound `MoneyAmount` string is non-numeric or overflows `i64`; the currency's own code (e.g. `unknown_currency`) if the ISO code is unknown — **never coerced, never truncated** |
+| `GqlLocalizedInput` (input) | `into_localized::<F, L>()` | `locale_unknown` (any unknown locale) / `primary_content_missing` (no entry for the primary) / the value object's own code (empty, duplicate) |
 | `GqlLocalized` (output) | `from_localized::<F, L>(&Localized<F, L>)` | **infallible** — projects the domain value to a `SimpleObject` carrying `primaryLocale` (the canonical locale's wire code) and `entries` (every locale, the primary included) |
-| `GqlLocale` (trait — re-export of `br_core_values::LocaleCodec`) | `parse_wire(&str)` / `as_wire(&self)` | `locale_unknown` on parse (mapped to `LOCALE_UNKNOWN` at the edge) — the product-supplied seam that owns **both directions** of the wire↔locale mapping: `from_wire` (string → locale, fallible) and `as_wire` (locale → string, total) |
+| `GqlLocale` (trait — re-export of `br_core_values::LocaleCodec`) | `parse_wire(&str)` / `as_wire(&self)` | `locale_unknown` on parse (surfaced verbatim at the edge) — the product-supplied seam that owns **both directions** of the wire↔locale mapping: `from_wire` (string → locale, fallible) and `as_wire` (locale → string, total) |
 
-`GqlValueError` carries the rejection (`LOCALE_UNKNOWN`, `MONEY_OUT_OF_RANGE`,
-`PRIMARY_CONTENT_MISSING`, or a wrapped value-object code) and converts to an
+`GqlValueError` carries the rejection (`locale_unknown`, `money_out_of_range`,
+`primary_content_missing`, or a wrapped value-object code) and converts to an
 `EdgeError` with `code = BAD_USER_INPUT` + the precise `reason` + the offending
 value as a param.
 
@@ -134,31 +153,30 @@ string, not a number:
   JS-safe large-integer-money representation (the GitHub / Stripe convention).
 
 Output (`From<&Money>`) is therefore **infallible**: every `i64` round-trips
-exactly, never truncated, no range bound below `i64`. The `MONEY_OUT_OF_RANGE`
+exactly, never truncated, no range bound below `i64`. The `money_out_of_range`
 code now fires **only on input**, when an inbound `MoneyAmount` string is
 non-numeric or overflows `i64` — the parse/overflow boundary, not an `Int` ceiling
 (it carries the offending raw string as its `amount` param). An input of the wrong
 GraphQL *type* (e.g. a JSON number instead of a string) is rejected by the scalar
-as a type error *before* it reaches `MONEY_OUT_OF_RANGE` — the wire contract is a
+as a type error *before* it reaches `money_out_of_range` — the wire contract is a
 decimal string, fail-closed.
 
 Where this code surfaces depends on the layer. When `MoneyAmount` is deserialized
 by async-graphql itself (the nominal case — a `MoneyAmount!` argument),
-`MONEY_OUT_OF_RANGE` arrives in the GraphQL **`error.message`** (`Failed to parse
-"MoneyAmount": MONEY_OUT_OF_RANGE`), **not** in `extensions.code`/`params` like the
+`money_out_of_range` arrives in the GraphQL **`error.message`** (`Failed to parse
+"MoneyAmount": money_out_of_range`), **not** in `extensions.code`/`params` like the
 codes that flow through `EdgeError` — an inherent limit of the GraphQL scalar-parse
 layer (it has no structured-extension channel). Key on the stable substring
-`MONEY_OUT_OF_RANGE`, never on the async-graphql prefix (which is version-bound).
+`money_out_of_range`, never on the async-graphql prefix (which is version-bound).
 The structured `extensions` surface stays available for a service that takes the
 string itself via `GqlMoneyInput`'s `TryFrom` → `EdgeError`.
 
-**Reason-code casing on the `reason` channel.** Codes minted by this crate are
-`UPPER_SNAKE` (`LOCALE_UNKNOWN`, `MONEY_OUT_OF_RANGE`, `PRIMARY_CONTENT_MISSING`);
-a value-object rejection passed through (`unknown_currency`, `localized_empty`, …)
-keeps `br-core-values`'s own `lower_snake` casing **verbatim**, by design — the
-codes are not re-cased at the boundary because that would break their stability as
-keys. A client reading the `reason` field must therefore key on the exact string,
-not assume one casing convention.
+**Reason-code casing on the `reason` channel is uniform `lower_snake_case`.**
+The three codes this crate mints (`locale_unknown`, `money_out_of_range`,
+`primary_content_missing` — `UPPER_SNAKE` before v1.0.3) and every value-object
+rejection passed through verbatim (`unknown_currency`, `localized_empty`, …)
+share one casing, enforced at construction (see "Reason-code casing (enforced)"
+above). A client reading the `reason` field keys on the exact string.
 
 The locale seam (`GqlLocale`) exists because **the lib owns no locale list**
 (neither does `br-core-values`): each product implements `from_wire` and `as_wire`
@@ -176,8 +194,8 @@ on `LocaleCodec` directly. The consequence is that a **serde-only `contract-*`
 crate** can `impl GqlLocale (= LocaleCodec) for Locale` and reuse
 `GqlLocalized::from_localized` **without** pulling the GraphQL/HTTP stack into the
 published-language layer; the per-service `locale → wire` mapper collapses into
-this one canonical codec. The edge keeps mapping the core's `locale_unknown` to
-the `LOCALE_UNKNOWN` reason code (see `GqlValueError`).
+this one canonical codec. The edge surfaces the core's `locale_unknown` code
+verbatim (see `GqlValueError`).
 
 **Field-naming.** `GqlLocalized.primaryLocale` holds a **locale code** (e.g.
 `"en"`), not the primary text — named so deliberately, after a review surfaced
@@ -201,7 +219,7 @@ this crate even when its own public surface is unchanged.
 
 ```toml
 [dependencies]
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.0.2", version = "1.0.2", features = ["graphql"] }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.0.3", version = "1.0.3", features = ["graphql"] }
 ```
 
 ---

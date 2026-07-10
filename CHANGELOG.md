@@ -11,6 +11,62 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+## [1.0.3] — 2026-07-10
+
+### Fixed
+
+- **`br-util-nats-fabric` — the managed consumer loop survives transient stream
+  errors instead of dying permanently.** Production incident: a client-side
+  transient `MissingHeartbeat` (async-nats idle-heartbeat detection, durable
+  intact server-side) terminated the `run_commands`/`run_events` loop on the
+  first error item, leaving a service's consumer dead until a pod restart. The
+  loop now recovers in place: it sleeps a bounded exponential backoff (200 ms
+  doubling to a 30 s cap), re-binds the durable through the same create-or-bind
+  path (config converges exactly as at first bind) and resumes, with a
+  structured `warn` per attempt. `HeartbeatMissed` retries indefinitely
+  (known-transient); the unclassified `Other` carries a budget of 10
+  consecutive failures without an intervening delivered frame, after which the
+  last error surfaces (fail loud — no silent zombie consumer). Backoff and
+  budget reset on a delivered frame, not on a successful re-bind, so a flapping
+  broker cannot defeat the escalation. A re-bind that finds the stream absent
+  still terminates immediately (`NoStream`); a deleted durable is re-created
+  and the loop resumes. The initial bind stays fail-loud and is not covered by
+  recovery.
+- **`br-util-graphql` — reason codes are enforced `lower_snake_case` at
+  construction.** `Affordance::block` and `EdgeError::with_reason` panic on a
+  non-conforming reason code (a developer constant — fail-fast at first
+  test/boot, never reachable from user input: the `From<GqlValueError>`
+  conversion routes through a non-asserting internal setter, and an anti-drift
+  sweep pins every `br_core_values::ValueError` variant to `lower_snake`).
+  **Behavior change on the wire:** the three codes the crate mints align from
+  `UPPER_SNAKE` to `lower_snake_case` — `LOCALE_UNKNOWN` → `locale_unknown`,
+  `MONEY_OUT_OF_RANGE` → `money_out_of_range`, `PRIMARY_CONTENT_MISSING` →
+  `primary_content_missing` — including the `MoneyAmount` scalar-parse
+  `error.message` substring. Clients keying on the old `UPPER_SNAKE` strings
+  and services passing non-snake reason codes to the two asserting
+  constructors must align.
+
+### Added
+
+- **`br-util-nats-fabric` — `ConsumeErrorKind::HeartbeatMissed`.** A missed
+  idle heartbeat now classifies as this new transient kind instead of the
+  permanent `ConsumerGone` (`ConsumerDeleted`/`NoResponders` keep classifying
+  as `ConsumerGone`). Explicit `recv()`-loop callers matching on
+  `ConsumerGone` to detect heartbeat blips should match `HeartbeatMissed` and
+  re-bind; the managed `run_*` loop does it automatically.
+
+### Security
+
+- `crossbeam-epoch` 0.9.18 → 0.9.20 in `Cargo.lock` (RUSTSEC-2026-0204,
+  pulled via `metrics-exporter-prometheus`).
+
+### Internal
+
+- The `br-util-nats-fabric` e2e bind tests no longer wipe the shared fixed KV
+  buckets (`KV_PUBLISHED_LANGUAGE`/`KV_EPHEMERAL_AUTH`) — a latent
+  parallel-run flake. The absent-bucket fail-loud assertion leaves the suite;
+  its home is the future per-test-broker provisioner.
+
 ## [1.0.2] — 2026-06-18
 
 ### Added
