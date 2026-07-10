@@ -63,6 +63,17 @@ mod tests {
     }
 
     #[test]
+    fn missing_heartbeat_is_not_terminal_like_consumer_deleted() {
+        use async_nats::jetstream::consumer::pull::{MessagesError, MessagesErrorKind as K};
+        let heartbeat = classify_messages_error(&MessagesError::new(K::MissingHeartbeat));
+        let deleted = classify_messages_error(&MessagesError::new(K::ConsumerDeleted));
+        assert_ne!(
+            heartbeat, deleted,
+            "a transient MissingHeartbeat must not classify like a permanently deleted consumer"
+        );
+    }
+
+    #[test]
     fn classifies_a_send_ack_error_as_consumer_gone() {
         let err = async_nats::client::PublishError::new(async_nats::client::PublishErrorKind::Send);
         assert_eq!(classify_ack_error(&err), ConsumeErrorKind::ConsumerGone);
