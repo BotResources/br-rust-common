@@ -32,7 +32,7 @@ impl std::error::Error for GqlValueError {}
 
 impl From<GqlValueError> for EdgeError {
     fn from(error: GqlValueError) -> Self {
-        let edge = EdgeError::bad_user_input().with_reason(error.reason_code());
+        let edge = EdgeError::bad_user_input().with_contract_reason(error.reason_code());
         match &error {
             GqlValueError::LocaleUnknown { value } => edge.with_param("value", value),
             GqlValueError::MoneyOutOfRange { amount } => edge.with_param("amount", amount),
@@ -82,5 +82,30 @@ mod tests {
         assert_eq!(edge.code(), ErrorCode::BadUserInput);
         assert_eq!(edge.reason_code(), Some("locale_unknown"));
         assert_eq!(edge.params().get("value").map(String::as_str), Some("xx"));
+    }
+
+    #[test]
+    fn every_value_error_variant_renders_a_lower_snake_reason() {
+        let variants = [
+            ValueError::MalformedCode {
+                value: "EU".into(),
+                expected_len: 3,
+            },
+            ValueError::UnknownCurrency {
+                value: "RMB".into(),
+            },
+            ValueError::UnknownCountry { value: "UK".into() },
+            ValueError::LocaleUnknown { value: "xx".into() },
+            ValueError::LocalizedEmpty,
+            ValueError::LocalizedPrimaryMissing,
+            ValueError::LocalizedDuplicateLocale,
+        ];
+        for source in variants {
+            let edge: EdgeError = GqlValueError::ValueRejected { source }.into();
+            crate::reason_code::assert_lower_snake_reason(
+                edge.reason_code()
+                    .expect("value rejection carries a reason"),
+            );
+        }
     }
 }

@@ -62,6 +62,12 @@ impl EdgeError {
     }
 
     #[must_use]
+    pub(crate) fn with_contract_reason(mut self, reason_code: impl Into<String>) -> Self {
+        self.reason_code = Some(reason_code.into());
+        self
+    }
+
+    #[must_use]
     pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.params.insert(key.into(), value.into());
         self

@@ -1,7 +1,7 @@
 pub(crate) fn assert_lower_snake_reason(reason_code: &str) {
     assert!(
         is_lower_snake(reason_code),
-        "reason code must be lower_snake_case (FE i18n key `affordances.reasons.<code>`), got: {reason_code:?}"
+        "reason code must be lower_snake_case (FE i18n key suffix for affordance and edge-error reasons), got: {reason_code:?}"
     );
 }
 
