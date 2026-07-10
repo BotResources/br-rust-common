@@ -46,6 +46,13 @@ release; they remain reachable through the historical per-crate tags
   and services passing non-snake reason codes to the two asserting
   constructors must align.
 
+- **`br-identity-app` — honest `AppError::Publish` label.** The variant
+  absorbs every `FabricError` via `#[from]` (consume-path errors included) but
+  rendered them all as `confirmation publish failed: …`, which displayed the
+  incident's *consume* failure as a *publish* failure and misdirected the
+  diagnosis. It now renders `fabric operation failed: …` — the inner
+  `FabricError` display carries the actual operation.
+
 ### Added
 
 - **`br-util-nats-fabric` — `ConsumeErrorKind::HeartbeatMissed`.** A missed

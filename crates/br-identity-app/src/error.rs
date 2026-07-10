@@ -9,7 +9,7 @@ pub enum AppError {
     #[error("persisted registry state failed hydration: {0}")]
     Hydration(#[from] RegistryHydrationError),
 
-    #[error("confirmation publish failed: {0}")]
+    #[error("fabric operation failed: {0}")]
     Publish(#[from] br_util_nats_fabric::FabricError),
 
     #[error("scope_registry_head row is missing; run migrations")]
