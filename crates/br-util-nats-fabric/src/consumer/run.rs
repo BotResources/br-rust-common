@@ -5,11 +5,12 @@ use serde::de::DeserializeOwned;
 
 use br_core_integration::{IntegrationCommand, IntegrationEvent, MessageOutcome};
 
+use crate::consumer::backoff::Backoff;
 use crate::consumer::bind::ensure_durable;
 use crate::consumer::config::ConsumerTuning;
 use crate::consumer::source::{MessageSource, PullSource, SourceFrame};
 use crate::coords::{CommandCoords, EventCoords, IntegrationSubject};
-use crate::error::FabricError;
+use crate::error::{ConsumeErrorKind, FabricError};
 use crate::fabric::Fabric;
 use crate::stream::{INTEGRATION_CMD, INTEGRATION_EVT};
 
@@ -69,7 +70,13 @@ impl Fabric {
             *tuning,
         )
         .await?;
-        run_inner::<IntegrationCommand<T>, _, _, _, _>(source, &mut handler, &mut on_poison).await
+        run_inner::<IntegrationCommand<T>, _, _, _, _>(
+            source,
+            &mut handler,
+            &mut on_poison,
+            Backoff::production(),
+        )
+        .await
     }
 
     pub async fn run_events<T, H, HFut, P>(
@@ -121,7 +128,13 @@ impl Fabric {
             *tuning,
         )
         .await?;
-        run_inner::<IntegrationEvent<T>, _, _, _, _>(source, &mut handler, &mut on_poison).await
+        run_inner::<IntegrationEvent<T>, _, _, _, _>(
+            source,
+            &mut handler,
+            &mut on_poison,
+            Backoff::production(),
+        )
+        .await
     }
 }
 
@@ -129,6 +142,7 @@ pub(crate) async fn run_inner<E, S, H, HFut, P>(
     mut source: S,
     handler: &mut H,
     on_poison: &mut P,
+    mut backoff: Backoff,
 ) -> Result<(), FabricError>
 where
     E: DeserializeOwned,
@@ -142,7 +156,7 @@ where
             None => return Ok(()),
             Some(Err(error)) => {
                 if should_recover(&error) {
-                    source.rebind().await?;
+                    recover(&mut source, &error, &mut backoff).await?;
                     continue;
                 }
                 return Err(error);
@@ -168,8 +182,48 @@ where
     }
 }
 
-fn should_recover(_error: &FabricError) -> bool {
-    false
+async fn recover<S: MessageSource>(
+    source: &mut S,
+    trigger: &FabricError,
+    backoff: &mut Backoff,
+) -> Result<(), FabricError> {
+    let kind = consume_kind(trigger);
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        let delay = backoff.sleep().await;
+        tracing::warn!(
+            consume_kind = ?kind,
+            attempt,
+            delay_ms = delay.as_millis() as u64,
+            "re-binding durable consumer after a transient stream error"
+        );
+        match source.rebind().await {
+            Ok(()) => {
+                backoff.reset();
+                return Ok(());
+            }
+            Err(rebind_err) if should_recover(&rebind_err) => continue,
+            Err(rebind_err) => return Err(rebind_err),
+        }
+    }
+}
+
+fn should_recover(error: &FabricError) -> bool {
+    matches!(
+        error,
+        FabricError::Consume {
+            kind: ConsumeErrorKind::HeartbeatMissed | ConsumeErrorKind::Other,
+            ..
+        }
+    )
+}
+
+fn consume_kind(error: &FabricError) -> Option<ConsumeErrorKind> {
+    match error {
+        FabricError::Consume { kind, .. } => Some(*kind),
+        _ => None,
+    }
 }
 
 fn ack_kind(outcome: MessageOutcome) -> AckKind {
