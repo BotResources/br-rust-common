@@ -192,6 +192,34 @@ The handler returns a `br_core_integration::MessageOutcome`
 (`Ack` / `Nak` / `Term`); a payload that fails to decode is `Term`-ed and routed
 to the caller's poison handler — it is never silently dropped.
 
+#### Transient-error recovery (the managed loop survives a missed heartbeat)
+
+`run_commands` / `run_events` do **not** die on a transient stream error. An
+error item classified `HeartbeatMissed` (async-nats missed-idle-heartbeat
+detection — a transport hiccup; the durable is typically intact server-side) or
+`Other` (unclassified transport failure) triggers **in-loop recovery**: the loop
+sleeps a bounded exponential backoff (200 ms doubling to a 30 s cap), re-binds
+the durable through the same create-or-bind path (`ensure_durable`, so the
+config converges exactly as at first bind) and resumes, emitting a structured
+`warn` per attempt. The two recoverable classes differ in patience:
+
+- `HeartbeatMissed` retries **indefinitely** — it is known-transient.
+- `Other` carries a budget of **10 consecutive failures**: an unclassified
+  failure can be permanent (revoked credentials, an immutable config conflict at
+  re-create), so after 10 consecutive `Other` failures with no delivered frame
+  in between, the loop returns the last error — fail loud, for the caller's
+  supervisor/readiness to surface — instead of degrading into a silent zombie
+  consumer.
+
+Backoff and budget reset on a **delivered frame**, not on a successful re-bind,
+so a flapping broker cannot defeat the escalation. A re-bind that finds the
+stream absent terminates immediately with `Consume { kind: NoStream }` — streams
+are gitops-declared infra, their absence is never retried quietly. A deleted
+durable is re-created by the re-bind (create-or-update) and the loop resumes.
+The initial bind stays fail-loud and is **not** covered by recovery: `run_*`
+returns the first bind error to the caller, recovery only guards a loop that
+already started running.
+
 #### The durable consumer (explicit per-delivery acknowledgement)
 
 For the production work loop that needs to inspect the redelivery count and own
@@ -242,6 +270,11 @@ while let Some(delivery) = consumer.recv().await? {
   generic/wildcard delivery is a gitops concern, not a fabric one.
 - `recv()` yields the next `Delivered<E>` (`None` once the stream ends; a
   matchable transport `FabricError::Consume` on a broker/consumer-gone error).
+  A missed idle heartbeat surfaces as `Consume { kind: HeartbeatMissed }` —
+  transient, the durable is typically intact: re-bind (`ensure_*_consumer`) and
+  resume, do not treat it like the permanent `ConsumerGone`. The explicit
+  `recv()` loop does **not** auto-recover — that is the managed `run_*` loop's
+  behavior; here the re-bind decision is the caller's.
 - `Delivered<E>` exposes `payload() -> Result<&E, &FabricError>` — a malformed
   wire frame is **fail-closed**: it surfaces as a `FabricError::Decode` naming
   the subject that the caller routes to `term()`, **never** a silent drop and
@@ -560,7 +593,7 @@ caller never mints a `Revision` by hand; every revision originates from
 ## Dependency
 
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.0.2", version = "1.0.2" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.1.0", version = "1.1.0" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.0.2", version = "1.0.2", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.1.0", version = "1.1.0", features = ["outbox"] }
 ```

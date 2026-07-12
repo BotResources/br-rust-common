@@ -327,28 +327,17 @@ async fn command_awaiter_fails_loud_when_the_command_stream_is_absent() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn published_language_binds_existing_bucket_and_fails_loud_when_absent() {
+async fn published_language_binds_the_existing_shared_bucket() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
-    let _ = js.delete_key_value(KV_PUBLISHED_LANGUAGE).await;
+    ensure_published_language_bucket(&js).await;
 
     let fabric = fabric().await;
-    let absent = PublishedLanguagePublisher::<Payload>::open(&fabric).await;
-    assert!(matches!(absent, Err(FabricError::Kv(_))));
-
-    js.create_key_value(async_nats::jetstream::kv::Config {
-        bucket: KV_PUBLISHED_LANGUAGE.to_string(),
-        ..Default::default()
-    })
-    .await
-    .expect("create bucket");
     assert!(
         PublishedLanguagePublisher::<Payload>::open(&fabric)
             .await
             .is_ok()
     );
-
-    let _ = js.delete_key_value(KV_PUBLISHED_LANGUAGE).await;
 }
 
 async fn ensure_published_language_bucket(
@@ -695,19 +684,13 @@ fn ephemeral_key(suffix: &str) -> KvKey {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
-async fn ephemeral_auth_binds_existing_bucket_and_fails_loud_when_absent() {
+async fn ephemeral_auth_binds_the_existing_shared_bucket() {
     let Some(_) = nats_url() else { return };
     let js = jetstream().await;
-    let _ = js.delete_key_value(KV_EPHEMERAL_AUTH).await;
+    ensure_ephemeral_auth_bucket(&js).await;
 
     let fabric = fabric().await;
-    let absent = EphemeralAuthStore::<Payload>::open(&fabric).await;
-    assert!(matches!(absent, Err(FabricError::Kv(_))));
-
-    ensure_ephemeral_auth_bucket(&js).await;
     assert!(EphemeralAuthStore::<Payload>::open(&fabric).await.is_ok());
-
-    let _ = js.delete_key_value(KV_EPHEMERAL_AUTH).await;
 }
 
 #[tokio::test]

@@ -155,7 +155,7 @@ mod tests {
         };
         let err = input.into_localized::<Markdown, Locale>().unwrap_err();
         assert_eq!(err, GqlValueError::PrimaryContentMissing);
-        assert_eq!(err.reason_code(), "PRIMARY_CONTENT_MISSING");
+        assert_eq!(err.reason_code(), "primary_content_missing");
     }
 
     #[test]

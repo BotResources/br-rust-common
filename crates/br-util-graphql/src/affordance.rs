@@ -22,10 +22,12 @@ impl Affordance {
     }
 
     pub fn block(action: impl Into<String>, reason_code: impl Into<String>) -> Self {
+        let reason_code = reason_code.into();
+        crate::reason_code::assert_lower_snake_reason(&reason_code);
         Self {
             action: action.into(),
             allowed: false,
-            reason_code: Some(reason_code.into()),
+            reason_code: Some(reason_code),
             params: None,
         }
     }
@@ -106,6 +108,30 @@ mod tests {
         let params = a.params.as_ref().expect("params present");
         assert_eq!(params.0.get("limit"), Some(&"50".to_owned()));
         assert_eq!(params.0.get("used"), Some(&"50".to_owned()));
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn block_rejects_screaming_reason_code() {
+        let _ = Affordance::block("delete", "NOT_COLLEGE_MEMBER");
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn block_rejects_kebab_reason_code() {
+        let _ = Affordance::block("delete", "not-college-member");
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn block_rejects_reason_code_with_spaces() {
+        let _ = Affordance::block("delete", "not college member");
+    }
+
+    #[test]
+    #[should_panic(expected = "lower_snake_case")]
+    fn block_rejects_empty_reason_code() {
+        let _ = Affordance::block("delete", "");
     }
 
     #[test]

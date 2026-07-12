@@ -244,8 +244,8 @@ async fn money_input_refuses_unparsable_amount() {
         response
             .errors
             .iter()
-            .any(|e| e.message.contains("MONEY_OUT_OF_RANGE")),
-        "expected MONEY_OUT_OF_RANGE, got: {:?}",
+            .any(|e| e.message.contains("money_out_of_range")),
+        "expected money_out_of_range, got: {:?}",
         response.errors
     );
 }
