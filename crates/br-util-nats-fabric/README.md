@@ -203,27 +203,37 @@ up) or `Other` (unclassified transport failure) triggers **in-loop recovery**:
 the loop sleeps a bounded exponential backoff (200 ms doubling to a 30 s cap),
 re-binds the durable through the same create-or-bind path (`ensure_durable`, so
 the config converges exactly as at first bind) and resumes, emitting a structured
-`warn` per attempt. The recoverable classes differ in patience:
+`warn` per attempt.
 
-- `HeartbeatMissed` retries **indefinitely** — it is known-transient.
-- `NoResponders` retries **indefinitely** — a broker-restart window can outlast a
-  bounded budget, and the re-bind step re-creates the durable if it needs
-  re-binding after the restart.
-- `Other` carries a budget of **10 consecutive failures**: an unclassified
-  failure can be permanent (revoked credentials, an immutable config conflict at
-  re-create), so after 10 consecutive `Other` failures with no delivered frame
-  in between, the loop returns the last error — fail loud, for the caller's
-  supervisor/readiness to surface — instead of degrading into a silent zombie
-  consumer.
+`HeartbeatMissed` and `NoResponders` matter as the two classes lifted **out of
+the terminal `ConsumerGone` bucket**: they can only ever arrive as the
+**initial** trigger from the delivery stream (`source.next()`), and lifting them
+out is what lets a transient blip *start* recovery instead of killing the loop on
+the first error. `NoResponders` additionally earns its **own diagnostic class**
+so a post-restart window is distinguishable in the logs from a genuine
+heartbeat gap. The initial trigger is **not** counted against the budget — it
+buys one free re-bind attempt. But once recovery is under way the only retried
+operation is the re-bind itself, and a re-bind failure classifies as either
+`NoStream` (fail-loud terminal — the stream is gitops infra, its absence is never
+retried) or `Other` — **never** `HeartbeatMissed`/`NoResponders` again. So a
+**prolonged** outage escalates on the `Other` budget:
 
+- `Other` carries a budget of **10 consecutive failures** with no delivered frame
+  in between, after which the loop returns the last error — fail loud, for the
+  caller's supervisor/readiness to surface — instead of degrading into a silent
+  zombie consumer.
+
+In practice async-nats **buffers during its own auto-reconnect**, so the re-bind
+typically blocks until the broker is back and succeeds on the **first** attempt;
+the `Other` budget is the backstop for an outage that outlasts the reconnect or a
+re-create that keeps failing (revoked credentials, an immutable config conflict).
 Backoff and budget reset on a **delivered frame**, not on a successful re-bind,
-so a flapping broker cannot defeat the escalation. A re-bind that finds the
-stream absent terminates immediately with `Consume { kind: NoStream }` — streams
-are gitops-declared infra, their absence is never retried quietly. A deleted
-durable is re-created by the re-bind (create-or-update) and the loop resumes.
-The initial bind stays fail-loud and is **not** covered by recovery: `run_*`
-returns the first bind error to the caller, recovery only guards a loop that
-already started running.
+so a flapping broker cannot defeat the escalation. A deleted durable is
+re-created by the re-bind (create-or-update) and the loop resumes; a genuinely
+deleted consumer surfaces as `ConsumerGone` and terminates. The initial bind
+stays fail-loud and is **not** covered by recovery: `run_*` returns the first
+bind error to the caller, recovery only guards a loop that already started
+running.
 
 #### The durable consumer (explicit per-delivery acknowledgement)
 

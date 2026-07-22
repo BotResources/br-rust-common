@@ -74,8 +74,6 @@ pub(super) enum Step {
 
 pub(super) enum Rebind {
     Ok,
-    Heartbeat,
-    NoResponders,
     Other,
     NoStream,
     Terminal,
@@ -129,8 +127,6 @@ impl MessageSource for ScriptedSource {
         *self.rebind_calls.lock().unwrap() += 1;
         match self.rebinds.pop_front().unwrap_or(Rebind::Ok) {
             Rebind::Ok => Ok(()),
-            Rebind::Heartbeat => Err(heartbeat()),
-            Rebind::NoResponders => Err(no_responders()),
             Rebind::Other => Err(other()),
             Rebind::NoStream => Err(FabricError::consume(
                 ConsumeErrorKind::NoStream,

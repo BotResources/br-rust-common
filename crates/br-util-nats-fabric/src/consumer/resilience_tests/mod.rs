@@ -63,24 +63,12 @@ async fn a_rebind_that_finds_no_stream_terminates_the_loop() {
 async fn a_terminal_rebind_error_after_transient_retries_terminates_the_loop() {
     let source = ScriptedSource::new(
         [Step::Frame(1), Step::Heartbeat],
-        [Rebind::Heartbeat, Rebind::Heartbeat, Rebind::Terminal],
+        [Rebind::Other, Rebind::Other, Rebind::Terminal],
     );
     let report = drive(source, instant_backoff()).await;
 
     assert!(report.result.is_err());
     assert_eq!(report.rebind_calls, 3);
-}
-
-#[tokio::test]
-async fn repeated_heartbeat_misses_retry_indefinitely_and_resume() {
-    let mut rebinds: Vec<Rebind> = (0..20).map(|_| Rebind::Heartbeat).collect();
-    rebinds.push(Rebind::Ok);
-    let source = ScriptedSource::new([Step::Frame(1), Step::Heartbeat, Step::Frame(2)], rebinds);
-    let report = drive(source, instant_backoff()).await;
-
-    assert!(report.result.is_ok(), "{:?}", report.result);
-    assert_eq!(report.seen, vec![1, 2]);
-    assert_eq!(report.rebind_calls, 21);
 }
 
 #[tokio::test]
@@ -97,18 +85,16 @@ async fn a_no_responders_window_rebinds_and_keeps_processing() {
 }
 
 #[tokio::test]
-async fn a_long_no_responders_window_retries_indefinitely_and_resumes() {
-    let mut rebinds: Vec<Rebind> = (0..20).map(|_| Rebind::NoResponders).collect();
-    rebinds.push(Rebind::Ok);
-    let source = ScriptedSource::new(
-        [Step::Frame(1), Step::NoResponders, Step::Frame(2)],
-        rebinds,
-    );
+async fn a_prolonged_no_responders_outage_exhausts_the_other_budget_and_fails_loud() {
+    let rebinds: Vec<Rebind> = (0..11).map(|_| Rebind::Other).collect();
+    let source = ScriptedSource::new([Step::Frame(1), Step::NoResponders], rebinds);
     let report = drive(source, instant_backoff()).await;
 
-    assert!(report.result.is_ok(), "{:?}", report.result);
-    assert_eq!(report.seen, vec![1, 2]);
-    assert_eq!(report.rebind_calls, 21);
+    assert!(
+        report.result.is_err(),
+        "an outage that outlasts the reconnect must fail loud on the Other re-bind budget, never zombie"
+    );
+    assert_eq!(report.rebind_calls, 11);
 }
 
 #[tokio::test]
@@ -157,7 +143,7 @@ async fn an_undecodable_payload_terms_and_the_loop_resumes() {
 async fn recover_sleeps_with_backoff_between_attempts() {
     let source = ScriptedSource::new(
         [Step::Heartbeat],
-        [Rebind::Heartbeat, Rebind::Heartbeat, Rebind::Ok],
+        [Rebind::Other, Rebind::Other, Rebind::Ok],
     );
     let backoff = Backoff::new(Duration::from_millis(100), Duration::from_secs(1));
 

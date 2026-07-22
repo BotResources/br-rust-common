@@ -22,13 +22,17 @@ release; they remain reachable through the historical per-crate tags
   into the **terminal** `ConsumerGone` bucket — the same bucket as a genuinely
   deleted durable — so the managed loop returned on the first occurrence with zero
   retries. `NoResponders` now maps to its own `ConsumeErrorKind::NoResponders`
-  variant and is routed through the in-loop recovery path: it retries
-  **indefinitely** like `HeartbeatMissed` (a broker-restart window can outlast a
-  bounded budget) and re-binds the durable through the same create-or-bind path on
-  each attempt, so a durable needing re-binding after the restart converges back to
-  the fabric's config. A genuinely deleted durable still surfaces as
-  `ConsumerDeleted` → `ConsumerGone` and terminates the loop as intended; a re-bind
-  that finds the stream absent still terminates immediately (`NoStream`).
+  variant, lifted out of the terminal bucket so a post-restart blip **starts**
+  in-loop recovery instead of killing the loop (and earning a distinct diagnostic
+  class for the post-restart window). Recovery semantics are unchanged: the
+  initial `NoResponders` trigger is not counted against the budget (one free
+  re-bind attempt), and because async-nats buffers during its auto-reconnect the
+  re-bind typically blocks until the broker is back and succeeds on the first
+  attempt. Every subsequent re-bind failure classifies as `NoStream` (fail-loud
+  terminal) or `Other`, so a **prolonged** outage still escalates on the existing
+  `Other` budget (10 consecutive failures) and fails loud — no silent zombie
+  consumer. A genuinely deleted durable still surfaces as `ConsumerDeleted` →
+  `ConsumerGone` and terminates the loop as intended.
 
 ## [1.1.0] — 2026-07-10
 
