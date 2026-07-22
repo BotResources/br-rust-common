@@ -9,7 +9,7 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
-## [Unreleased]
+## [1.2.0] — 2026-07-22
 
 ### Added
 
