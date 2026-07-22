@@ -8,9 +8,11 @@ mod key;
 mod publisher;
 mod reader;
 mod reconcile;
+mod reconcile_ops;
 mod revision;
 mod scan;
 mod sink;
+mod supervisor;
 
 pub use bucket::{KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE};
 pub use consumer::PublishedLanguageConsumer;
