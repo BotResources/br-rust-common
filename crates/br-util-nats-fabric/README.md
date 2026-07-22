@@ -196,14 +196,19 @@ to the caller's poison handler — it is never silently dropped.
 
 `run_commands` / `run_events` do **not** die on a transient stream error. An
 error item classified `HeartbeatMissed` (async-nats missed-idle-heartbeat
-detection — a transport hiccup; the durable is typically intact server-side) or
-`Other` (unclassified transport failure) triggers **in-loop recovery**: the loop
-sleeps a bounded exponential backoff (200 ms doubling to a 30 s cap), re-binds
-the durable through the same create-or-bind path (`ensure_durable`, so the
-config converges exactly as at first bind) and resumes, emitting a structured
-`warn` per attempt. The two recoverable classes differ in patience:
+detection — a transport hiccup; the durable is typically intact server-side),
+`NoResponders` (no JetStream API responder — what a pull request gets for the
+seconds right after a NATS server restart, before the JS API subjects are back
+up) or `Other` (unclassified transport failure) triggers **in-loop recovery**:
+the loop sleeps a bounded exponential backoff (200 ms doubling to a 30 s cap),
+re-binds the durable through the same create-or-bind path (`ensure_durable`, so
+the config converges exactly as at first bind) and resumes, emitting a structured
+`warn` per attempt. The recoverable classes differ in patience:
 
 - `HeartbeatMissed` retries **indefinitely** — it is known-transient.
+- `NoResponders` retries **indefinitely** — a broker-restart window can outlast a
+  bounded budget, and the re-bind step re-creates the durable if it needs
+  re-binding after the restart.
 - `Other` carries a budget of **10 consecutive failures**: an unclassified
   failure can be permanent (revoked credentials, an immutable config conflict at
   re-create), so after 10 consecutive `Other` failures with no delivered frame
@@ -270,9 +275,10 @@ while let Some(delivery) = consumer.recv().await? {
   generic/wildcard delivery is a gitops concern, not a fabric one.
 - `recv()` yields the next `Delivered<E>` (`None` once the stream ends; a
   matchable transport `FabricError::Consume` on a broker/consumer-gone error).
-  A missed idle heartbeat surfaces as `Consume { kind: HeartbeatMissed }` —
+  A missed idle heartbeat surfaces as `Consume { kind: HeartbeatMissed }` and a
+  post-restart missing JS responder as `Consume { kind: NoResponders }` — both
   transient, the durable is typically intact: re-bind (`ensure_*_consumer`) and
-  resume, do not treat it like the permanent `ConsumerGone`. The explicit
+  resume, do not treat either like the permanent `ConsumerGone`. The explicit
   `recv()` loop does **not** auto-recover — that is the managed `run_*` loop's
   behavior; here the re-bind decision is the caller's.
 - `Delivered<E>` exposes `payload() -> Result<&E, &FabricError>` — a malformed

@@ -58,7 +58,9 @@ pub(crate) fn should_recover(error: &FabricError) -> bool {
     matches!(
         error,
         FabricError::Consume {
-            kind: ConsumeErrorKind::HeartbeatMissed | ConsumeErrorKind::Other,
+            kind: ConsumeErrorKind::HeartbeatMissed
+                | ConsumeErrorKind::NoResponders
+                | ConsumeErrorKind::Other,
             ..
         }
     )
@@ -93,6 +95,14 @@ mod tests {
     fn heartbeat_and_other_are_recoverable() {
         assert!(should_recover(&consume(ConsumeErrorKind::HeartbeatMissed)));
         assert!(should_recover(&consume(ConsumeErrorKind::Other)));
+    }
+
+    #[test]
+    fn no_responders_is_recoverable_and_unbudgeted() {
+        assert!(should_recover(&consume(ConsumeErrorKind::NoResponders)));
+        assert!(!counts_against_budget(&consume(
+            ConsumeErrorKind::NoResponders
+        )));
     }
 
     #[test]

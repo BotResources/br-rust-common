@@ -11,6 +11,25 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Fixed
+
+- **`br-util-nats-fabric` — a NATS-restart blip no longer permanently kills a
+  `run_commands`/`run_events` consumer.** Production incident (`svc-identity`, the
+  scope-registry server): a few-second NATS server restart flipped `/readyz` DOWN
+  until a pod restart. Root cause: `classify_messages_error` collapsed the
+  transient `NoResponders` (what a JetStream pull request gets for the seconds
+  right after a server restart, before the JS API subject handlers are back up)
+  into the **terminal** `ConsumerGone` bucket — the same bucket as a genuinely
+  deleted durable — so the managed loop returned on the first occurrence with zero
+  retries. `NoResponders` now maps to its own `ConsumeErrorKind::NoResponders`
+  variant and is routed through the in-loop recovery path: it retries
+  **indefinitely** like `HeartbeatMissed` (a broker-restart window can outlast a
+  bounded budget) and re-binds the durable through the same create-or-bind path on
+  each attempt, so a durable needing re-binding after the restart converges back to
+  the fabric's config. A genuinely deleted durable still surfaces as
+  `ConsumerDeleted` → `ConsumerGone` and terminates the loop as intended; a re-bind
+  that finds the stream absent still terminates immediately (`NoStream`).
+
 ## [1.1.0] — 2026-07-10
 
 ### Fixed

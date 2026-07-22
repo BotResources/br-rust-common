@@ -84,6 +84,34 @@ async fn repeated_heartbeat_misses_retry_indefinitely_and_resume() {
 }
 
 #[tokio::test]
+async fn a_no_responders_window_rebinds_and_keeps_processing() {
+    let source = ScriptedSource::new(
+        [Step::Frame(1), Step::NoResponders, Step::Frame(2)],
+        [Rebind::Ok],
+    );
+    let report = drive(source, instant_backoff()).await;
+
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert_eq!(report.seen, vec![1, 2]);
+    assert_eq!(report.rebind_calls, 1);
+}
+
+#[tokio::test]
+async fn a_long_no_responders_window_retries_indefinitely_and_resumes() {
+    let mut rebinds: Vec<Rebind> = (0..20).map(|_| Rebind::NoResponders).collect();
+    rebinds.push(Rebind::Ok);
+    let source = ScriptedSource::new(
+        [Step::Frame(1), Step::NoResponders, Step::Frame(2)],
+        rebinds,
+    );
+    let report = drive(source, instant_backoff()).await;
+
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert_eq!(report.seen, vec![1, 2]);
+    assert_eq!(report.rebind_calls, 21);
+}
+
+#[tokio::test]
 async fn repeated_other_failures_exhaust_the_budget_and_surface_err() {
     let rebinds: Vec<Rebind> = (0..11).map(|_| Rebind::Other).collect();
     let source = ScriptedSource::new([Step::Frame(1), Step::Heartbeat], rebinds);

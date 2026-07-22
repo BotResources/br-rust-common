@@ -29,7 +29,8 @@ pub(crate) fn classify_messages_error(
 ) -> ConsumeErrorKind {
     use async_nats::jetstream::consumer::pull::MessagesErrorKind as K;
     match err.kind() {
-        K::ConsumerDeleted | K::NoResponders => ConsumeErrorKind::ConsumerGone,
+        K::ConsumerDeleted => ConsumeErrorKind::ConsumerGone,
+        K::NoResponders => ConsumeErrorKind::NoResponders,
         K::MissingHeartbeat => ConsumeErrorKind::HeartbeatMissed,
         _ => ConsumeErrorKind::Other,
     }
@@ -57,7 +58,7 @@ mod tests {
         let go = |k: K| classify_messages_error(&MessagesError::new(k));
         assert_eq!(go(K::ConsumerDeleted), ConsumeErrorKind::ConsumerGone);
         assert_eq!(go(K::MissingHeartbeat), ConsumeErrorKind::HeartbeatMissed);
-        assert_eq!(go(K::NoResponders), ConsumeErrorKind::ConsumerGone);
+        assert_eq!(go(K::NoResponders), ConsumeErrorKind::NoResponders);
         assert_eq!(go(K::Pull), ConsumeErrorKind::Other);
     }
 
@@ -69,6 +70,17 @@ mod tests {
         assert_ne!(
             heartbeat, deleted,
             "a transient MissingHeartbeat must not classify like a permanently deleted consumer"
+        );
+    }
+
+    #[test]
+    fn no_responders_is_not_terminal_like_consumer_deleted() {
+        use async_nats::jetstream::consumer::pull::{MessagesError, MessagesErrorKind as K};
+        let no_responders = classify_messages_error(&MessagesError::new(K::NoResponders));
+        let deleted = classify_messages_error(&MessagesError::new(K::ConsumerDeleted));
+        assert_ne!(
+            no_responders, deleted,
+            "a transient NoResponders (broker-restart window) must not classify like a permanently deleted consumer"
         );
     }
 
