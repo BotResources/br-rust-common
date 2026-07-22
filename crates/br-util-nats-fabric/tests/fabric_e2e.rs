@@ -705,11 +705,21 @@ async fn supervised_run_bootstraps_reconciles_and_follows_live_puts() {
     .await
     .expect("open consumer");
     let mut health = consumer.health();
+    assert_eq!(
+        *health.borrow(),
+        WatchHealth::Degraded,
+        "health must start Degraded — a freshly-opened mirror has not converged yet"
+    );
     let supervised = tokio::spawn(async move { consumer.run().await });
 
     let seeded_kv = KvKey::new(seeded_key.clone()).unwrap();
     let orphan_kv = KvKey::new(orphan_key.clone()).unwrap();
     let live_kv = KvKey::new(live_key.clone()).unwrap();
+
+    health
+        .wait_for(|h| *h == WatchHealth::Healthy)
+        .await
+        .expect("health must transition to Healthy after the first bootstrap converges");
 
     let bootstrapped = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
@@ -729,15 +739,124 @@ async fn supervised_run_bootstraps_reconciles_and_follows_live_puts() {
         "supervised run must project the pre-seeded key and retract the orphan on bootstrap"
     );
 
-    let _ = health.wait_for(|h| *h == WatchHealth::Healthy).await;
+    let live_body = serde_json::to_vec(&live).unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let followed = loop {
+        store
+            .put(&live_key, live_body.clone().into())
+            .await
+            .expect("live put");
+        let delivered = tokio::time::timeout(Duration::from_millis(400), async {
+            loop {
+                if projected.lock().unwrap().get(&live_kv) == Some(&live) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok();
+        if delivered {
+            break true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break false;
+        }
+    };
+    assert!(
+        followed,
+        "supervised run must follow a live put after bootstrap without re-subscribing manually"
+    );
+
+    supervised.abort();
+    let _ = store.purge(&seeded_key).await;
+    let _ = store.purge(&live_key).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn supervised_run_recovers_from_a_real_watch_stream_fault_and_converges_the_gap() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = format!("plrec/{run}/");
+    let before_key = format!("{prefix}before");
+    let gap_key = format!("{prefix}gap");
+    let before = Payload {
+        label: "before".to_string(),
+    };
+    let gap = Payload {
+        label: "gap".to_string(),
+    };
 
     store
-        .put(&live_key, serde_json::to_vec(&live).unwrap().into())
+        .put(&before_key, serde_json::to_vec(&before).unwrap().into())
         .await
-        .expect("live put");
-    let followed = tokio::time::timeout(Duration::from_secs(15), async {
+        .expect("seed the pre-gap key");
+
+    let sink = RecordingSink::default();
+    let projected = sink.projected.clone();
+    let consumer = PublishedLanguageConsumer::<Payload, _, _>::open(
+        &fabric,
+        vec![KvPrefix::new(prefix.clone()).unwrap()],
+        |_: &Payload| true,
+        sink,
+    )
+    .await
+    .expect("open consumer");
+    let mut health = consumer.health();
+    let supervised = tokio::spawn(async move { consumer.run().await });
+
+    let before_kv = KvKey::new(before_key.clone()).unwrap();
+    let gap_kv = KvKey::new(gap_key.clone()).unwrap();
+
+    health
+        .wait_for(|h| *h == WatchHealth::Healthy)
+        .await
+        .expect("initial bootstrap must converge to Healthy");
+    let converged_before = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            if projected.lock().unwrap().get(&live_kv) == Some(&live) {
+            if projected.lock().unwrap().get(&before_kv) == Some(&before) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(converged_before.is_ok(), "pre-gap key must be projected");
+
+    let backing_stream = format!("KV_{KV_PUBLISHED_LANGUAGE}");
+    js.delete_stream(&backing_stream)
+        .await
+        .expect("deleting the KV backing stream forces a real watch-stream fault");
+
+    health
+        .wait_for(|h| *h == WatchHealth::Degraded)
+        .await
+        .expect("a watch-stream fault (and the failing re-bootstrap against the absent bucket) must surface Degraded");
+
+    let store = ensure_published_language_bucket(&js).await;
+    store
+        .put(&gap_key, serde_json::to_vec(&gap).unwrap().into())
+        .await
+        .expect(
+            "land the gap Put; the pre-gap key is deliberately NOT re-put so it becomes an orphan",
+        );
+
+    health
+        .wait_for(|h| *h == WatchHealth::Healthy)
+        .await
+        .expect("the re-bootstrap must return the mirror to Healthy after recovery");
+    let converged_gap = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let converged = {
+                let map = projected.lock().unwrap();
+                map.get(&gap_kv) == Some(&gap) && !map.contains_key(&before_kv)
+            };
+            if converged {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -745,13 +864,12 @@ async fn supervised_run_bootstraps_reconciles_and_follows_live_puts() {
     })
     .await;
     assert!(
-        followed.is_ok(),
-        "supervised run must follow a live put after bootstrap without re-subscribing manually"
+        converged_gap.is_ok(),
+        "the re-bootstrap must project the Put missed during the gap and retract the now-orphan pre-gap key"
     );
 
     supervised.abort();
-    let _ = store.purge(&seeded_key).await;
-    let _ = store.purge(&live_key).await;
+    let _ = store.purge(&gap_key).await;
 }
 
 async fn ensure_ephemeral_auth_bucket(

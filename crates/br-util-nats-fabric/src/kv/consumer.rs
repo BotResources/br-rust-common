@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 use async_nats::jetstream::kv::{Operation, Store};
@@ -9,10 +9,11 @@ use crate::consumer::backoff::Backoff;
 use crate::error::FabricError;
 use crate::fabric::Fabric;
 use crate::kv::codec::decode;
-use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
+use crate::kv::health::{WatchHealthChannel, WatchHealthReceiver};
 use crate::kv::key::{KvKey, KvPrefix};
+use crate::kv::reconcile_ops::{EntryAction, decide_put, orphans};
 use crate::kv::sink::{ProjectionError, ProjectionSink};
-use crate::kv::supervisor::{ReconcileCycle, supervise};
+use crate::kv::supervisor::{FollowReport, ReconcileCycle, supervise};
 
 pub struct PublishedLanguageConsumer<V, F, S> {
     kv: Store,
@@ -58,7 +59,7 @@ where
         self.health.receiver()
     }
 
-    pub async fn run(&self)
+    pub async fn run(&self) -> std::convert::Infallible
     where
         F: Send + Sync,
         S::Error: std::fmt::Display,
@@ -89,27 +90,39 @@ where
     }
 
     pub async fn watch(&self) -> Result<(), ProjectionError<S::Error>> {
-        let mut entries = self
-            .kv
-            .watch_all()
-            .await
-            .map_err(|e| ProjectionError::Fabric(crate::error::FabricError::kv(e)))?;
+        self.follow_once().await.1
+    }
 
+    async fn follow_once(&self) -> (bool, Result<(), ProjectionError<S::Error>>) {
+        let mut entries = match self.kv.watch_all().await {
+            Ok(entries) => entries,
+            Err(e) => {
+                return (
+                    false,
+                    Err(ProjectionError::Fabric(crate::error::FabricError::kv(e))),
+                );
+            }
+        };
+
+        let mut delivered = false;
         while let Some(entry) = entries.next().await {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(e) => {
-                    self.health.set(WatchHealth::Degraded);
-                    return Err(ProjectionError::Fabric(crate::error::FabricError::kv(e)));
+                    return (
+                        delivered,
+                        Err(ProjectionError::Fabric(crate::error::FabricError::kv(e))),
+                    );
                 }
             };
-            self.health.set(WatchHealth::Healthy);
-            if self.prefixes.iter().any(|p| p.matches(&entry.key)) {
-                self.apply_entry(entry).await?;
+            delivered = true;
+            if self.prefixes.iter().any(|p| p.matches(&entry.key))
+                && let Err(e) = self.apply_entry(entry).await
+            {
+                return (delivered, Err(e));
             }
         }
-        self.health.set(WatchHealth::Degraded);
-        Ok(())
+        (delivered, Ok(()))
     }
 
     async fn apply_entry(
@@ -182,105 +195,11 @@ where
         self.bootstrap().await.map_err(|e| e.to_string())
     }
 
-    async fn follow(&self) -> Result<(), String> {
-        self.watch().await.map_err(|e| e.to_string())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntryAction {
-    Project,
-    Retract,
-}
-
-fn decide_put<V, F: Fn(&V) -> bool>(copy_filter: &F, value: &V) -> EntryAction {
-    if copy_filter(value) {
-        EntryAction::Project
-    } else {
-        EntryAction::Retract
-    }
-}
-
-fn orphans<'a>(
-    observed: &BTreeSet<KvKey>,
-    desired: impl IntoIterator<Item = &'a KvKey>,
-    prefixes: &[KvPrefix],
-) -> Vec<KvKey> {
-    let desired: BTreeSet<&KvKey> = desired.into_iter().collect();
-    observed
-        .iter()
-        .filter(|key| prefixes.iter().any(|p| p.matches(key.as_str())))
-        .filter(|key| !desired.contains(*key))
-        .cloned()
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn key(s: &str) -> KvKey {
-        KvKey::new(s).unwrap()
-    }
-
-    fn prefix(s: &str) -> KvPrefix {
-        KvPrefix::new(s).unwrap()
-    }
-
-    #[test]
-    fn orphans_are_observed_keys_under_a_watched_prefix_absent_from_desired() {
-        let observed = BTreeSet::from([
-            key("identity/users/1"),
-            key("identity/users/2"),
-            key("identity/users/3"),
-        ]);
-        let desired = [key("identity/users/2"), key("identity/users/3")];
-        let prefixes = [prefix("identity/users/")];
-        assert_eq!(
-            orphans(&observed, desired.iter(), &prefixes),
-            vec![key("identity/users/1")]
-        );
-    }
-
-    #[test]
-    fn orphan_detection_ignores_keys_outside_the_selected_prefixes() {
-        let observed = BTreeSet::from([key("identity/groups/9")]);
-        let desired: [KvKey; 0] = [];
-        let prefixes = [prefix("identity/users/")];
-        assert!(orphans(&observed, desired.iter(), &prefixes).is_empty());
-    }
-
-    #[derive(PartialEq, Eq)]
-    struct Membership {
-        active: bool,
-    }
-
-    #[test]
-    fn a_passing_value_is_projected() {
-        let filter = |m: &Membership| m.active;
-        assert_eq!(
-            decide_put(&filter, &Membership { active: true }),
-            EntryAction::Project
-        );
-    }
-
-    #[test]
-    fn a_value_that_flips_pass_to_fail_is_retracted_locally() {
-        let filter = |m: &Membership| m.active;
-        assert_eq!(
-            decide_put(&filter, &Membership { active: false }),
-            EntryAction::Retract
-        );
-    }
-
-    #[test]
-    fn empty_desired_orphans_every_observed_key_under_prefix() {
-        let observed = BTreeSet::from([key("identity/users/1"), key("identity/users/2")]);
-        let desired: [KvKey; 0] = [];
-        let prefixes = [prefix("identity/users/")];
-        assert_eq!(
-            orphans(&observed, desired.iter(), &prefixes),
-            vec![key("identity/users/1"), key("identity/users/2")]
-        );
+    async fn follow(&self) -> FollowReport {
+        let (progressed, outcome) = self.follow_once().await;
+        FollowReport {
+            progressed,
+            outcome: outcome.map_err(|e| e.to_string()),
+        }
     }
 }

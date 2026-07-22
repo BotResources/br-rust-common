@@ -8,6 +8,7 @@ mod key;
 mod publisher;
 mod reader;
 mod reconcile;
+mod reconcile_ops;
 mod revision;
 mod scan;
 mod sink;

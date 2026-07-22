@@ -16,7 +16,7 @@ pub(crate) struct WatchHealthChannel {
 
 impl WatchHealthChannel {
     pub(crate) fn new() -> Self {
-        let (sender, receiver) = watch::channel(WatchHealth::Healthy);
+        let (sender, receiver) = watch::channel(WatchHealth::Degraded);
         Self { sender, receiver }
     }
 
@@ -41,16 +41,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn starts_healthy() {
+    fn starts_degraded_before_any_convergence() {
         let ch = WatchHealthChannel::new();
-        assert_eq!(*ch.receiver().borrow(), WatchHealth::Healthy);
+        assert_eq!(*ch.receiver().borrow(), WatchHealth::Degraded);
     }
 
     #[test]
-    fn publishes_a_degraded_transition() {
+    fn publishes_a_healthy_transition() {
         let ch = WatchHealthChannel::new();
         let rx = ch.receiver();
-        ch.set(WatchHealth::Degraded);
-        assert_eq!(*rx.borrow(), WatchHealth::Degraded);
+        ch.set(WatchHealth::Healthy);
+        assert_eq!(*rx.borrow(), WatchHealth::Healthy);
     }
 }

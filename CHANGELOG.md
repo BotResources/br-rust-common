@@ -32,20 +32,31 @@ release; they remain reachable through the historical per-crate tags
   alone silently loses the `Put`s/`Delete`s missed during the outage, so the
   recovery replays the complete scan-project-and-retract-orphans pass and the
   mirror reconverges to current state (missed `Put`s included, gap-orphans
-  retracted). `Healthy` is published **only once a re-bootstrap completes in
-  full**, so health is `Degraded` for the entire outage — never a false green
-  over a stale mirror. Every error class (transport/watch error, clean stream
-  end, transient scan error, sink/projection failure, and an undecodable value)
-  is retried on the backoff, forever, and **never silently dropped**: a decode
-  failure on the conformance-frozen Published-Language wire wedges reconciliation
-  loudly (`Degraded` + a `warn` per attempt) until the contract breach is fixed,
-  rather than being skip-and-forgotten. `run()` never provisions — the bucket is
-  bound fail-loud at `open()` and an absent bucket stays a hard failure, never
-  papered over by the retry loop. `run()` never returns under normal operation;
-  a caller stops it by dropping or aborting the task, and it is cancel-safe (both
-  phases restart from scratch and hold no partial write across an await). The raw
-  `bootstrap()` / `watch()` primitives are unchanged and remain public; this is a
-  purely additive minor. Consumer migration: be-botresources#242.
+  retracted). The supervised loop is the **sole writer** of the `WatchHealth`
+  channel; the channel is born `Degraded` ("not yet converged") and is published
+  `Healthy` **only once a re-bootstrap completes in full**, so health is
+  `Degraded` for the entire outage and the whole initial-bootstrap window — a
+  readiness gate on `health()` never goes ready over an empty or stale mirror.
+  The backoff resets **only on real progress** (a re-established watch that
+  delivers at least one entry), never on a bare bootstrap-success, so a 0-entry
+  watch flap (the node-freeze case) escalates to the 30 s cap instead of
+  re-scanning the whole bucket every 200 ms — mirroring the pull path's reset-on-
+  delivered-frame, not reset-on-rebind. Every error class (transport/watch error,
+  clean stream end, transient scan error, sink/projection failure, and an
+  undecodable value) is retried on the backoff, forever, and **never silently
+  dropped**: a decode failure on the conformance-frozen Published-Language wire
+  wedges reconciliation loudly (`Degraded` + a `warn` per attempt) until the
+  contract breach is fixed, rather than being skip-and-forgotten. `run()` never
+  provisions — the bucket is bound fail-loud at `open()` and an absent bucket
+  stays a hard failure, never papered over by the retry loop. `run()` returns
+  `std::convert::Infallible` ("never returns" in the signature); a caller stops it
+  by dropping or aborting the task, and it is cancel-safe by re-reconciliation
+  (both phases restart from scratch, and a cancelled cycle is fixed by the next
+  `bootstrap()`). The raw `bootstrap()` / `watch()` primitives keep their
+  signatures and remain public — but `watch()` no longer writes the health channel
+  (the supervised loop owns it); a standalone `watch()` caller wanting health
+  drives it through `run()`. Purely additive minor. Consumer migration:
+  be-botresources#242.
 
 ### Fixed
 

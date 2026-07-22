@@ -1,16 +1,26 @@
 use crate::consumer::backoff::Backoff;
 use crate::kv::health::{WatchHealth, WatchHealthChannel};
 
+pub(crate) struct FollowReport {
+    pub(crate) progressed: bool,
+    pub(crate) outcome: Result<(), String>,
+}
+
 #[async_trait::async_trait]
 pub(crate) trait ReconcileCycle {
     async fn reconcile(&self) -> Result<(), String>;
-    async fn follow(&self) -> Result<(), String>;
+    async fn follow(&self) -> FollowReport;
 }
 
-pub(crate) async fn supervise<C>(cycle: &C, health: &WatchHealthChannel, mut backoff: Backoff)
+pub(crate) async fn supervise<C>(
+    cycle: &C,
+    health: &WatchHealthChannel,
+    mut backoff: Backoff,
+) -> std::convert::Infallible
 where
     C: ReconcileCycle + ?Sized,
 {
+    health.set(WatchHealth::Degraded);
     loop {
         while let Err(err) = cycle.reconcile().await {
             health.set(WatchHealth::Degraded);
@@ -21,9 +31,9 @@ where
                 "published-language re-reconciliation failed; retrying"
             );
         }
-        backoff.reset();
         health.set(WatchHealth::Healthy);
-        match cycle.follow().await {
+        let report = cycle.follow().await;
+        match &report.outcome {
             Ok(()) => {
                 tracing::warn!(
                     "published-language watch stream ended; re-reconciling after backoff"
@@ -33,6 +43,9 @@ where
                 error = %err,
                 "published-language watch failed; re-reconciling after backoff"
             ),
+        }
+        if report.progressed {
+            backoff.reset();
         }
         health.set(WatchHealth::Degraded);
         let delay = backoff.sleep().await;
@@ -56,9 +69,15 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
-    enum Outcome {
+    enum Boot {
         Ok,
         Err,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Follow {
+        Ended { progressed: bool },
+        Faulted { progressed: bool },
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -68,8 +87,8 @@ mod tests {
     }
 
     struct ScriptedCycle {
-        reconciles: Mutex<VecDeque<Outcome>>,
-        follows: Mutex<VecDeque<Outcome>>,
+        boots: Mutex<VecDeque<Boot>>,
+        follows: Mutex<VecDeque<Follow>>,
         log: Arc<Mutex<Vec<Event>>>,
         parked: Arc<Notify>,
     }
@@ -77,13 +96,13 @@ mod tests {
     #[async_trait::async_trait]
     impl ReconcileCycle for ScriptedCycle {
         async fn reconcile(&self) -> Result<(), String> {
-            let next = self.reconciles.lock().unwrap().pop_front();
+            let next = self.boots.lock().unwrap().pop_front();
             match next {
-                Some(Outcome::Ok) => {
+                Some(Boot::Ok) => {
                     self.log.lock().unwrap().push(Event::Reconcile(true));
                     Ok(())
                 }
-                Some(Outcome::Err) => {
+                Some(Boot::Err) => {
                     self.log.lock().unwrap().push(Event::Reconcile(false));
                     Err("reconcile failed".to_string())
                 }
@@ -94,16 +113,22 @@ mod tests {
             }
         }
 
-        async fn follow(&self) -> Result<(), String> {
+        async fn follow(&self) -> FollowReport {
             let next = self.follows.lock().unwrap().pop_front();
             match next {
-                Some(Outcome::Ok) => {
+                Some(Follow::Ended { progressed }) => {
                     self.log.lock().unwrap().push(Event::Follow(true));
-                    Ok(())
+                    FollowReport {
+                        progressed,
+                        outcome: Ok(()),
+                    }
                 }
-                Some(Outcome::Err) => {
+                Some(Follow::Faulted { progressed }) => {
                     self.log.lock().unwrap().push(Event::Follow(false));
-                    Err("watch failed".to_string())
+                    FollowReport {
+                        progressed,
+                        outcome: Err("watch failed".to_string()),
+                    }
                 }
                 None => {
                     self.parked.notify_one();
@@ -114,13 +139,13 @@ mod tests {
     }
 
     fn scripted(
-        reconciles: Vec<Outcome>,
-        follows: Vec<Outcome>,
+        boots: Vec<Boot>,
+        follows: Vec<Follow>,
     ) -> (ScriptedCycle, Arc<Mutex<Vec<Event>>>, Arc<Notify>) {
         let log = Arc::new(Mutex::new(Vec::new()));
         let parked = Arc::new(Notify::new());
         let cycle = ScriptedCycle {
-            reconciles: Mutex::new(reconciles.into()),
+            boots: Mutex::new(boots.into()),
             follows: Mutex::new(follows.into()),
             log: log.clone(),
             parked: parked.clone(),
@@ -138,7 +163,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_watch_fault_triggers_a_rebootstrap_and_health_recovers_to_healthy() {
-        let (cycle, log, _) = scripted(vec![Outcome::Ok, Outcome::Ok], vec![Outcome::Err]);
+        let (cycle, log, _) = scripted(
+            vec![Boot::Ok, Boot::Ok],
+            vec![Follow::Faulted { progressed: true }],
+        );
         let health = WatchHealthChannel::new();
         let rx = health.receiver();
 
@@ -157,7 +185,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_clean_stream_end_is_also_treated_as_a_fault_and_re_reconciled() {
-        let (cycle, log, _) = scripted(vec![Outcome::Ok, Outcome::Ok], vec![Outcome::Ok]);
+        let (cycle, log, _) = scripted(
+            vec![Boot::Ok, Boot::Ok],
+            vec![Follow::Ended { progressed: true }],
+        );
         let health = WatchHealthChannel::new();
 
         drive(&cycle, &health, instant()).await;
@@ -174,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn bootstrap_retries_until_success_and_health_is_healthy_only_afterwards() {
-        let (cycle, log, _) = scripted(vec![Outcome::Err, Outcome::Err, Outcome::Ok], vec![]);
+        let (cycle, log, _) = scripted(vec![Boot::Err, Boot::Err, Boot::Ok], vec![]);
         let health = WatchHealthChannel::new();
         let rx = health.receiver();
 
@@ -192,8 +223,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn health_starts_degraded_before_the_first_bootstrap_completes() {
+        let (cycle, log, _) = scripted(vec![], vec![]);
+        let health = WatchHealthChannel::new();
+        let rx = health.receiver();
+
+        drive(&cycle, &health, instant()).await;
+
+        assert!(log.lock().unwrap().is_empty());
+        assert_eq!(*rx.borrow(), WatchHealth::Degraded);
+    }
+
+    #[tokio::test]
     async fn a_bootstrap_failure_is_observable_as_degraded() {
-        let (cycle, log, _) = scripted(vec![Outcome::Err], vec![]);
+        let (cycle, log, _) = scripted(vec![Boot::Err], vec![]);
         let health = WatchHealthChannel::new();
         let rx = health.receiver();
 
@@ -204,21 +247,38 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn consecutive_bootstrap_failures_back_off_exponentially() {
-        let (cycle, _, _) = scripted(
-            vec![Outcome::Err, Outcome::Err, Outcome::Err, Outcome::Ok],
-            vec![],
-        );
+    async fn an_instant_watch_flap_escalates_the_backoff() {
+        let boots = vec![Boot::Ok; 5];
+        let follows = vec![Follow::Faulted { progressed: false }; 5];
+        let (cycle, _, _) = scripted(boots, follows);
         let health = WatchHealthChannel::new();
-        let backoff = Backoff::new(Duration::from_millis(100), Duration::from_secs(1));
+        let backoff = Backoff::new(Duration::from_millis(100), Duration::from_secs(10));
 
         let start = tokio::time::Instant::now();
         drive(&cycle, &health, backoff).await;
         let elapsed = start.elapsed();
 
         assert!(
-            elapsed >= Duration::from_millis(700),
-            "expected >=700ms cumulative backoff (100+200+400), got {elapsed:?}"
+            elapsed >= Duration::from_millis(3100),
+            "a 0-entry watch flap must escalate (100+200+400+800+1600), got {elapsed:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_watch_that_delivered_entries_resets_the_backoff_floor() {
+        let boots = vec![Boot::Ok; 5];
+        let follows = vec![Follow::Faulted { progressed: true }; 5];
+        let (cycle, _, _) = scripted(boots, follows);
+        let health = WatchHealthChannel::new();
+        let backoff = Backoff::new(Duration::from_millis(100), Duration::from_secs(10));
+
+        let start = tokio::time::Instant::now();
+        drive(&cycle, &health, backoff).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            (Duration::from_millis(500)..Duration::from_millis(700)).contains(&elapsed),
+            "real progress must reset the floor to 100ms/cycle (5x100), got {elapsed:?}"
         );
     }
 }
