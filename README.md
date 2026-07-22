@@ -57,7 +57,7 @@ under a single git tag (`vX.Y.Z`) consumed by git tag:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.1.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.2.0" }
 ```
 
 ## Release process
