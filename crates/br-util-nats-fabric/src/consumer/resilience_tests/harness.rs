@@ -32,6 +32,13 @@ fn other() -> FabricError {
     )
 }
 
+fn no_responders() -> FabricError {
+    FabricError::consume(
+        classify_messages_error(&MessagesError::new(MessagesErrorKind::NoResponders)),
+        "no jetstream responders during broker restart",
+    )
+}
+
 #[derive(Deserialize)]
 struct TestEnvelope {
     id: u32,
@@ -60,13 +67,13 @@ impl SourceFrame for TestFrame {
 pub(super) enum Step {
     Frame(u32),
     Heartbeat,
+    NoResponders,
     OtherError,
     BadFrame,
 }
 
 pub(super) enum Rebind {
     Ok,
-    Heartbeat,
     Other,
     NoStream,
     Terminal,
@@ -111,6 +118,7 @@ impl MessageSource for ScriptedSource {
                 payload: b"not json".to_vec(),
             })),
             Step::Heartbeat => Some(Err(heartbeat())),
+            Step::NoResponders => Some(Err(no_responders())),
             Step::OtherError => Some(Err(other())),
         }
     }
@@ -119,7 +127,6 @@ impl MessageSource for ScriptedSource {
         *self.rebind_calls.lock().unwrap() += 1;
         match self.rebinds.pop_front().unwrap_or(Rebind::Ok) {
             Rebind::Ok => Ok(()),
-            Rebind::Heartbeat => Err(heartbeat()),
             Rebind::Other => Err(other()),
             Rebind::NoStream => Err(FabricError::consume(
                 ConsumeErrorKind::NoStream,

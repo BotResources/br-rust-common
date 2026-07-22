@@ -40,6 +40,7 @@ pub enum ConsumeErrorKind {
     Other,
     NoDeliveryInfo,
     HeartbeatMissed,
+    NoResponders,
 }
 
 impl std::fmt::Display for ConsumeErrorKind {
@@ -51,6 +52,7 @@ impl std::fmt::Display for ConsumeErrorKind {
             Self::NoDeliveryInfo => "delivery info absent",
             Self::Other => "consume failed",
             Self::HeartbeatMissed => "missed idle heartbeat",
+            Self::NoResponders => "no jetstream responders",
         };
         f.write_str(s)
     }
