@@ -53,10 +53,19 @@ release; they remain reachable through the historical per-crate tags
   by dropping or aborting the task, and it is cancel-safe by re-reconciliation
   (both phases restart from scratch, and a cancelled cycle is fixed by the next
   `bootstrap()`). The raw `bootstrap()` / `watch()` primitives keep their
-  signatures and remain public — but `watch()` no longer writes the health channel
-  (the supervised loop owns it); a standalone `watch()` caller wanting health
-  drives it through `run()`. Purely additive minor. Consumer migration:
-  be-botresources#242.
+  signatures and remain public. Consumer migration: be-botresources#242.
+
+### Changed
+
+- **`br-util-nats-fabric` — the supervised loop is now the sole writer of the
+  `PublishedLanguageConsumer` `WatchHealth` channel, so `watch()` no longer writes
+  it.** Behavior change to the `1.1.0` surface: the health channel is now born
+  `Degraded` (was `Healthy`) and only the supervised `run()` transitions it to
+  `Healthy`. A standalone `watch()` caller (the raw primitive, unchanged in
+  signature) therefore now sees `health()` pinned at `Degraded` — a caller wanting
+  a live health signal must drive the consumer through `run()`. This removes the
+  dual-ownership race and the false-green-at-boot that a `health()`-based readiness
+  gate would otherwise hit; it does not affect callers already using `run()`.
 
 ### Fixed
 
