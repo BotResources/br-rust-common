@@ -455,7 +455,12 @@ recovery path replays the complete scan-project-and-retract-orphans pass — the
 mirror reconverges to the bucket's current state on every recovery, missed
 `Put`s included, orphans created during the gap retracted. A bootstrap that fails
 during recovery (a transient scan error, or a sink/projection failure such as the
-DB timeout the incident produced) is retried on the same backoff.
+DB timeout the incident produced) is retried on the same backoff. **Honest limit:**
+this reconvergence guarantee covers the outage gap, **not** the intra-cycle window
+between the bootstrap scan and the subsequent `watch_all()` subscription — a `Put`
+landing in that (millisecond) handoff window is missed until the next fault
+triggers a re-bootstrap (pre-existing bootstrap→watch race, tracked as umbrella
+issue #104).
 
 **Health ownership and semantics.** The supervised loop is the **sole writer** of
 the `WatchHealth` channel (the raw `watch()` primitive writes it not at all), so
