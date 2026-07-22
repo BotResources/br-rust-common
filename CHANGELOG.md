@@ -11,6 +11,42 @@ release; they remain reachable through the historical per-crate tags
 
 ## [Unreleased]
 
+### Added
+
+- **`br-util-nats-fabric` — `PublishedLanguageConsumer::run()`, a supervised
+  Published-Language mirror that survives transient faults instead of dying
+  silently.** Production incident (be-botresources, 2026-07-22): a node freeze
+  (missed NATS heartbeats + DB pool timeouts) permanently killed the
+  published-language KV watchers in two prod services — the orgs mirror in
+  `projects` was dead for ~9h. The failure was fully silent: `watch()` returned
+  on its first error (and `Ok(())` on a clean stream end), the boot-time
+  `bootstrap()` snapshot kept being served, and an org changing status on the
+  identity side was simply never seen again, with zero visible errors. This is
+  the KV symmetric of the managed pull-consumer incident fixed in `1.1.0`
+  (`run_commands`/`run_events` recovery); it lived on a disjoint code path and
+  was unfixed. `run()` loops forever: `bootstrap()` → `Healthy` → `watch()`; on
+  **any** watch error or a clean stream end it sets `WatchHealth::Degraded`,
+  applies a bounded exponential backoff (200 ms doubling to a 30 s cap — the
+  same policy as the pull path) and **re-runs `bootstrap()` in full before
+  re-watching**. The wholesale re-reconciliation is mandatory: re-subscribing
+  alone silently loses the `Put`s/`Delete`s missed during the outage, so the
+  recovery replays the complete scan-project-and-retract-orphans pass and the
+  mirror reconverges to current state (missed `Put`s included, gap-orphans
+  retracted). `Healthy` is published **only once a re-bootstrap completes in
+  full**, so health is `Degraded` for the entire outage — never a false green
+  over a stale mirror. Every error class (transport/watch error, clean stream
+  end, transient scan error, sink/projection failure, and an undecodable value)
+  is retried on the backoff, forever, and **never silently dropped**: a decode
+  failure on the conformance-frozen Published-Language wire wedges reconciliation
+  loudly (`Degraded` + a `warn` per attempt) until the contract breach is fixed,
+  rather than being skip-and-forgotten. `run()` never provisions — the bucket is
+  bound fail-loud at `open()` and an absent bucket stays a hard failure, never
+  papered over by the retry loop. `run()` never returns under normal operation;
+  a caller stops it by dropping or aborting the task, and it is cancel-safe (both
+  phases restart from scratch and hold no partial write across an await). The raw
+  `bootstrap()` / `watch()` primitives are unchanged and remain public; this is a
+  purely additive minor. Consumer migration: be-botresources#242.
+
 ### Fixed
 
 - **`br-util-nats-fabric` — a NATS-restart blip no longer permanently kills a

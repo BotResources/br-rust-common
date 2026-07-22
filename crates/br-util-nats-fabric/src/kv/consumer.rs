@@ -5,12 +5,14 @@ use async_nats::jetstream::kv::{Operation, Store};
 use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 
+use crate::consumer::backoff::Backoff;
 use crate::error::FabricError;
 use crate::fabric::Fabric;
 use crate::kv::codec::decode;
 use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
 use crate::kv::key::{KvKey, KvPrefix};
 use crate::kv::sink::{ProjectionError, ProjectionSink};
+use crate::kv::supervisor::{ReconcileCycle, supervise};
 
 pub struct PublishedLanguageConsumer<V, F, S> {
     kv: Store,
@@ -54,6 +56,14 @@ where
 
     pub fn health(&self) -> WatchHealthReceiver {
         self.health.receiver()
+    }
+
+    pub async fn run(&self)
+    where
+        F: Send + Sync,
+        S::Error: std::fmt::Display,
+    {
+        supervise(self, &self.health, Backoff::production()).await
     }
 
     pub async fn bootstrap(&self) -> Result<(), ProjectionError<S::Error>> {
@@ -157,6 +167,23 @@ where
             }
         }
         Ok(passing)
+    }
+}
+
+#[async_trait::async_trait]
+impl<V, F, S> ReconcileCycle for PublishedLanguageConsumer<V, F, S>
+where
+    V: DeserializeOwned + Send + Sync,
+    F: Fn(&V) -> bool + Send + Sync,
+    S: ProjectionSink<V>,
+    S::Error: std::fmt::Display,
+{
+    async fn reconcile(&self) -> Result<(), String> {
+        self.bootstrap().await.map_err(|e| e.to_string())
+    }
+
+    async fn follow(&self) -> Result<(), String> {
+        self.watch().await.map_err(|e| e.to_string())
     }
 }
 

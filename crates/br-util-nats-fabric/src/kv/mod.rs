@@ -11,6 +11,7 @@ mod reconcile;
 mod revision;
 mod scan;
 mod sink;
+mod supervisor;
 
 pub use bucket::{KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE};
 pub use consumer::PublishedLanguageConsumer;

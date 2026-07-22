@@ -1,4 +1,4 @@
-mod backoff;
+pub(crate) mod backoff;
 mod bind;
 mod bound;
 mod config;

@@ -432,6 +432,54 @@ filter matches nothing and would silently deliver no live updates. `WatchHealth`
 exposes a degraded signal when the watch ends or errors. This crate **does not**
 ship a transformation DSL — filtering and mapping are the caller's.
 
+#### Supervised operation — `run()` (the resilient entrypoint)
+
+`bootstrap()` and `watch()` are the raw one-shot primitives: each returns on its
+first error, and `watch()` also returns `Ok(())` on a clean stream end. Called
+directly and once, a transient broker fault (a missed heartbeat, a node freeze, a
+connection drop) therefore kills the mirror **permanently and silently** — the
+sink keeps serving its last-good snapshot while the source of truth drifts away,
+with no error after the initial return. This is exactly the KV symmetric of the
+managed pull-consumer incident that `run_commands`/`run_events` recovery fixed.
+
+`run()` is the supervised entrypoint services should use. It loops forever:
+`bootstrap()` → set `Healthy` → `watch()`; on **any** watch error **or** a clean
+stream end it sets `WatchHealth::Degraded`, sleeps a bounded exponential backoff
+(200 ms doubling to a 30 s cap, the same policy as the pull path) and then
+**re-runs `bootstrap()` in full before re-watching**. The wholesale
+re-reconciliation is mandatory and deliberate: re-subscribing alone would
+silently lose every `Put`/`Delete` that landed during the outage window, so the
+recovery path replays the complete scan-project-and-retract-orphans pass — the
+mirror reconverges to the bucket's current state on every recovery, missed
+`Put`s included, orphans created during the gap retracted. A bootstrap that fails
+during recovery (a transient scan error, or a sink/projection failure such as the
+DB timeout the incident produced) is retried on the same backoff; `Healthy` is
+published **only once a re-bootstrap has completed in full**, so the health signal
+is `Degraded` for the entire outage — never a false green while the mirror is
+stale. **Failure taxonomy — every error class is retried on the backoff, forever,
+and never silently dropped:** a transport/watch error, a clean stream end, a
+transient scan error, a sink/projection error, and an undecodable value in the
+bucket all keep the loop `Degraded` and retrying until they clear. A decode
+failure on the frozen Published-Language wire is a genuine contract breach (a
+producer/consumer version skew) that a human must fix, so it wedges reconciliation
+**loudly** (`Degraded` health + a `warn` per attempt) rather than being
+skip-and-forgotten — the trade-off is that a single poison value blocks
+convergence for the whole watched prefix set until it is fixed or purged, which is
+the correct fail-loud response for a conformance-frozen wire.
+
+`run()` **never provisions**: the bucket is bound (fail-loud) at `open()`, and the
+supervised loop only ever binds and reads it — an absent bucket stays a hard
+failure at `open()`, never papered over by the retry loop. `run()` **never
+returns** under normal operation; a caller stops it by **dropping or aborting the
+task** (spawn it and `abort()` the `JoinHandle`, or race it in a `tokio::select!`
+against a shutdown signal). It is cancel-safe by re-reconciliation rather than by
+per-write atomicity: `bootstrap()` and `watch()` are both restart-from-scratch, so
+even if a drop interrupts an in-flight sink apply, the next spawn's `bootstrap()`
+replays the full reconcile and converges the mirror — a cancelled cycle loses
+nothing durably. The raw `bootstrap()` and `watch()` primitives remain public for
+tests and advanced callers, but a production mirror should drive them through
+`run()`.
+
 ### Single-key read
 
 `PublishedLanguageReader::<V>::open(&fabric).get(&key)` reads exactly one entry

@@ -8,7 +8,7 @@ use br_util_nats_fabric::{
     Aggregate, Bc, CommandCoords, ConsumeErrorKind, EphemeralAuthStore, EventCoords, Fabric,
     FabricError, INTEGRATION_CMD, INTEGRATION_EVT, KV_EPHEMERAL_AUTH, KV_PUBLISHED_LANGUAGE, KvKey,
     KvPrefix, NatsAuth, PastFact, ProjectionSink, PublishedLanguageConsumer,
-    PublishedLanguagePublisher, PublishedLanguageReader, Verb,
+    PublishedLanguagePublisher, PublishedLanguageReader, Verb, WatchHealth,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -660,6 +660,98 @@ async fn watch_delivers_a_live_slash_keyed_directory_put() {
 
     watcher.abort();
     let _ = store.purge(&key).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn supervised_run_bootstraps_reconciles_and_follows_live_puts() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    let store = ensure_published_language_bucket(&js).await;
+    let fabric = fabric().await;
+
+    let run = Uuid::now_v7().simple().to_string();
+    let prefix = format!("plrun/{run}/");
+    let seeded_key = format!("{prefix}seeded");
+    let orphan_key = format!("{prefix}orphan");
+    let live_key = format!("{prefix}live");
+    let seeded = Payload {
+        label: "seeded".to_string(),
+    };
+    let live = Payload {
+        label: "live".to_string(),
+    };
+
+    store
+        .put(&seeded_key, serde_json::to_vec(&seeded).unwrap().into())
+        .await
+        .expect("seed the bucket before boot");
+
+    let sink = RecordingSink::default();
+    sink.projected.lock().unwrap().insert(
+        KvKey::new(orphan_key.clone()).unwrap(),
+        Payload {
+            label: "orphan".to_string(),
+        },
+    );
+    let projected = sink.projected.clone();
+
+    let consumer = PublishedLanguageConsumer::<Payload, _, _>::open(
+        &fabric,
+        vec![KvPrefix::new(prefix.clone()).unwrap()],
+        |_: &Payload| true,
+        sink,
+    )
+    .await
+    .expect("open consumer");
+    let mut health = consumer.health();
+    let supervised = tokio::spawn(async move { consumer.run().await });
+
+    let seeded_kv = KvKey::new(seeded_key.clone()).unwrap();
+    let orphan_kv = KvKey::new(orphan_key.clone()).unwrap();
+    let live_kv = KvKey::new(live_key.clone()).unwrap();
+
+    let bootstrapped = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let converged = {
+                let map = projected.lock().unwrap();
+                map.get(&seeded_kv) == Some(&seeded) && !map.contains_key(&orphan_kv)
+            };
+            if converged {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        bootstrapped.is_ok(),
+        "supervised run must project the pre-seeded key and retract the orphan on bootstrap"
+    );
+
+    let _ = health.wait_for(|h| *h == WatchHealth::Healthy).await;
+
+    store
+        .put(&live_key, serde_json::to_vec(&live).unwrap().into())
+        .await
+        .expect("live put");
+    let followed = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if projected.lock().unwrap().get(&live_kv) == Some(&live) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        followed.is_ok(),
+        "supervised run must follow a live put after bootstrap without re-subscribing manually"
+    );
+
+    supervised.abort();
+    let _ = store.purge(&seeded_key).await;
+    let _ = store.purge(&live_key).await;
 }
 
 async fn ensure_ephemeral_auth_bucket(
