@@ -25,6 +25,12 @@ assertion instead of re-pointing it at `ensure_*` would remove the
 anti-over-delivery guard it exists to prove. Keep `verify_*` for readiness
 probing only.
 
+**Behaviour migration — `EphemeralAuthWatcher::watch()`.** An entry the watch
+cannot read (undecodable value, key `KvKey` rejects) no longer ends the watch
+with an `Err`; it is skipped, counted on the new `progress()` channel, and the
+watch continues. A caller that used the returned error as its poison signal
+must watch `WatchProgress::skipped` instead — see the `### Changed` entry below.
+
 **Deployment note — `duplicate_window`.** The outbox relay's dedup guarantee
 rests on a JetStream stream setting this crate never declares: `duplicate_window`
 defaults to 2 minutes, and the operator must make it explicit in the stream
