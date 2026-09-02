@@ -99,8 +99,8 @@ trait DirectorySource {
   before (or without) one of its members still converges: the membership is
   correct as soon as the group projects, and `resolve_user` returns the user once
   it arrives. A member with no `known_users` row is legitimate under a scoped
-  roster, not an orphan (see #69 — group deletion CASCADEs the junction via the
-  `group_id` FK).
+  roster, not an orphan: group deletion still CASCADEs the junction via the
+  `group_id` FK.
 - **Typed readers carry the id** over `DirectorySnapshot`: `resolve_user`,
   `user_extensions`, `is_member`, `group_name`, `resolve_service_account`.
   `DirectorySnapshot` / `KnownUser` are an **in-memory** projection the
@@ -281,7 +281,7 @@ re-reconcile: `watch()` still returns on the first stream error. The two signals
 exist so a supervisor above the crate can decide when to restart it and when to
 report readiness.
 
-### Missing manifest is DEGRADED, never a purge (#69)
+### Missing manifest is DEGRADED, never a purge
 
 A missing `identity/_meta` no longer means "empty roster → delete every local
 row". `reconcile()` / `watch()` treat an absent manifest as **fail-closed**
@@ -289,7 +289,7 @@ row". `reconcile()` / `watch()` treat an absent manifest as **fail-closed**
 caller surfaces a degraded/unready signal. A consumer that boots ahead of
 identity's first reconcile therefore **does not** flush its projection.
 
-### Consumer-owned roster control (#59)
+### Consumer-owned roster control
 
 Two **seams** on `DirectoryConsumerConfig` (defaults preserve the prior
 name-only / keep-all behavior), wired into the fabric consumer's projection sink
@@ -305,7 +305,7 @@ and copy-filter:
   on the next reconcile and on the watch update carrying the failing value (the
   fabric's copy-filter mechanism).
 
-### Consumer-declared consumption scope (#63)
+### Consumer-declared consumption scope
 
 `DirectoryConsumerConfig::scope(ConsumptionScope)` — **independent of the
 producer manifest**:
@@ -376,7 +376,7 @@ br-util-directory = { git = "https://github.com/BotResources/br-rust-common", pa
 | The sinks upsert with an `IS DISTINCT FROM` guard instead of blind `DO UPDATE` | The projector re-projects the whole prefix on every reconcile, so a blind upsert rewrote every row on every boot — dead tuples, and no way to tell a real roster change from a re-scan. The guard makes `rows_affected()` the single, NULL-correct definition of "changed", which is what both the impact and the progress signal key off. |
 | Group upsert applies its junction diff in one transaction | A membership change is atomic and idempotent under redelivery, and deleting only the members that left keeps the untouched rows free of dead tuples — the same argument as the `IS DISTINCT FROM` guard on entity rows. |
 | The group row lock, not the membership `FOR UPDATE`, is what serialises two replicas | The `SELECT … FROM known_user_group … FOR UPDATE` locks nothing when the group has no membership rows yet, so it cannot be the serialisation point. The `known_groups` upsert is: `ON CONFLICT … DO UPDATE` takes the row lock on the conflicting row before evaluating its `WHERE`, so even a no-op (`WHERE` false) upsert holds it. The membership `FOR UPDATE` then only pins the rows the sink is about to rewrite. |
-| Every group path takes the `known_groups` row lock **before** any `known_user_group` lock | Two replicas that take the same two locks in opposite orders deadlock (`40P01`), which surfaces as a `watch()` error and a projector that stops. The upsert path gets the group-row lock from its `ON CONFLICT`; the delete path therefore opens with `SELECT group_id FROM known_groups WHERE group_id = $1 FOR UPDATE` (absent row → nothing to do) before reading the members it is about to unlink. One order crate-wide, so a put and a delete of the same group can only queue, never deadlock. |
+| Every group path takes the `known_groups` row lock **before** any `known_user_group` lock | Two replicas that take the same two locks in opposite orders deadlock (`40P01`), which surfaces as a `watch()` error and a projector that stops. The upsert path gets the group-row lock from its `ON CONFLICT`; the delete path, when a stager is registered, therefore opens with `SELECT group_id FROM known_groups WHERE group_id = $1 FOR UPDATE` (absent row → nothing to do) before reading the members it is about to unlink. One order crate-wide, so a put and a delete of the same group can only queue, never deadlock. |
 | `apply_single_statement` vs `apply_in_transaction` | With no stager registered the former opens **no** transaction: the closure runs autocommit on a pooled connection, so a second statement that fails would leave the first one committed. Its closure must therefore be a single statement on that path — every extra statement is gated on `stages_impacts()`, which is exactly the case that routes the call through a transaction instead. `apply_in_transaction` is the unconditional form, used wherever a write needs more than one statement regardless of the stager. |
 | The group sink reads its member set back before rewriting it | Delete-then-insert makes `rows_affected()` meaningless for memberships (it reports rows touched, not a difference). Reading the current set under `FOR UPDATE` and comparing it with the recomposed one is the only honest "changed" for a group, and it also skips the rewrite when nothing moved. |
 | A removed member gets its own impact, an added one does not | After the write commits, a removed member is named by nothing left in the mirror, so an adopter deriving per-user state from membership could never recompute it. An added member is in the current membership of the group the impact already names, so it is recoverable and a second impact would be noise. |

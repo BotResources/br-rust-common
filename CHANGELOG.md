@@ -11,15 +11,25 @@ release; they remain reachable through the historical per-crate tags
 
 ## [1.3.0] — 2026-09-02
 
-**Behaviour migration — `verify_command_durable` / `verify_event_durable`
-(#107).** Both were aliases of their `ensure_*` counterpart and created the
-durable they claimed to only probe. They now probe and create nothing. The
-signatures are unchanged, so this is compile-compatible, but it is runtime-
-relevant: a service that relied on a boot-time `verify_*_durable` to provision
-the durable its work loop later binds will find it missing after re-pinning.
-Call `ensure_command_durable` / `ensure_event_durable` (or the `_with` variants
-for custom `ConsumerTuning`) wherever provisioning was the intent, and keep
-`verify_*` for readiness probing only.
+**Behaviour migration — `verify_command_durable` / `verify_event_durable`.**
+Both were aliases of their `ensure_*` counterpart and created the durable they
+claimed to only probe. They now probe and create nothing. The signatures are
+unchanged, so this is compile-compatible, but it is runtime-relevant. Two caller
+classes must move to `ensure_command_durable` / `ensure_event_durable` (or the
+`_with` variants for custom `ConsumerTuning`): one that relied on a boot-time
+`verify_*_durable` to provision the durable its work loop later binds, and one
+that asserted the convergence of a pre-existing durable back to the exact
+coordinate filter *after* a `verify_*` — the `br-e2e-harness` fabric conformance
+checks and its `fabric_nats verify` CLI are of the second kind. Relaxing such an
+assertion instead of re-pointing it at `ensure_*` would remove the
+anti-over-delivery guard it exists to prove. Keep `verify_*` for readiness
+probing only.
+
+**Behaviour migration — `EphemeralAuthWatcher::watch()`.** An entry the watch
+cannot read (undecodable value, key `KvKey` rejects) no longer ends the watch
+with an `Err`; it is skipped, counted on the new `progress()` channel, and the
+watch continues. A caller that used the returned error as its poison signal
+must watch `WatchProgress::skipped` instead — see the `### Changed` entry below.
 
 **Deployment note — `duplicate_window`.** The outbox relay's dedup guarantee
 rests on a JetStream stream setting this crate never declares: `duplicate_window`
@@ -40,7 +50,7 @@ below.
   rather than every variable it might have wanted. The `Option` variants are
   unchanged.
 - **`br-util-axum-auth` — `passport_header_graphql_middleware`, an opt-in
-  sibling whose 401 refusal body is GraphQL-shaped** (#109). The existing
+  sibling whose 401 refusal body is GraphQL-shaped.** The existing
   `passport_header_middleware` refuses with the plain-text body `unauthorized`,
   which a GraphQL client cannot parse — so every service fronting a GraphQL
   endpoint re-implemented the refusal rendering locally (svc-jobs 0.1.0 did
@@ -61,7 +71,7 @@ below.
   asserts its `extensions.code` still equals `ErrorCode::Unauthenticated
   .as_str()`, so a drift between the two crates fails the build.
 - **`br-util-nats-fabric` — `EphemeralAuthWatcher::run()`, a supervised
-  entrypoint that survives a broker blip (#103).** `watch()` returns on its first
+  entrypoint that survives a broker blip.** `watch()` returns on its first
   stream error and returns `Ok(())` on a clean stream end, and nothing restarted
   it: a service watching this bucket for cross-instance revocation lost the watch
   on the first transient NATS fault and nothing restarted it, so it stayed blind
@@ -89,7 +99,7 @@ below.
   stateful handler keeps its state. `watch()` is unchanged and stays public for
   tests and one-shot callers; `health()` is now truthfully driven by the loop.
 - **`br-util-nats-fabric` — a revision/compare-and-swap surface on the
-  Published-Language publisher and reader** (#112). `PUBLISHED_LANGUAGE` writes were
+  Published-Language publisher and reader.** `PUBLISHED_LANGUAGE` writes were
   last-writer-wins only, so two writers racing for the same key silently
   clobbered each other and a read-modify-write could not be made safe without
   leaving the Fabric. The `EphemeralAuthStore` CAS contract is now also
@@ -115,7 +125,7 @@ below.
   Purely additive; no consumer re-pin is forced.
 - **`br-util-nats-fabric` — `ensure_command_durable_with` /
   `ensure_event_durable_with`: `ConsumerTuning` on the bare
-  durable-provisioning path** (#93). The `_with` tuning seam existed only on the
+  durable-provisioning path.** The `_with` tuning seam existed only on the
   consume-*opening* entry points (`ensure_*_consumer_with`, `run_*_with`), so a
   caller that wanted a durable provisioned with a non-default `ack_wait` /
   `max_ack_pending` but no work loop had to drop to raw `async-nats`. The two new
@@ -131,7 +141,7 @@ below.
   the `#[non_exhaustive]` `FabricError`.
 - **`br-util-nats-fabric` — the outbox relay publishes every row with a
   `Nats-Msg-Id` dedup header, and the broker's duplicate verdict is now
-  observable** (#114). Until now the relay published raw, so a crash between the
+  observable.** Until now the relay published raw, so a crash between the
   publish and the status write, or a rolling deploy briefly running two relays,
   produced a genuine second delivery. The relay now sets `Nats-Msg-Id` to the
   envelope's `event_id` — the field `OutboxRecord::stage_event` writes for every
@@ -186,7 +196,7 @@ below.
   consumer not using the outbox gains nothing, and the `metrics` facade is a
   no-op until the process installs a recorder.
 - **`br-util-postgres` — `migrations_status`, a read-only report answering "is
-  this database exactly at the migration set embedded in this binary?"** (#110)
+  this database exactly at the migration set embedded in this binary?"**
   Behind a new opt-in cargo feature `migrate`
   (`migrate = ["sqlx/migrate"]`): the workspace `sqlx` pin does not enable
   `migrate`, so a consumer that does not want the helper compiles none of it and
@@ -348,7 +358,7 @@ below.
   opt-in seam on `ConsumerTuning`, filed as a gap here, never a reach-around to
   raw `async-nats`. No behaviour changed and no seam was added.
 - **`br-util-nats-fabric` — the KV supervision warnings are renamed and now
-  carry a `surface` field (#103).** The supervised loop is shared by two KV
+  carry a `surface` field.** The supervised loop is shared by two KV
   surfaces, so its messages no longer hardcode the Published-Language one:
   `"published-language re-reconciliation failed; retrying"` →
   `"kv re-reconciliation failed; retrying"`,
@@ -362,7 +372,7 @@ below.
   strings stops matching** — rematch on the new text plus `surface`.
 
 - **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
-  now verify instead of provisioning** (#107). Signatures are unchanged; the
+  now verify instead of provisioning.** Signatures are unchanged; the
   behaviour is not. The probe is `get_stream` on the fixed stream (absent →
   `FabricError::Consume { kind: NoStream }`, the unchanged gitops fail-loud)
   **plus** a check that the rendered coordinate subject is covered by the
@@ -409,7 +419,7 @@ below.
 ### Fixed
 
 - **`br-util-nats-fabric` — readiness probes no longer leave phantom durable
-  consumers behind** (#107). `verify_*_durable` were pure aliases of
+  consumers behind.** `verify_*_durable` were pure aliases of
   `ensure_*_durable`: every boot created a real durable, filtered on the probed
   subject, that nobody ever read from. On a busy subject that durable
   accumulated unacked pending messages until the stream's `max_age` expired
@@ -481,7 +491,8 @@ below.
   by dropping or aborting the task, and it is cancel-safe by re-reconciliation
   (both phases restart from scratch, and a cancelled cycle is fixed by the next
   `bootstrap()`). The raw `bootstrap()` / `watch()` primitives keep their
-  signatures and remain public. Consumer migration: be-botresources#242.
+  signatures and remain public. Consumer migration is tracked on the private
+  roadmap.
 
 ### Changed
 
@@ -636,7 +647,7 @@ below.
   tombstone (`delete_if` only against the current revision, conflicting and
   leaving the key intact against a stale one), `create` on a live key returns
   `KeyAlreadyExists`, the unconditional revoke wipe, bind-existing fail-loud when
-  the bucket is absent, and fail-closed decode on a malformed value. (#86)
+  the bucket is absent, and fail-closed decode on a malformed value.
 - **`br-util-nats-fabric` — per-key TTL, enumeration, and a change-watch on the
   `EPHEMERAL_AUTH` store, completing the KV side of "talk to what exists, entirely
   through the Fabric".** All purely additive on `EphemeralAuthStore<V>`:
@@ -686,7 +697,7 @@ below.
     key expires well before the longer bucket `max_age`, `keys`/`entries` enumerate
     live keys and exclude a tombstoned one, `entries` fails closed on a malformed
     value, the watch yields a `Set` then `Removed` change on put/delete, and a
-    `Removed` change on per-key TTL expiry. (#91)
+    `Removed` change on per-key TTL expiry.
 - **`br-util-nats-fabric` — typed durable consumer for the integration command /
   event streams (the production work loop), create-or-bind.** The Fabric covered
   publish and the one-shot correlated awaiter but had no typed surface to *durably
@@ -764,7 +775,7 @@ below.
   surfaces `NoDeliveryInfo` (not a fabricated count), that a `Send` ack failure
   classifies as `ConsumerGone`, and that the owned `ConsumerConfig` carries the
   documented defaults. Unblocks svc-notifier's intake migrating off raw
-  `async-nats` (#80). (#90)
+  `async-nats`.
 - **`br-util-nats-fabric` — tunable durable ack timing + the JetStream working
   ack for long-running handlers.** The durable consumer hardcoded `ack_wait = 30s`
   and `max_ack_pending = 256`, so a service whose handler legitimately outlasts 30s
@@ -789,7 +800,7 @@ below.
   Proven by real-`nats-server` integration tests: `ensure_event_consumer_with` a
   custom `ack_wait` / `max_ack_pending` reflected on the real `consumer_info().config`
   (with `max_deliver` left fixed), and `progress()` holding a frame in flight well
-  past a 2s `ack_wait` with no redelivery before the final `ack`. (#90)
+  past a 2s `ack_wait` with no redelivery before the final `ack`.
 - **`br-util-nats-fabric` — the one-shot correlated awaiter now binds the command
   stream too.** `await_event(s)` / `CorrelatedAwaiter` covered `INTEGRATION_EVT`
   only, so a consumer needing to observe a command in flight (e.g. a `declare` a
@@ -811,7 +822,7 @@ below.
   stand-in the e2e harness hand-rolled on raw `async-nats` into the frozen lib.
   Purely additive. Proven by real-`nats-server` integration tests: match by
   correlation on the command stream, one-of-several coords selection, `None` at
-  the deadline, and bind fail-loud when the command stream is absent. (#84)
+  the deadline, and bind fail-loud when the command stream is absent.
 - **`br-util-nats-fabric` — typed prefix enumeration on
   `PublishedLanguageReader`.** The reader exposed only `get(&key)` (exact-key),
   so a Published-Language consumer that must project **all** entries under a
@@ -830,7 +841,7 @@ below.
   `br-test-harness` `pl_list` stand-in retire its raw key-scan. Purely additive.
   Proven by real-`nats-server` integration tests: a multi-entry prefix scan
   returns exactly its own keys/entries (prefix-scoped, a sibling prefix excluded)
-  and fails closed on a malformed value. (#85)
+  and fails closed on a malformed value.
 - **`br-util-nats-fabric` — boot-time connection helpers on `Fabric`.** The
   fabric now owns the boot dial so a service never reaches for `async_nats`
   directly: `Fabric::connect(url: &str) -> Result<Fabric, FabricError>` dials
@@ -850,7 +861,7 @@ below.
   `***`, never the cleartext value) so a later debug-print can never leak the
   credential, and the fail-loud `Connect` test runs broker-free everywhere as a
   portable error-contract test. Unblocks svc-auth and svc-notifier confining
-  their boot dial to the lib (#89).
+  their boot dial to the lib.
 - **`br-util-nats-fabric` — fan-in event consumer over several coordinates on one
   durable (create-or-bind).** `Fabric::ensure_event_consumer_many::<T>(&[&EventCoords], durable) ->
   Result<EventConsumer<T>, FabricError>` create-or-binds **one** durable that fans
@@ -867,7 +878,7 @@ below.
   `aggregate.verb`) and the wildcard subscription stays rejected. Purely additive.
   Proven by a real-`nats-server` integration test: two facts consumed and acked on
   one durable with no redelivery, and an empty-coordinate-set rejected with
-  `FilterMismatch`. (#91)
+  `FilterMismatch`.
 - **`br-util-nats-fabric` — graceful consumer drain (SIGTERM-safe shutdown).**
   `IntegrationConsumer::drain(self)` consumes the consumer and closes the
   underlying subscription cleanly (the pull task is aborted and the inbox
@@ -881,7 +892,7 @@ below.
   after `ack_wait` (at-least-once preserved, no silent drop). The shutdown
   contract is documented in the README. Purely additive. Proven by a
   real-`nats-server` integration test: an in-flight message acked before drain is
-  not redelivered after a rebind. (#91)
+  not redelivered after a rebind.
 - **`br-util-nats-fabric` — idempotent publish (`Nats-Msg-Id` dedup).**
   `Fabric::publish_command_with_id` / `publish_event_with_id` are the plain
   `publish_*` variants that additionally set the JetStream `Nats-Msg-Id` header
@@ -893,7 +904,7 @@ below.
   dedup-id variants are for callers managing their own idempotency. The caller
   owns the id; the fabric never mints one. Purely additive. Proven by a
   real-`nats-server` integration test: the same `Nats-Msg-Id` published twice
-  within the window yields exactly one stored message. (#91)
+  within the window yields exactly one stored message.
 - **`br-util-nats-fabric` — fabric reachability probe.**
   `Fabric::reachable() -> bool` and `Fabric::connection_state() -> ConnectionState`
   expose the client's **locally-cached** connection view for a readiness/liveness
@@ -905,7 +916,7 @@ below.
   distinctly named so the cheap cached view is never mistaken for the round-trip.
   Purely additive. Proven by a real-`nats-server` integration test:
   `connection_state()` reads `Connected`, `reachable()` is true, and `ping()`
-  round-trips against a live broker. (#91)
+  round-trips against a live broker.
 
 ## [1.0.1] — 2026-06-18
 
@@ -928,7 +939,6 @@ below.
   proven fixed by a new real-`nats-server` regression test
   (`watch_delivers_a_live_slash_keyed_directory_put`). `KvPrefix::watch_subject()`
   is retained (unchanged public surface) but no longer used by the consumer.
-  (#82)
 
 ## [1.0.0] — 2026-06-17
 
@@ -1213,8 +1223,8 @@ below.
   not-(yet/ever)-projected user is **legitimate**, not corruption — `is_member` is
   correct from the group projection, while `resolve_user` returns `None` for a
   filtered/not-yet-projected user (the expected scoped behavior). Group deletion
-  still CASCADEs the junction via the retained `group_id` FK (#69's "FK **or**
-  deterministic orphan cleanup").
+  still CASCADEs the junction via the retained `group_id` FK — the roster
+  contract's "FK **or** deterministic orphan cleanup" rule.
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`
   and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
   `LICENSE` file and crate manifests were already correct).
