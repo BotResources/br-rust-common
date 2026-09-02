@@ -157,6 +157,36 @@ release; they remain reachable through the historical per-crate tags
   scoped to the `outbox` feature (`outbox = ["dep:sqlx", "dep:metrics"]`); a
   consumer not using the outbox gains nothing, and the `metrics` facade is a
   no-op until the process installs a recorder.
+- **`br-util-postgres` — `migrations_status`, a read-only report answering "is
+  this database exactly at the migration set embedded in this binary?"** Behind a new opt-in cargo feature `migrate`
+  (`migrate = ["sqlx/migrate"]`): the workspace `sqlx` pin does not enable
+  `migrate`, so a consumer that does not want the helper compiles none of it and
+  gains no dependency. `migrations_status(&PgPool, &Migrator) ->
+  Result<MigrationsStatus, PostgresError>` reads `_sqlx_migrations` through
+  sqlx's own `Migrate::list_applied_migrations` and `dirty_version`, then diffs
+  it against `migrator.iter()` by version and checksum. The
+  `#[non_exhaustive] MigrationsStatus` reports `applied` (embedded migrations
+  present in the database), `pending` (embedded, no row — the missing tail),
+  `checksum_mismatch` (row present, stored checksum differs — applied but since
+  edited), `applied_not_embedded` (rows this binary does not carry — the
+  database is ahead — the rollback-in-progress signal) and `dirty` (lowest row
+  with `success = false`). Two predicates, safe by default: `is_current()` is
+  the whole gate a probe needs — true when `pending`, `checksum_mismatch` and
+  `applied_not_embedded` are all empty and `dirty` is `None`, so a database
+  ahead of the binary is **not** current, matching the fact that a service
+  running `migrate!().run()` at boot crash-loops there on `VersionMissing`.
+  `embedded_applied()` is the lenient variant (same, minus the
+  `applied_not_embedded` clause) for the service whose migrator is built with
+  `set_ignore_missing(true)` and therefore boots over a database ahead of it.
+  The helper **never runs, creates or repairs anything**: no `ensure_migrations_table`, no `Migrator::run`, and a database
+  where `_sqlx_migrations` does not exist yet (SQLSTATE `42P01`) is reported as
+  *every embedded migration pending* rather than an error, leaving the table
+  absent — the crate does not auto-provision. Additive: no new `PostgresError`
+  variant (that enum is not `#[non_exhaustive]`, so a variant would be a break)
+  — a `sqlx::migrate::MigrateError` is carried by the existing
+  `PostgresError::Db` as `sqlx::Error::Migrate`. Motivation: a post-promotion
+  probe can read the truth off the promoted artifact instead of a hardcoded
+  migration count that rots at the next migration.
 
 - **`br-util-directory` — `DirectoryProjector::with_impact_stager`, a
   transactional seam for reacting to a roster change.** A consumer registers an
