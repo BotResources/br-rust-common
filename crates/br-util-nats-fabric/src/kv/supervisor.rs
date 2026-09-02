@@ -16,6 +16,7 @@ pub(crate) async fn supervise<C>(
     cycle: &C,
     health: &WatchHealthChannel,
     mut backoff: Backoff,
+    surface: &'static str,
 ) -> std::convert::Infallible
 where
     C: ReconcileCycle + ?Sized,
@@ -26,9 +27,10 @@ where
             health.set(WatchHealth::Degraded);
             let delay = backoff.sleep().await;
             tracing::warn!(
+                surface,
                 error = %err,
                 delay_ms = delay.as_millis() as u64,
-                "published-language re-reconciliation failed; retrying"
+                "kv re-reconciliation failed; retrying"
             );
         }
         health.set(WatchHealth::Healthy);
@@ -36,12 +38,14 @@ where
         match &report.outcome {
             Ok(()) => {
                 tracing::warn!(
-                    "published-language watch stream ended; re-reconciling after backoff"
+                    surface,
+                    "kv watch stream ended; re-reconciling after backoff"
                 )
             }
             Err(err) => tracing::warn!(
+                surface,
                 error = %err,
-                "published-language watch failed; re-reconciling after backoff"
+                "kv watch failed; re-reconciling after backoff"
             ),
         }
         if report.progressed {
@@ -50,8 +54,9 @@ where
         health.set(WatchHealth::Degraded);
         let delay = backoff.sleep().await;
         tracing::warn!(
+            surface,
             delay_ms = delay.as_millis() as u64,
-            "backing off before re-bootstrap"
+            "backing off before re-reconciling"
         );
     }
 }
@@ -156,7 +161,7 @@ mod tests {
     async fn drive(cycle: &ScriptedCycle, health: &WatchHealthChannel, backoff: Backoff) {
         let parked = cycle.parked.clone();
         tokio::select! {
-            _ = supervise(cycle, health, backoff) => unreachable!("supervise never returns"),
+            _ = supervise(cycle, health, backoff, "test") => unreachable!("supervise never returns"),
             _ = parked.notified() => {}
         }
     }

@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-description = "Dev-only shared Postgres e2e test helpers (role/pool/name primitives) for the br-rust-common crates; consumed as a path dev-dependency, never a normal dependency"
+description = "Dev-only shared e2e test helpers (Postgres role/pool/name primitives and the NATS/Postgres environment readers) for the br-rust-common crates; consumed as a path dev-dependency, never a normal dependency"
 
 [dependencies]
 sqlx = { workspace = true }

@@ -5,7 +5,11 @@ pub use record::OutboxRecord;
 #[cfg(feature = "outbox")]
 mod driver;
 #[cfg(feature = "outbox")]
+mod duplicate_counter;
+#[cfg(feature = "outbox")]
 mod health;
+#[cfg(feature = "outbox")]
+mod msg_id;
 #[cfg(feature = "outbox")]
 mod relay;
 #[cfg(feature = "outbox")]
@@ -18,12 +22,14 @@ mod store;
 #[cfg(feature = "outbox")]
 pub use driver::RelayRunError;
 #[cfg(feature = "outbox")]
+pub use duplicate_counter::OUTBOX_RELAY_DUPLICATES_TOTAL;
+#[cfg(feature = "outbox")]
 pub use health::{REASON_NO_STREAM, RelayHealth, RelayHealthReceiver};
 #[cfg(feature = "outbox")]
 pub use relay::OutboxRelay;
 #[cfg(feature = "outbox")]
 pub use report::{
-    DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_MESSAGES, FailureClass, RelayPolicy, RelayReport,
+    DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_MESSAGES, FailureClass, RelayPass, RelayPolicy, RelayReport,
     classify_failure,
 };
 #[cfg(feature = "outbox")]

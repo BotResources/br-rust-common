@@ -1,0 +1,1 @@
+ALTER TABLE gadget DROP COLUMN label;

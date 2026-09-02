@@ -1,0 +1,1 @@
+CREATE TABLE gadget (id BIGINT PRIMARY KEY);

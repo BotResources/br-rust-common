@@ -9,6 +9,444 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
+## [1.3.0] — 2026-09-02
+
+**Behaviour migration — `verify_command_durable` / `verify_event_durable`.**
+Both were aliases of their `ensure_*` counterpart and created the durable they
+claimed to only probe. They now probe and create nothing. The signatures are
+unchanged, so this is compile-compatible, but it is runtime-relevant. Two caller
+classes must move to `ensure_command_durable` / `ensure_event_durable` (or the
+`_with` variants for custom `ConsumerTuning`): one that relied on a boot-time
+`verify_*_durable` to provision the durable its work loop later binds, and one
+that asserted the convergence of a pre-existing durable back to the exact
+coordinate filter *after* a `verify_*` — the `br-e2e-harness` fabric conformance
+checks and its `fabric_nats verify` CLI are of the second kind. Relaxing such an
+assertion instead of re-pointing it at `ensure_*` would remove the
+anti-over-delivery guard it exists to prove. Keep `verify_*` for readiness
+probing only.
+
+**Behaviour migration — `EphemeralAuthWatcher::watch()`.** An entry the watch
+cannot read (undecodable value, key `KvKey` rejects) no longer ends the watch
+with an `Err`; it is skipped, counted on the new `progress()` channel, and the
+watch continues. A caller that used the returned error as its poison signal
+must watch `WatchProgress::skipped` instead — see the `### Changed` entry below.
+
+**Deployment note — `duplicate_window`.** The outbox relay's dedup guarantee
+rests on a JetStream stream setting this crate never declares: `duplicate_window`
+defaults to 2 minutes, and the operator must make it explicit in the stream
+declaration for the guarantee to be relied on. Inside the window a manual
+re-stage yields a duplicate ack rather than a second delivery, and a rolling
+deploy that briefly runs two relays is absorbed. Details and the third
+consequence (the window is stream-wide, not per subject) are under *Ops note*
+below.
+
+### Added
+
+- **`br-test-support` — `require_test_db_url` / `require_test_tls_db_url` /
+  `nats_url` / `require_nats_url`.** Panicking counterparts to the existing
+  `Option`-returning readers, plus the same pair for `NATS_URL`, for an
+  `#[ignore]`-gated suite that must fail loud rather than skip when its
+  environment is absent — and that names the variable that is actually missing
+  rather than every variable it might have wanted. The `Option` variants are
+  unchanged.
+- **`br-util-axum-auth` — `passport_header_graphql_middleware`, an opt-in
+  sibling whose 401 refusal body is GraphQL-shaped.** The existing
+  `passport_header_middleware` refuses with the plain-text body `unauthorized`,
+  which a GraphQL client cannot parse — so every service fronting a GraphQL
+  endpoint re-implemented the refusal rendering locally (svc-jobs 0.1.0 did
+  exactly that, keeping the lib's decoding). The new middleware shares the same
+  decode path (`Passport::from_header`), the same acceptance behaviour and the
+  same `401`, and renders `{"errors":[{"message":"unauthorized","extensions":
+  {"code":"UNAUTHENTICATED"}}]}` with `content-type: application/json`. It is a
+  **sibling, not a swap**: `passport_header_middleware` is unchanged, mounting
+  it costs nothing new, and a service picks one per router. The opaque-refusal
+  invariant holds on both paths — missing, empty, non-UTF-8 and undecodable
+  headers all render byte-identical bodies, so neither middleware is a
+  validation oracle; the cause still goes to `tracing::warn!` only.
+  `UNAUTHENTICATED` is the wire string owned by `br-util-graphql`'s
+  `ErrorCode::Unauthenticated`, but it is **hardcoded** here rather than
+  imported: depending on `br-util-graphql` would drag `async-graphql` into
+  every service that only wants Passport decoding. `br-util-graphql` is a
+  **dev**-dependency instead, and a unit test deserializes the refusal body and
+  asserts its `extensions.code` still equals `ErrorCode::Unauthenticated
+  .as_str()`, so a drift between the two crates fails the build.
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::run()`, a supervised
+  entrypoint that survives a broker blip.** `watch()` returns on its first
+  stream error and returns `Ok(())` on a clean stream end, and nothing restarted
+  it: a service watching this bucket for cross-instance revocation lost the watch
+  on the first transient NATS fault and nothing restarted it, so it stayed blind
+  until the process was restarted — the same one-shot death the supervised
+  `PublishedLanguageConsumer::run()` fixed for the Published-Language mirror.
+  (The canonical consumer of the store itself is refresh-token rotation.) `run(on_change)` wraps the same supervision loop: reconcile, follow,
+  and on any watch error or clean stream end publish `WatchHealth::Degraded`,
+  back off (200 ms doubling to a 30 s cap, floor reset only by a watch that
+  observed an entry — delivered or skipped) and re-arm — forever, with `std::convert::
+  Infallible` in the signature, stopped by aborting or dropping the task.
+  **Recovery here is resubscribe-only, not a rebuild.** The Published-Language
+  loop re-runs a full bootstrap because it owns a local mirror that would drift;
+  `EPHEMERAL_AUTH` is compare-and-swap-written and TTL-bounded, its consumers
+  hold no local copy, and the bucket itself is the truth (re-read under CAS at
+  decision time), so recovery just re-opens the subscription. Its only gate is a
+  live bucket-presence probe — a real `STREAM.INFO` round-trip, deliberately not
+  `status()`, which reads cached stream info and could never notice a bucket that
+  went away — so a deleted bucket keeps the loop `Degraded` and loud rather than
+  looking healthy. **Honest limit:** a change that lands during the outage window
+  is not replayed, so a consumer holding state derived from this watch must
+  re-read the bucket after a `Degraded` → `Healthy` transition **and on any
+  increase of `WatchProgress::skipped`** — a skipped entry never moves health,
+  so `progress()` is the only signal for that second loss class. The caller's
+  handler is reused across re-arms (held behind a mutex, never cloned), so a
+  stateful handler keeps its state. `watch()` is unchanged and stays public for
+  tests and one-shot callers; `health()` is now truthfully driven by the loop.
+- **`br-util-nats-fabric` — a revision/compare-and-swap surface on the
+  Published-Language publisher and reader.** `PUBLISHED_LANGUAGE` writes were
+  last-writer-wins only, so two writers racing for the same key silently
+  clobbered each other and a read-modify-write could not be made safe without
+  leaving the Fabric. The `EphemeralAuthStore` CAS contract is now also
+  available on this bucket:
+  `PublishedLanguageReader::get_with_revision` and
+  `PublishedLanguagePublisher::get_with_revision` return
+  `Option<(V, Revision)>` (an absent, deleted or purged key reads `None`; an
+  undecodable value stays a fail-closed `FabricError::Decode`);
+  `PublishedLanguagePublisher::update_if(key, value, expected)` writes only
+  against the current revision and returns the **new** `Revision`, so a caller
+  can chain writes without a re-read; `delete_if(key, expected)` tombstones only
+  against the current revision. Both raise the first-class, matchable
+  `FabricError::RevisionConflict { key, expected }` on a mismatch, and write
+  nothing. `put`, `update`, `retract`, `reconcile` and `repair_drift` are
+  unchanged and stay last-writer-wins — the right default for a single-owner
+  mirror. A `RevisionConflict` also covers a key another writer has retracted,
+  so a retry loop must re-read with `get_with_revision` rather than retry
+  blind. `Revision` is the existing opaque newtype: a caller never mints one,
+  every revision originates from a `get_with_revision` or a successful
+  `update_if`. The revision-checked
+  primitives and their error mapping now live in one place
+  (`kv/revision.rs`) shared by both buckets, so the two surfaces cannot drift.
+  Purely additive; no consumer re-pin is forced.
+- **`br-util-nats-fabric` — `ensure_command_durable_with` /
+  `ensure_event_durable_with`: `ConsumerTuning` on the bare
+  durable-provisioning path.** The `_with` tuning seam existed only on the
+  consume-*opening* entry points (`ensure_*_consumer_with`, `run_*_with`), so a
+  caller that wanted a durable provisioned with a non-default `ack_wait` /
+  `max_ack_pending` but no work loop had to drop to raw `async-nats`. The two new
+  entry points take `&ConsumerTuning` exactly as their consume-path siblings do;
+  `ensure_command_durable` / `ensure_event_durable` now delegate with
+  `ConsumerTuning::default()` and are behaviour-identical. Only `ack_wait` and
+  `max_ack_pending` are tunable — `ack_policy = Explicit`,
+  `deliver_policy = All`, `replay_policy = Instant`, `max_deliver = -1` and the
+  rendered `filter_subject(s)` stay frozen as contract and Fabric-owned. No raw
+  `pull::Config` is exposed; the escape hatch stays closed.
+- **`br-util-nats-fabric` — `FabricError::SubjectNotCovered { stream, subject,
+  configured }`**, the typed verdict of the readiness probe below. Additive on
+  the `#[non_exhaustive]` `FabricError`.
+- **`br-util-nats-fabric` — the outbox relay publishes every row with a
+  `Nats-Msg-Id` dedup header, and the broker's duplicate verdict is now
+  observable.** Until now the relay published raw, so a crash between the
+  publish and the status write, or a rolling deploy briefly running two relays,
+  produced a genuine second delivery. The relay now sets `Nats-Msg-Id` to the
+  envelope's `event_id` — the field `OutboxRecord::stage_event` writes for every
+  `IntegrationEvent<T>` — so those replays resolve to the same key and the
+  stream's duplicate window collapses them to a single stored frame. The id
+  falls back to the **outbox row id** when the stored payload carries no
+  top-level `event_id` **or** one that is not a UUID string — the shape a raw
+  `OutboxRecord::stage(id, coords, value)` produces. The row id is unique and
+  stable per row, so the crash-replay case stays covered; only dedup across
+  different producers of the same fact is unavailable for such a payload.
+  Choosing the envelope id rather than the row id keeps a **single dedup
+  keyspace** with relays that already dedup on `event_id`. **Delivery remains
+  at-least-once** — the dedup id is a window, not a guarantee, and a replay after
+  the window elapses is delivered again by design; consumers stay idempotent.
+  **JetStream dedup is scoped to the stream, not to the subject**, and the event
+  stream binds every producer's coordinates: the rule is one `event_id` = one
+  frame per stream per window. Staging the same `IntegrationEvent` to two
+  different `EventCoords` inside the window publishes the first and makes the
+  second silently vanish while its row still goes `PUBLISHED` — visible only as a
+  duplicate. Fanning one fact out to N coordinates needs **N distinct
+  `event_id`s**, which "one fact per event" already implies.
+- **`br-util-nats-fabric` — `PublishOutcome` and the `_outcome` publish
+  variants.** JetStream answers a publish with a `duplicate` flag and a stream
+  sequence; the crate dropped both. `#[non_exhaustive] enum PublishOutcome {
+  Stored { sequence }, Duplicate { sequence } }` (plus `sequence()` and
+  `is_duplicate()`) now carries that verdict, returned by
+  `Fabric::publish_event_with_id_outcome` and
+  `publish_command_with_id_outcome`. Both outcomes are a success — the frame is
+  on the stream either way. `publish_event_with_id` / `publish_command_with_id`
+  are unchanged, still return `()`, and delegate to the `_outcome` variants, so
+  no call site moves.
+- **`br-util-nats-fabric` — `OutboxRelay::run_once_detailed` and `RelayPass`.**
+  `run_once` and `RelayReport` are **unchanged** — `RelayReport` is a plain
+  struct in the published API, so adding a field to it would break every
+  consumer that constructs or exhaustively destructures one. `run_once_detailed`
+  returns the `#[non_exhaustive] RelayPass`, which carries the existing counters
+  plus `duplicates` (frames the broker answered with a duplicate ack — a
+  **strict subset** of `published`, since the broker accepted the row) and
+  `row_id_fallbacks` (rows whose payload carried no usable envelope `event_id`; a
+  routine outcome for raw-staged payloads, hence a counter and not log noise).
+  Both are counted **per pick, not per row**: a row retried across N passes
+  counts N times. `run_once` delegates and projects. The supervised `run()` loop uses
+  `run_once_detailed` internally, so the signals below also fire on the managed
+  loop. Each duplicate ack emits one `tracing::warn!` (`"duplicate publish ack"`
+  with the outbox id, message id, id source, sequence and subject) and
+  increments the unlabeled counter `outbox_relay_duplicates_total`, exported as
+  `OUTBOX_RELAY_DUPLICATES_TOTAL`. An outbox-id label would be unbounded
+  cardinality, so there is none. The counter is described and initialised to zero
+  when an `OutboxRelay` is constructed, so the series exists from boot and an
+  alert on a relay that has never deduplicated reads `0` rather than no-data. This is a new **optional** `metrics` dependency
+  scoped to the `outbox` feature (`outbox = ["dep:sqlx", "dep:metrics"]`); a
+  consumer not using the outbox gains nothing, and the `metrics` facade is a
+  no-op until the process installs a recorder.
+- **`br-util-postgres` — `migrations_status`, a read-only report answering "is
+  this database exactly at the migration set embedded in this binary?"**
+  Behind a new opt-in cargo feature `migrate`
+  (`migrate = ["sqlx/migrate"]`): the workspace `sqlx` pin does not enable
+  `migrate`, so a consumer that does not want the helper compiles none of it and
+  gains no dependency. `migrations_status(&PgPool, &Migrator) ->
+  Result<MigrationsStatus, PostgresError>` reads `_sqlx_migrations` through
+  sqlx's own `Migrate::list_applied_migrations` and `dirty_version`, then diffs
+  it against `migrator.iter()` by version and checksum. The
+  `#[non_exhaustive] MigrationsStatus` reports `applied` (embedded migrations
+  present in the database), `pending` (embedded, no row — the missing tail),
+  `checksum_mismatch` (row present, stored checksum differs — applied but since
+  edited), `applied_not_embedded` (rows this binary does not carry — the
+  database is ahead — the rollback-in-progress signal) and `dirty` (lowest row
+  with `success = false`). Two predicates, safe by default: `is_current()` is
+  the whole gate a probe needs — true when `pending`, `checksum_mismatch` and
+  `applied_not_embedded` are all empty and `dirty` is `None`, so a database
+  ahead of the binary is **not** current, matching the fact that a service
+  running `migrate!().run()` at boot crash-loops there on `VersionMissing`.
+  `embedded_applied()` is the lenient variant (same, minus the
+  `applied_not_embedded` clause) for the service whose migrator is built with
+  `set_ignore_missing(true)` and therefore boots over a database ahead of it.
+  Down migrations are **ignored**: `migrator.iter()` yields one entry per file,
+  so a reversible migration contributes an up *and* a down entry under the same
+  version, and only the up half is counted, reported pending and
+  checksum-compared — exactly the half `Migrator::run` applies. A fully applied
+  reversible migration set is therefore `is_current()`.
+  The helper **never runs, creates or repairs anything**: no `ensure_migrations_table`, no `Migrator::run`, and a database
+  where `_sqlx_migrations` does not exist yet (SQLSTATE `42P01`) is reported as
+  *every embedded migration pending* rather than an error, leaving the table
+  absent — the crate does not auto-provision. Additive: no new `PostgresError`
+  variant (that enum is not `#[non_exhaustive]`, so a variant would be a break)
+  — a `sqlx::migrate::MigrateError` is carried by the existing
+  `PostgresError::Db` as `sqlx::Error::Migrate`. Motivation: a post-promotion
+  probe can read the truth off the promoted artifact instead of a hardcoded
+  migration count that rots at the next migration.
+
+- **`br-util-nats-fabric` — `EphemeralAuthStore::update_if_returning_revision`,
+  the chainable rotate path.** `update_if` returns `()`, so the new revision its
+  write produced was discarded and a caller chaining a second revision-checked
+  operation (rotate then `delete_if`, or rotate twice) had to re-read with
+  `get_with_revision` first — and that re-read is a window in which another
+  writer can move the revision on, so the chain then acts on a revision the
+  caller never produced. The new sibling performs the identical write with the
+  identical `FabricError::RevisionConflict { key, expected }` semantics and
+  returns the **new** `Revision`, matching the shape
+  `PublishedLanguagePublisher::update_if` has on the `PUBLISHED_LANGUAGE`
+  bucket. `update_if` is **unchanged** — changing its return type would be a
+  breaking change — and now delegates to the sibling. Precise contract: on the
+  `EPHEMERAL_AUTH` surface exactly two calls hand out a `Revision`,
+  `get_with_revision` and a successful `update_if_returning_revision`; `create`,
+  `create_with_ttl`, `put`, `delete`, `delete_if` and `update_if` return none, so
+  a chain starting at a `create` still needs one `get_with_revision`.
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::progress()`, `WatchProgress`
+  and `WatchProgressReceiver`.** A `tokio::sync::watch` of the
+  `#[non_exhaustive] WatchProgress { changes, skipped }` counters — entries
+  handed to the caller's handler, and entries skipped as unreadable — plus
+  `observed()` for their sum. It is the observable side of the tolerant watch
+  below: a skipped entry is otherwise visible only in a log line. Per watcher
+  instance, like `health()`.
+- **`br-util-directory` — `DirectoryProjector::with_impact_stager`, a
+  transactional seam for reacting to a roster change.** A consumer registers an
+  `Arc<dyn ImpactStager>` beside `new` / `with_config`; when a `known_*` row
+  actually changes, the sink calls `stage_in(conn, &[Impact::ForeignChanged {
+  foreign }])` **inside the same transaction** as the roster write. `ForeignRef`
+  is a validated `(namespace, key)` pair over the three frozen namespaces
+  `USER_NAMESPACE` / `GROUP_NAMESPACE` / `SERVICE_ACCOUNT_NAMESPACE`
+  (`identity.user`, `identity.group`, `identity.service_account`); the key is the
+  entity `Uuid`. `Impact` is `#[non_exhaustive]` and carries only the variant a
+  mirror can produce. A stager reports its own failure as the new
+  `DirectoryError::Stager(source)` variant, which the sink surfaces unchanged
+  after rolling the transaction back. **A write stages every fact it makes
+  unnameable**, in one batch inside its own transaction: a group upsert that
+  drops members stages the group *plus one impact per removed member* (nothing
+  in the mirror names them once their junction rows are gone), a group delete
+  stages the group plus every member its cascade unlinks, and a user retraction
+  stages the user plus every group it still belonged to. An *added* member gets
+  no impact of its own — it is in the current membership of the group the impact
+  already names, so it is recoverable. **Adopting the stager against an
+  already-converged mirror stages nothing**: impacts are gated on a real row
+  change, the projector never replays, so an adopter that registers a stager in
+  a later release backfills its derived state once, itself, at adoption and
+  relies on the stager from then on.
+- **`br-util-directory` — two supervision signals.** `progress()` yields a
+  `watch::Receiver<ProjectorProgress>` whose `changes` counter is bumped once per
+  **committed** change, on exactly the predicate that decides whether to stage an
+  impact. `health()` yields a `WatchHealthReceiver` composed **worst-of** over the
+  streams active for the projector (users always, groups per consumption scope,
+  service accounts per producer manifest): a stream counts as `Healthy` from the
+  moment its consumer is bound to the bucket until its `watch()` call returns, so
+  the composition is `Degraded` before `watch()` starts, after it returns, and
+  whenever any active stream is down. The activation is a **scope guard**, so a
+  `watch()` future that is *dropped* rather than returned — an aborted task, a
+  cancelled `select!` branch — also returns the composition to `Degraded`
+  instead of leaving a pod that gates readiness on `health()` reporting `READY`
+  with no projector running. No loop, no backoff and no re-reconcile were
+  added — supervision stays the caller's.
+
+### Changed
+
+- **Every crate README install snippet now pins `version = "1.3.0"` beside
+  `tag = "v1.3.0"`.** `br-util-broadcast` and fifteen others documented a
+  tag-only git dependency, which a consumer running `cargo-deny` with
+  `wildcards = "deny"` rejects — the version requirement of a tag-only git
+  dependency reads as `*`, so those snippets did not paste into a working
+  manifest. `br-core-directory` and `br-util-directory` documented no install
+  at all and now carry one.
+
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::watch()` no longer dies on a
+  single entry it cannot read; it skips it and keeps running.** An undecodable
+  value or a key `KvKey` rejects used to return `FabricError` and end the watch.
+  Under `run()` that was worse than it looks: when the bad entry was the first
+  delivered, the attempt reported no progress, so the supervisor never reset its
+  backoff and a stream of skew-written entries walked the retry delay to the
+  30 s cap — and, because recovery here is resubscribe-only, every `Set`/
+  `Removed` landing in each widening gap was lost. A schema-skewed writer during
+  a rolling deploy could therefore flap every consumer of the bucket. Such an
+  entry is now dropped with one `tracing::warn!` carrying exactly `surface`,
+  `key`, a static `reason` (`"undecodable value"` or `"invalid key"`) and
+  `value_len` — never the `FabricError`, whose `serde_json` detail would quote
+  the offending value fragment, which on this bucket is credential state —
+  counted on the new `progress()` channel, and the watch continues; health
+  stays `Healthy` (the stream is alive) and the attempt counts
+  as **progress**, so the backoff floor is not escalated by entries the watch
+  demonstrably read. **The poison entry is no longer surfaced as an error to the
+  caller** — a consumer that must react to one watches `WatchProgress::skipped`,
+  which is also the trigger, beside a `Degraded` → `Healthy` transition, for
+  re-reading the bucket when it holds derived state.
+  `EphemeralAuthStore::get_with_revision` and `entries` are unchanged and stay
+  fail-closed. This is deliberately the opposite of
+  `PublishedLanguageConsumer`, which still wedges loudly on an undecodable
+  value: that loop owns a local mirror a poison entry would silently falsify,
+  while this one only forwards notifications.
+
+- **`br-util-nats-fabric` — the outbox dedup key is documented as what it
+  actually is: positional, not typed.** The relay lifts the **top-level
+  `event_id` field of the stored payload** whenever its value is a UUID string,
+  whatever staged the row. That is contracted for `OutboxRecord::stage_event`,
+  but a raw `OutboxRecord::stage(id, coords, value)` payload is uncontracted
+  caller content and is promoted exactly the same way — the README documented
+  only the missing/non-UUID fallback. **A raw-stage caller owns that field's
+  uniqueness:** two raw rows sharing one `event_id` inside the duplicate window
+  publish once, the broker answers the second with a duplicate ack and drops the
+  frame, and the relay — reading that ack as acceptance — still marks the second
+  row `PUBLISHED`; the loss shows up only as `RelayPass.duplicates`, the
+  `"duplicate publish ack"` warn line and the counter. Mint a distinct
+  `event_id` per raw row, or omit the field entirely and take the row-id
+  fallback. Documentation and a pinning e2e only; no behaviour changed.
+- **`br-util-nats-fabric` — `verify_*_durable` coverage is read from the
+  stream's own configured `subjects`.** A stream fed only by a `mirror` or a
+  `sources` block binds no subjects of its own, so it covers no coordinate and
+  fails the probe permanently. The fixed `INTEGRATION_CMD` / `INTEGRATION_EVT`
+  are declared with explicit subjects; a mirrored variant is outside what this
+  probe can verify. Documented, not changed.
+- **`br-util-nats-fabric` — `max_deliver` is documented as a uniform default,
+  not a permanent non-knob.** The README ruled it "semantic, not a knob"
+  alongside `ack_policy`, `deliver_policy` and `replay_policy`. Those three plus
+  the rendered `filter_subject(s)` are genuinely frozen as contract; `max_deliver
+  = -1` is a **default** that a service wanting a finite delivery budget and a
+  dead-letter path legitimately needs to change — and the answer is then a new
+  opt-in seam on `ConsumerTuning`, filed as a gap here, never a reach-around to
+  raw `async-nats`. No behaviour changed and no seam was added.
+- **`br-util-nats-fabric` — the KV supervision warnings are renamed and now
+  carry a `surface` field.** The supervised loop is shared by two KV
+  surfaces, so its messages no longer hardcode the Published-Language one:
+  `"published-language re-reconciliation failed; retrying"` →
+  `"kv re-reconciliation failed; retrying"`,
+  `"published-language watch stream ended; re-reconciling after backoff"` →
+  `"kv watch stream ended; re-reconciling after backoff"`,
+  `"published-language watch failed; re-reconciling after backoff"` →
+  `"kv watch failed; re-reconciling after backoff"`, and
+  `"backing off before re-bootstrap"` → `"backing off before re-reconciling"`.
+  Every one of the four now carries `surface = "published-language" |
+  "ephemeral-auth"`. **An ops alert or log filter matching the old message
+  strings stops matching** — rematch on the new text plus `surface`.
+
+- **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
+  now verify instead of provisioning.** Signatures are unchanged; the
+  behaviour is not. The probe is `get_stream` on the fixed stream (absent →
+  `FabricError::Consume { kind: NoStream }`, the unchanged gitops fail-loud)
+  **plus** a check that the rendered coordinate subject is covered by the
+  stream's configured `subjects`, matched with NATS token semantics (`*` =
+  exactly one token, `>` = one-or-more tail tokens, otherwise literal). An
+  uncovered subject fails with `FabricError::SubjectNotCovered`, which names the
+  stream, the coordinate and what the stream actually binds. **No consumer is
+  created.** The probe therefore proves stream presence and subject coverage and
+  **nothing else**: it no longer exercises the right to create or consume a
+  durable, nor validates the durable name — both were checked *incidentally* up
+  to `1.2.0` because the probe created a consumer. A NATS user holding
+  `STREAM.INFO` but lacking consumer-create permission now passes the probe and
+  fails at the first `run_*` / `ensure_*_consumer`. A service that wants that
+  permission proven at boot, and its durable to exist and start accumulating,
+  calls `ensure_*_durable`, which is unchanged. The `durable` argument is
+  retained for signature stability and call-site readability.
+
+
+- **`br-util-directory` — every sink upserts with
+  `ON CONFLICT (…) DO UPDATE SET … WHERE (t.cols…) IS DISTINCT FROM
+  (EXCLUDED.cols…)`** (rendered from a single column list per table, so the
+  insert list, the assignments and both sides of the comparison cannot drift
+  apart). An already-identical row is left untouched (`rows_affected() == 0`),
+  so a re-scan no longer rewrites every row. A group counts as changed when its
+  name changed **or** its recomposed member set differs from the set read under
+  `FOR UPDATE`; the membership rewrite is then the **set difference** — delete
+  the members that left, insert the ones that joined, leave the rest alone. A
+  `retract` counts only when a row was really deleted.
+- **`br-util-directory` — a projection opens an explicit transaction only when
+  a stager is registered.** With no stager, a single-statement projection (user,
+  service account, group delete) runs on a pooled connection exactly as in
+  `1.2.0`, minus the no-op writes. With a stager, every projection becomes
+  `BEGIN` / write / `stage_in` / `COMMIT`: three extra round trips per key and
+  one transaction per key on a bootstrap scan of N keys. That cost buys the
+  atomicity of the impact with its write; it is not a free wrapper. The group
+  upsert is transactional either way — its member-set read under `FOR UPDATE`
+  and the rewrite that follows require it.
+- **Deployment note — grants.** A stager writes the adopter's own tables on the
+  sink's connection, so those tables need a grant on the runtime app role in the
+  service's own least-privilege grant migration. Without it the
+  stager fails and, sharing the transaction, **rolls the roster upsert back with
+  it** — the mirror stops converging. Grant before registering a stager.
+
+### Fixed
+
+- **`br-util-nats-fabric` — readiness probes no longer leave phantom durable
+  consumers behind.** `verify_*_durable` were pure aliases of
+  `ensure_*_durable`: every boot created a real durable, filtered on the probed
+  subject, that nobody ever read from. On a busy subject that durable
+  accumulated unacked pending messages until the stream's `max_age` expired
+  them — bounded, not a leak, but JetStream metrics permanently showed
+  consumers with a growing backlog and zero acks, which is exactly the shape of
+  a broken consumer and would eventually mask a real incident.
+
+### Ops note
+
+- **The outbox duplicate window is a stream setting the operator must
+  declare.** This crate binds streams, it never creates or tunes them, so it
+  cannot set the window: the NATS default of **2 minutes** applies wherever the
+  stream declaration is silent. If the dedup guarantee above is relied on — for
+  instance to absorb a relay outage longer than that — make `duplicate_window`
+  **explicit** in the stream declaration. Three consequences are now visible
+  rather than silent: re-staging a row by hand inside the window returns a
+  duplicate ack and no delivery; a rolling deploy that briefly runs two relays no
+  longer double-delivers inside the window; and — because the window is
+  **stream-wide**, not per subject — a producer reusing one `event_id` across
+  several coordinates loses every frame after the first. All three show up as
+  `RelayPass.duplicates`, the `"duplicate publish ack"` warn line and the
+  counter.
+- **Durable consumers created by pre-`1.3.0` `verify_*_durable` probes are no
+  longer recreated once a service re-pins.** Delete them from the streams only
+  *after* every consumer of that stream has re-pinned — deleted earlier, they
+  are recreated on the next boot. They are recognisable as durables filtered on
+  a single coordinate subject with a growing backlog and zero acks.
 ## [1.2.0] — 2026-07-22
 
 ### Added
@@ -53,7 +491,8 @@ release; they remain reachable through the historical per-crate tags
   by dropping or aborting the task, and it is cancel-safe by re-reconciliation
   (both phases restart from scratch, and a cancelled cycle is fixed by the next
   `bootstrap()`). The raw `bootstrap()` / `watch()` primitives keep their
-  signatures and remain public. Consumer migration: be-botresources#242.
+  signatures and remain public. Consumer migration is tracked on the private
+  roadmap.
 
 ### Changed
 
@@ -208,7 +647,7 @@ release; they remain reachable through the historical per-crate tags
   tombstone (`delete_if` only against the current revision, conflicting and
   leaving the key intact against a stale one), `create` on a live key returns
   `KeyAlreadyExists`, the unconditional revoke wipe, bind-existing fail-loud when
-  the bucket is absent, and fail-closed decode on a malformed value. (#86)
+  the bucket is absent, and fail-closed decode on a malformed value.
 - **`br-util-nats-fabric` — per-key TTL, enumeration, and a change-watch on the
   `EPHEMERAL_AUTH` store, completing the KV side of "talk to what exists, entirely
   through the Fabric".** All purely additive on `EphemeralAuthStore<V>`:
@@ -258,7 +697,7 @@ release; they remain reachable through the historical per-crate tags
     key expires well before the longer bucket `max_age`, `keys`/`entries` enumerate
     live keys and exclude a tombstoned one, `entries` fails closed on a malformed
     value, the watch yields a `Set` then `Removed` change on put/delete, and a
-    `Removed` change on per-key TTL expiry. (#91)
+    `Removed` change on per-key TTL expiry.
 - **`br-util-nats-fabric` — typed durable consumer for the integration command /
   event streams (the production work loop), create-or-bind.** The Fabric covered
   publish and the one-shot correlated awaiter but had no typed surface to *durably
@@ -336,7 +775,7 @@ release; they remain reachable through the historical per-crate tags
   surfaces `NoDeliveryInfo` (not a fabricated count), that a `Send` ack failure
   classifies as `ConsumerGone`, and that the owned `ConsumerConfig` carries the
   documented defaults. Unblocks svc-notifier's intake migrating off raw
-  `async-nats` (#80). (#90)
+  `async-nats`.
 - **`br-util-nats-fabric` — tunable durable ack timing + the JetStream working
   ack for long-running handlers.** The durable consumer hardcoded `ack_wait = 30s`
   and `max_ack_pending = 256`, so a service whose handler legitimately outlasts 30s
@@ -361,7 +800,7 @@ release; they remain reachable through the historical per-crate tags
   Proven by real-`nats-server` integration tests: `ensure_event_consumer_with` a
   custom `ack_wait` / `max_ack_pending` reflected on the real `consumer_info().config`
   (with `max_deliver` left fixed), and `progress()` holding a frame in flight well
-  past a 2s `ack_wait` with no redelivery before the final `ack`. (#90)
+  past a 2s `ack_wait` with no redelivery before the final `ack`.
 - **`br-util-nats-fabric` — the one-shot correlated awaiter now binds the command
   stream too.** `await_event(s)` / `CorrelatedAwaiter` covered `INTEGRATION_EVT`
   only, so a consumer needing to observe a command in flight (e.g. a `declare` a
@@ -383,7 +822,7 @@ release; they remain reachable through the historical per-crate tags
   stand-in the e2e harness hand-rolled on raw `async-nats` into the frozen lib.
   Purely additive. Proven by real-`nats-server` integration tests: match by
   correlation on the command stream, one-of-several coords selection, `None` at
-  the deadline, and bind fail-loud when the command stream is absent. (#84)
+  the deadline, and bind fail-loud when the command stream is absent.
 - **`br-util-nats-fabric` — typed prefix enumeration on
   `PublishedLanguageReader`.** The reader exposed only `get(&key)` (exact-key),
   so a Published-Language consumer that must project **all** entries under a
@@ -402,7 +841,7 @@ release; they remain reachable through the historical per-crate tags
   `br-test-harness` `pl_list` stand-in retire its raw key-scan. Purely additive.
   Proven by real-`nats-server` integration tests: a multi-entry prefix scan
   returns exactly its own keys/entries (prefix-scoped, a sibling prefix excluded)
-  and fails closed on a malformed value. (#85)
+  and fails closed on a malformed value.
 - **`br-util-nats-fabric` — boot-time connection helpers on `Fabric`.** The
   fabric now owns the boot dial so a service never reaches for `async_nats`
   directly: `Fabric::connect(url: &str) -> Result<Fabric, FabricError>` dials
@@ -422,7 +861,7 @@ release; they remain reachable through the historical per-crate tags
   `***`, never the cleartext value) so a later debug-print can never leak the
   credential, and the fail-loud `Connect` test runs broker-free everywhere as a
   portable error-contract test. Unblocks svc-auth and svc-notifier confining
-  their boot dial to the lib (#89).
+  their boot dial to the lib.
 - **`br-util-nats-fabric` — fan-in event consumer over several coordinates on one
   durable (create-or-bind).** `Fabric::ensure_event_consumer_many::<T>(&[&EventCoords], durable) ->
   Result<EventConsumer<T>, FabricError>` create-or-binds **one** durable that fans
@@ -439,7 +878,7 @@ release; they remain reachable through the historical per-crate tags
   `aggregate.verb`) and the wildcard subscription stays rejected. Purely additive.
   Proven by a real-`nats-server` integration test: two facts consumed and acked on
   one durable with no redelivery, and an empty-coordinate-set rejected with
-  `FilterMismatch`. (#91)
+  `FilterMismatch`.
 - **`br-util-nats-fabric` — graceful consumer drain (SIGTERM-safe shutdown).**
   `IntegrationConsumer::drain(self)` consumes the consumer and closes the
   underlying subscription cleanly (the pull task is aborted and the inbox
@@ -453,7 +892,7 @@ release; they remain reachable through the historical per-crate tags
   after `ack_wait` (at-least-once preserved, no silent drop). The shutdown
   contract is documented in the README. Purely additive. Proven by a
   real-`nats-server` integration test: an in-flight message acked before drain is
-  not redelivered after a rebind. (#91)
+  not redelivered after a rebind.
 - **`br-util-nats-fabric` — idempotent publish (`Nats-Msg-Id` dedup).**
   `Fabric::publish_command_with_id` / `publish_event_with_id` are the plain
   `publish_*` variants that additionally set the JetStream `Nats-Msg-Id` header
@@ -465,7 +904,7 @@ release; they remain reachable through the historical per-crate tags
   dedup-id variants are for callers managing their own idempotency. The caller
   owns the id; the fabric never mints one. Purely additive. Proven by a
   real-`nats-server` integration test: the same `Nats-Msg-Id` published twice
-  within the window yields exactly one stored message. (#91)
+  within the window yields exactly one stored message.
 - **`br-util-nats-fabric` — fabric reachability probe.**
   `Fabric::reachable() -> bool` and `Fabric::connection_state() -> ConnectionState`
   expose the client's **locally-cached** connection view for a readiness/liveness
@@ -477,7 +916,7 @@ release; they remain reachable through the historical per-crate tags
   distinctly named so the cheap cached view is never mistaken for the round-trip.
   Purely additive. Proven by a real-`nats-server` integration test:
   `connection_state()` reads `Connected`, `reachable()` is true, and `ping()`
-  round-trips against a live broker. (#91)
+  round-trips against a live broker.
 
 ## [1.0.1] — 2026-06-18
 
@@ -500,7 +939,6 @@ release; they remain reachable through the historical per-crate tags
   proven fixed by a new real-`nats-server` regression test
   (`watch_delivers_a_live_slash_keyed_directory_put`). `KvPrefix::watch_subject()`
   is retained (unchanged public surface) but no longer used by the consumer.
-  (#82)
 
 ## [1.0.0] — 2026-06-17
 
@@ -785,8 +1223,8 @@ release; they remain reachable through the historical per-crate tags
   not-(yet/ever)-projected user is **legitimate**, not corruption — `is_member` is
   correct from the group projection, while `resolve_user` returns `None` for a
   filtered/not-yet-projected user (the expected scoped behavior). Group deletion
-  still CASCADEs the junction via the retained `group_id` FK (#69's "FK **or**
-  deterministic orphan cleanup").
+  still CASCADEs the junction via the retained `group_id` FK — the roster
+  contract's "FK **or** deterministic orphan cleanup" rule.
 - Correct stale `MIT` license references to `Apache-2.0` in `CONTRIBUTING.md`
   and the `br-test-support` README (the workspace relicensed to Apache-2.0; the
   `LICENSE` file and crate manifests were already correct).

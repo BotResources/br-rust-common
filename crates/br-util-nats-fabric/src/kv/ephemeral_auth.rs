@@ -2,18 +2,19 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use async_nats::jetstream::kv::{
-    CreateErrorKind, DeleteErrorKind, Operation, Store, UpdateErrorKind,
-};
+use async_nats::jetstream::kv::Store;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::error::FabricError;
 use crate::fabric::Fabric;
-use crate::kv::codec::{decode, encode};
+use crate::kv::codec::encode;
 use crate::kv::ephemeral_auth_watch::EphemeralAuthWatcher;
 use crate::kv::key::{KvKey, KvPrefix};
-use crate::kv::revision::Revision;
+use crate::kv::revision::{
+    Revision, create_absent, delete_expecting, map_create_error, read_with_revision,
+    update_expecting,
+};
 use crate::kv::scan::{scan_entries, scan_keys};
 
 pub struct EphemeralAuthStore<V> {
@@ -51,25 +52,12 @@ where
         &self,
         key: &KvKey,
     ) -> Result<Option<(V, Revision)>, FabricError> {
-        let Some(entry) = self.kv.entry(key.as_str()).await.map_err(FabricError::kv)? else {
-            return Ok(None);
-        };
-        if matches!(entry.operation, Operation::Delete | Operation::Purge) {
-            return Ok(None);
-        }
-        let value = decode(key.as_str(), &entry.value)?;
-        Ok(Some((value, Revision::new(entry.revision))))
+        read_with_revision(&self.kv, key).await
     }
 
     pub async fn create(&self, key: &KvKey, value: &V) -> Result<(), FabricError> {
-        let bytes = encode(value)?;
-        match self.kv.create(key.as_str(), bytes.into()).await {
-            Ok(_) => Ok(()),
-            Err(err) if err.kind() == CreateErrorKind::AlreadyExists => {
-                Err(FabricError::key_already_exists(key.as_str()))
-            }
-            Err(err) => Err(FabricError::kv(err)),
-        }
+        create_absent(&self.kv, key, value).await?;
+        Ok(())
     }
 
     pub async fn update_if(
@@ -78,18 +66,18 @@ where
         value: &V,
         expected: Revision,
     ) -> Result<(), FabricError> {
-        let bytes = encode(value)?;
-        match self
-            .kv
-            .update(key.as_str(), bytes.into(), expected.get())
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(err) if err.kind() == UpdateErrorKind::WrongLastRevision => {
-                Err(FabricError::revision_conflict(key.as_str(), expected.get()))
-            }
-            Err(err) => Err(FabricError::kv(err)),
-        }
+        self.update_if_returning_revision(key, value, expected)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_if_returning_revision(
+        &self,
+        key: &KvKey,
+        value: &V,
+        expected: Revision,
+    ) -> Result<Revision, FabricError> {
+        update_expecting(&self.kv, key, value, expected).await
     }
 
     pub async fn delete(&self, key: &KvKey) -> Result<(), FabricError> {
@@ -101,17 +89,7 @@ where
     }
 
     pub async fn delete_if(&self, key: &KvKey, expected: Revision) -> Result<(), FabricError> {
-        match self
-            .kv
-            .delete_expect_revision(key.as_str(), Some(expected.get()))
-            .await
-        {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == DeleteErrorKind::WrongLastRevision => {
-                Err(FabricError::revision_conflict(key.as_str(), expected.get()))
-            }
-            Err(err) => Err(FabricError::kv(err)),
-        }
+        delete_expecting(&self.kv, key, expected).await
     }
 
     pub async fn put(&self, key: &KvKey, value: &V) -> Result<(), FabricError> {
@@ -136,10 +114,7 @@ where
             .await
         {
             Ok(_) => Ok(()),
-            Err(err) if err.kind() == CreateErrorKind::AlreadyExists => {
-                Err(FabricError::key_already_exists(key.as_str()))
-            }
-            Err(err) => Err(FabricError::kv(err)),
+            Err(err) => Err(map_create_error(key, err.kind(), &err)),
         }
     }
 

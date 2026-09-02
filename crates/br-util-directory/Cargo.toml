@@ -28,3 +28,11 @@ sqlx = { workspace = true, optional = true, features = ["uuid", "json"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, optional = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+async-nats = { workspace = true }
+async-trait = { workspace = true }
+br-test-support = { workspace = true }
+sqlx = { workspace = true, features = ["uuid", "json"] }
+tokio = { workspace = true }
+uuid = { workspace = true }

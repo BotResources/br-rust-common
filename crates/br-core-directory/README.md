@@ -88,6 +88,13 @@ consumer kit (`known_*` migration, KV→PG projector, typed readers) are
 the publisher/consumer kit's reconcile guarantee, not this crate's. The Go wire
 anchor and the Px/Cx conformance suites live in `br-e2e-harness`.
 
+## Install
+
+```toml
+[dependencies]
+br-core-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-directory", tag = "v1.3.0", version = "1.3.0" }
+```
+
 ## Why
 
 | Thing | Why it is the way it is |

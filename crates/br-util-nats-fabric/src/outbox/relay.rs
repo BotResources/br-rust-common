@@ -4,9 +4,11 @@ use br_core_integration::{OutboxStatus, Transition, next_after_attempt};
 
 use crate::coords::IntegrationSubject;
 use crate::fabric::Fabric;
+use crate::outbox::duplicate_counter::{record_duplicate, register};
 use crate::outbox::health::{RelayHealthChannel, RelayHealthReceiver};
+use crate::outbox::msg_id::{MessageIdSource, message_id_for};
 use crate::outbox::report::{
-    FailureClass, RelayPolicy, RelayReport, classify_failure, classify_pass,
+    FailureClass, RelayPass, RelayPolicy, RelayReport, classify_failure, classify_pass,
 };
 use crate::outbox::store::{OutboxStore, OutboxStoreError};
 
@@ -24,6 +26,7 @@ impl OutboxRelay {
     }
 
     pub fn with(pool: sqlx::PgPool, fabric: Fabric, policy: RelayPolicy) -> Self {
+        register();
         Self {
             pool,
             store: OutboxStore::new(),
@@ -38,24 +41,28 @@ impl OutboxRelay {
     }
 
     pub async fn run_once(&self) -> Result<RelayReport, OutboxStoreError> {
-        let mut report = RelayReport::default();
+        Ok(self.run_once_detailed().await?.into())
+    }
+
+    pub async fn run_once_detailed(&self) -> Result<RelayPass, OutboxStoreError> {
+        let mut pass = RelayPass::default();
         let cap = self.policy.max_messages.max(1);
         let mut cursor = Uuid::nil();
 
         for _ in 0..cap {
-            match self.process_one(cursor, &mut report).await? {
+            match self.process_one(cursor, &mut pass).await? {
                 Some(id) => cursor = id,
                 None => break,
             }
         }
 
-        Ok(report)
+        Ok(pass)
     }
 
     async fn process_one(
         &self,
         after: Uuid,
-        report: &mut RelayReport,
+        pass: &mut RelayPass,
     ) -> Result<Option<Uuid>, OutboxStoreError> {
         let mut tx = self.pool.begin().await?;
         let Some(record) = self.store.fetch_one_pending(&mut *tx, after).await? else {
@@ -63,9 +70,14 @@ impl OutboxRelay {
             return Ok(None);
         };
 
+        let (message_id, id_source) = message_id_for(record.id, &record.payload);
         let publish_result = self
             .fabric
-            .publish_event_value(&record.destination, &record.payload)
+            .publish_event_value_with_id(
+                &record.destination,
+                &record.payload,
+                &message_id.to_string(),
+            )
             .await;
 
         let structural =
@@ -90,17 +102,34 @@ impl OutboxRelay {
             .await?;
         tx.commit().await?;
 
-        report.picked += 1;
-        classify_pass(report, &publish_result, transition, structural);
-        if let Err(err) = publish_result {
-            tracing::warn!(
-                outbox_id = %record.id,
-                subject = %record.destination.subject(),
-                attempts = transition.attempts,
-                structural,
-                error = %err,
-                "outbox publish attempt failed",
-            );
+        pass.picked += 1;
+        if id_source == MessageIdSource::Row {
+            pass.row_id_fallbacks += 1;
+        }
+        classify_pass(pass, &publish_result, transition, structural);
+        match &publish_result {
+            Ok(outcome) if outcome.is_duplicate() => {
+                record_duplicate();
+                tracing::warn!(
+                    outbox_id = %record.id,
+                    message_id = %message_id,
+                    id_source = id_source.as_str(),
+                    sequence = outcome.sequence(),
+                    subject = %record.destination.subject(),
+                    "duplicate publish ack",
+                );
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    outbox_id = %record.id,
+                    subject = %record.destination.subject(),
+                    attempts = transition.attempts,
+                    structural,
+                    error = %err,
+                    "outbox publish attempt failed",
+                );
+            }
         }
         Ok(Some(record.id))
     }

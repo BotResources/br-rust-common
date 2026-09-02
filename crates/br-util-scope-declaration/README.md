@@ -126,7 +126,7 @@ check in the contract.
 
 ```toml
 [dependencies]
-br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "v1.2.0" }
+br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "v1.3.0", version = "1.3.0" }
 ```
 
 ---

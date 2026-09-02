@@ -86,6 +86,12 @@ pub enum FabricError {
         expected: String,
         configured: Vec<String>,
     },
+    #[error("stream '{stream}' binds {configured:?}, which does not cover subject '{subject}'")]
+    SubjectNotCovered {
+        stream: &'static str,
+        subject: String,
+        configured: Vec<String>,
+    },
     #[error("payload on '{subject}' failed to deserialize: {detail}")]
     Decode { subject: String, detail: String },
     #[error("revision conflict on kv key '{key}' (expected {expected})")]
@@ -196,6 +202,19 @@ mod tests {
         assert!(msg.contains("INTEGRATION_EVT"));
         assert!(msg.contains("svc-pm-users"));
         assert!(msg.contains("integration.evt.identity.user.created.v1"));
+    }
+
+    #[test]
+    fn subject_not_covered_names_the_stream_subject_and_binding() {
+        let err = FabricError::SubjectNotCovered {
+            stream: "INTEGRATION_EVT",
+            subject: "integration.evt.identity.user.created.v1".to_string(),
+            configured: vec!["integration.cmd.>".to_string()],
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("INTEGRATION_EVT"));
+        assert!(msg.contains("integration.evt.identity.user.created.v1"));
+        assert!(msg.contains("integration.cmd.>"));
     }
 
     #[test]

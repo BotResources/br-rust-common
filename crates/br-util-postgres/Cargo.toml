@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Postgres helpers for BotResources services: pools, TLS validation, app roles, grants"
 
+[features]
+migrate = ["sqlx/migrate"]
+
 [dependencies]
 sqlx = { workspace = true }
 thiserror = { workspace = true }

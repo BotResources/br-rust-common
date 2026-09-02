@@ -12,8 +12,8 @@ JetStream / `br-core-integration`.
 ## The one contract: notify *after* commit
 
 Domain events must be broadcast **after** the database transaction commits,
-never inside it. Publishing inside the transaction is a real correctness bug
-(be-botresources.ai#66): if the transaction later rolls back, subscribers have
+never inside it. Publishing inside the transaction is a real correctness bug:
+if the transaction later rolls back, subscribers have
 already observed state that never persisted, and a client folding the event
 stream diverges from the durable truth.
 
@@ -40,7 +40,7 @@ crate removes is the trivial footgun the seed had — a bare `send(&event)`
 callable from anywhere, including mid-transaction. The pipeline still owns the
 ordering; the API makes the right order the obvious one. An end-to-end test on
 the consumer side (rollback → no subscriber receives) is what actually closes
-be-botresources.ai#66; it cannot live in this crate.
+that hole; it cannot live in this crate.
 
 ```rust,ignore
 use br_util_broadcast::{EventBus, PendingBroadcast};
@@ -112,7 +112,7 @@ dependency. Unified workspace versioning, distributed by git tag.
 
 ```toml
 [dependencies]
-br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "v1.2.0" }
+br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "v1.3.0", version = "1.3.0" }
 ```
 
 [`tokio::sync::broadcast`]: https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html

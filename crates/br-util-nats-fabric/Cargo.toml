@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Project NATS Fabric API: the restricted, typed application-facing way to use NATS in BR services — fixed v1 integration grammar, fixed streams/buckets, no runtime provisioning, plus generic Published-Language KV mechanics"
 
 [features]
-outbox = ["dep:sqlx"]
+outbox = ["dep:sqlx", "dep:metrics"]
 
 [dependencies]
 br-core-integration = { workspace = true }
@@ -16,6 +16,7 @@ br-core-events = { workspace = true }
 async-nats = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
+metrics = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true, optional = true, features = ["uuid", "json"] }
@@ -26,5 +27,11 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 br-core-kernel = { workspace = true }
+br-test-support = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+tracing-subscriber = { workspace = true }
+
+[[test]]
+name = "outbox_relay_e2e"
+required-features = ["outbox"]

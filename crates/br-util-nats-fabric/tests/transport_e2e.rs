@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use br_core_integration::{EventMetadata, IntegrationEvent};
 use br_core_kernel::{Actor, UserId};
+use br_test_support::require_nats_url;
 use br_util_nats_fabric::{
     Aggregate, Bc, ConnectionState, ConsumerTuning, EventCoords, Fabric, FabricError,
     INTEGRATION_EVT, PastFact,
@@ -15,32 +16,35 @@ struct Payload {
     label: String,
 }
 
-fn nats_url() -> Option<String> {
-    std::env::var("NATS_URL").ok()
-}
-
 async fn fabric() -> Fabric {
-    let url = nats_url().expect("NATS_URL set");
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     Fabric::new(async_nats::jetstream::new(client))
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {
-    let url = nats_url().expect("NATS_URL set");
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     async_nats::jetstream::new(client)
 }
 
 async fn recreate_event_stream(js: &async_nats::jetstream::Context, duplicate_window: Duration) {
     let _ = js.delete_stream(INTEGRATION_EVT).await;
-    js.create_stream(async_nats::jetstream::stream::Config {
-        name: INTEGRATION_EVT.to_string(),
-        subjects: vec!["integration.evt.>".to_string()],
-        duplicate_window,
-        ..Default::default()
-    })
-    .await
-    .expect("create fixed event stream");
+    let mut stream = js
+        .create_stream(async_nats::jetstream::stream::Config {
+            name: INTEGRATION_EVT.to_string(),
+            subjects: vec!["integration.evt.>".to_string()],
+            duplicate_window,
+            ..Default::default()
+        })
+        .await
+        .expect("create fixed event stream");
+    stream.purge().await.expect("purge the fixed event stream");
+    let state = stream.info().await.expect("stream info").state.clone();
+    assert_eq!(
+        state.messages, 0,
+        "the fixture must start from an empty {INTEGRATION_EVT}"
+    );
 }
 
 fn user_created_coords() -> EventCoords {
@@ -77,7 +81,7 @@ fn event(label: &str) -> IntegrationEvent<Payload> {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_creates_the_durable_then_fan_in_consumes_both_facts_on_one_consumer() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
@@ -124,7 +128,7 @@ async fn ensure_creates_the_durable_then_fan_in_consumes_both_facts_on_one_consu
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn two_ensure_calls_on_the_same_durable_share_one_consumer() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
@@ -169,7 +173,7 @@ async fn two_ensure_calls_on_the_same_durable_share_one_consumer() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn two_concurrent_ensure_calls_on_the_same_durable_converge_to_one_consumer() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
@@ -208,7 +212,7 @@ async fn two_concurrent_ensure_calls_on_the_same_durable_converge_to_one_consume
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_rejects_an_empty_coordinate_set() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
@@ -228,7 +232,7 @@ async fn ensure_rejects_an_empty_coordinate_set() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn graceful_drain_acks_the_in_flight_message_and_stops_without_redelivery() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
@@ -271,7 +275,7 @@ async fn graceful_drain_acks_the_in_flight_message_and_stops_without_redelivery(
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn graceful_drain_leaves_an_unacked_frame_held_under_ack_wait() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
@@ -326,7 +330,7 @@ async fn graceful_drain_leaves_an_unacked_frame_held_under_ack_wait() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn idempotent_publish_dedups_the_same_message_id_within_the_window() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(120)).await;
 
@@ -356,7 +360,7 @@ async fn idempotent_publish_dedups_the_same_message_id_within_the_window() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_with_threads_the_custom_tuning_onto_the_real_durable() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(2)).await;
 
@@ -396,7 +400,7 @@ async fn ensure_with_threads_the_custom_tuning_onto_the_real_durable() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn progress_resets_ack_wait_so_a_long_handler_is_not_redelivered_mid_processing() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_event_stream(&js, Duration::from_secs(10)).await;
 
@@ -404,7 +408,7 @@ async fn progress_resets_ack_wait_so_a_long_handler_is_not_redelivered_mid_proce
     let user = user_created_coords();
     let fabric = fabric().await;
     let tuning = ConsumerTuning {
-        ack_wait: Duration::from_secs(2),
+        ack_wait: Duration::from_secs(6),
         max_ack_pending: 256,
     };
     fabric
@@ -424,18 +428,18 @@ async fn progress_resets_ack_wait_so_a_long_handler_is_not_redelivered_mid_proce
         .expect("a delivery");
     assert_eq!(delivery.payload().unwrap().payload.label, "slow-me");
 
-    for _ in 0..4 {
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+    for _ in 0..6 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
         delivery
             .progress()
             .await
             .expect("working ack resets the server's ack_wait timer");
     }
 
-    let no_redelivery = tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await;
+    let no_redelivery = tokio::time::timeout(Duration::from_secs(3), consumer.recv()).await;
     assert!(
         no_redelivery.is_err(),
-        "periodic progress() held the frame in flight well past the 2s ack_wait — no redelivery mid-processing"
+        "periodic progress() held the frame in flight for 12s, twice the 6s ack_wait — no redelivery mid-processing"
     );
 
     delivery
@@ -459,7 +463,7 @@ async fn progress_resets_ack_wait_so_a_long_handler_is_not_redelivered_mid_proce
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn reachable_reports_connected_against_a_live_broker() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let fabric = fabric().await;
     assert_eq!(fabric.connection_state(), ConnectionState::Connected);
     assert!(fabric.reachable());
