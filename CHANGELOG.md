@@ -9,7 +9,26 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
-## [Unreleased]
+## [1.3.0] — 2026-09-02
+
+**Behaviour migration — `verify_command_durable` / `verify_event_durable`
+(#107).** Both were aliases of their `ensure_*` counterpart and created the
+durable they claimed to only probe. They now probe and create nothing. The
+signatures are unchanged, so this is compile-compatible, but it is runtime-
+relevant: a service that relied on a boot-time `verify_*_durable` to provision
+the durable its work loop later binds will find it missing after re-pinning.
+Call `ensure_command_durable` / `ensure_event_durable` (or the `_with` variants
+for custom `ConsumerTuning`) wherever provisioning was the intent, and keep
+`verify_*` for readiness probing only.
+
+**Deployment note — `duplicate_window`.** The outbox relay's dedup guarantee
+rests on a JetStream stream setting this crate never declares: `duplicate_window`
+defaults to 2 minutes, and the operator must make it explicit in the stream
+declaration for the guarantee to be relied on. Inside the window a manual
+re-stage yields a duplicate ack rather than a second delivery, and a rolling
+deploy that briefly runs two relays is absorbed. Details and the third
+consequence (the window is stream-wide, not per subject) are under *Ops note*
+below.
 
 ### Added
 
