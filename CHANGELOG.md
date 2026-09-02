@@ -76,6 +76,29 @@ release; they remain reachable through the historical per-crate tags
   configured }`**, the typed verdict of the readiness probe below. Additive on
   the `#[non_exhaustive]` `FabricError`.
 
+- **`br-util-directory` — `DirectoryProjector::with_impact_stager`, a
+  transactional seam for reacting to a roster change.** A consumer registers an
+  `Arc<dyn ImpactStager>` beside `new` / `with_config`; when a `known_*` row
+  actually changes, the sink calls `stage_in(conn, &[Impact::ForeignChanged {
+  foreign }])` **inside the same transaction** as the roster write. `ForeignRef`
+  is a validated `(namespace, key)` pair over the three frozen namespaces
+  `USER_NAMESPACE` / `GROUP_NAMESPACE` / `SERVICE_ACCOUNT_NAMESPACE`
+  (`identity.user`, `identity.group`, `identity.service_account`); the key is the
+  entity `Uuid`. `Impact` is `#[non_exhaustive]` and carries only the variant a
+  mirror can produce. A stager reports its own failure as the new
+  `DirectoryError::Stager(source)` variant, which the sink surfaces unchanged
+  after rolling the transaction back.
+- **`br-util-directory` — two supervision signals.** `progress()` yields a
+  `watch::Receiver<ProjectorProgress>` whose `changes` counter is bumped once per
+  **committed** change, on exactly the predicate that decides whether to stage an
+  impact. `health()` yields a `WatchHealthReceiver` composed **worst-of** over the
+  streams active for the projector (users always, groups per consumption scope,
+  service accounts per producer manifest): a stream counts as `Healthy` from the
+  moment its consumer is bound to the bucket until its `watch()` call returns, so
+  the composition is `Degraded` before `watch()` starts, after it returns, and
+  whenever any active stream is down. No loop, no backoff and no re-reconcile
+  were added — supervision stays the caller's.
+
 ### Changed
 
 - **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
@@ -97,6 +120,23 @@ release; they remain reachable through the historical per-crate tags
   calls `ensure_*_durable`, which is unchanged. The `durable` argument is
   retained for signature stability and call-site readability.
 
+
+- **`br-util-directory` — the user and service-account sinks now write inside a
+  transaction** (the group sink already did), and all three upsert with
+  `ON CONFLICT (…) DO UPDATE SET … WHERE (t.cols…) IS DISTINCT FROM
+  (EXCLUDED.cols…)`. An already-identical row is left untouched
+  (`rows_affected() == 0`), so a re-scan no longer rewrites every row. A group
+  counts as changed when its name changed **or** its recomposed member set
+  differs from the set read under `FOR UPDATE`; memberships are rewritten only
+  then, and in one set-based statement instead of one insert per member. A
+  `retract` counts only when a row was really deleted. Without a registered
+  stager the observable behaviour is that of `1.2.0` minus the no-op writes.
+- **Deployment note — grants.** A stager writes the adopter's own tables on the
+  sink's connection, so those tables need a grant on the runtime app role in the
+  service's own least-privilege grant migration. Without it the
+  stager fails and, sharing the transaction, **rolls the roster upsert back with
+  it** — the mirror stops converging. Grant before registering a stager.
+
 ### Fixed
 
 - **`br-util-nats-fabric` — readiness probes no longer leave phantom durable
@@ -115,7 +155,6 @@ release; they remain reachable through the historical per-crate tags
   *after* every consumer of that stream has re-pinned — deleted earlier, they
   are recreated on the next boot. They are recognisable as durables filtered on
   a single coordinate subject with a growing backlog and zero acks.
-
 ## [1.2.0] — 2026-07-22
 
 ### Added
