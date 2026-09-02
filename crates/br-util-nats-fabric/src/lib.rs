@@ -19,7 +19,7 @@ pub use coords::{
     command_subject, event_subject, parse_event_subject,
 };
 pub use error::{ConsumeErrorKind, FabricError, PublishErrorKind};
-pub use fabric::{ConnectionState, Fabric, NatsAuth};
+pub use fabric::{ConnectionState, Fabric, NatsAuth, PublishOutcome};
 pub use kv::{
     EphemeralAuthChange, EphemeralAuthStore, EphemeralAuthWatcher, KV_EPHEMERAL_AUTH,
     KV_PUBLISHED_LANGUAGE, KvKey, KvKeyError, KvOp, KvPrefix, ProjectionError, ProjectionSink,
@@ -31,9 +31,10 @@ pub use stream::{INTEGRATION_CMD, INTEGRATION_EVT};
 
 #[cfg(feature = "outbox")]
 pub use outbox::{
-    DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_MESSAGES, FailureClass, OUTBOX_NOTIFY_CHANNEL, OUTBOX_TABLE,
-    OutboxRelay, OutboxStore, OutboxStoreError, PendingOutbox, REASON_NO_STREAM, RelayHealth,
-    RelayHealthReceiver, RelayPolicy, RelayReport, RelayRunError, classify_failure, stage,
+    DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_MESSAGES, FailureClass, OUTBOX_NOTIFY_CHANNEL,
+    OUTBOX_RELAY_DUPLICATES_TOTAL, OUTBOX_TABLE, OutboxRelay, OutboxStore, OutboxStoreError,
+    PendingOutbox, REASON_NO_STREAM, RelayHealth, RelayHealthReceiver, RelayPass, RelayPolicy,
+    RelayReport, RelayRunError, classify_failure, stage,
 };
 
 pub use br_core_events::EventMetadata;
