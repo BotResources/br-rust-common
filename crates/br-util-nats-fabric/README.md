@@ -755,10 +755,11 @@ caller never mints a `Revision` by hand; every revision originates from
 `watch(on_change)` returns on its **first** stream error, and returns `Ok(())` on
 a clean stream end. Called directly and once, a transient broker fault (a missed
 heartbeat, a node freeze, a connection drop) therefore kills the watch
-**permanently and silently**: svc-auth's refresh rotation stops seeing "this
-family was revoked / rotated elsewhere", with no error after the initial return,
-until the pod restarts. `run(on_change)` is the supervised entrypoint a service
-should use.
+**permanently and silently**: a service watching this bucket for cross-instance
+revocation loses the watch on the first fault and nothing restarts it — it stops
+seeing "this family was revoked / rotated elsewhere", with no error after the
+initial return, until the process restarts. `run(on_change)` is the supervised
+entrypoint such a service should use.
 
 `run()` is the same loop as `PublishedLanguageConsumer::run()` — reconcile →
 publish `Healthy` → follow the live stream; on **any** watch error **or** a clean
@@ -796,16 +797,20 @@ not treat the change stream as gap-free.
 **Health.** Under `run()` the channel is born `Degraded`, is published `Healthy`
 only once the presence check has passed, and returns to `Degraded` for the whole
 fault + backoff window. The raw `watch()` primitive keeps driving the same
-channel (unchanged, for the standalone caller): its transitions coincide with the
-loop's, so the two never contradict each other. **`health()` reflects the loop's
+channel for the standalone caller, and its transitions coincide with the loop's,
+so the two never contradict each other — including a fail-closed key/decode
+error, which now publishes `Degraded` before returning (it previously left the
+channel `Healthy`). **`health()` reflects the loop's
 state, not the task's liveness** — the two documented stop modes leave the
 channel frozen on its last published value: an aborted or dropped task keeps
 whatever it last set (`Healthy`, if it was following), and a **panicking handler**
 propagates out of `run()` and kills the task the same way (the `tokio::sync`
 mutex holding the handler does not poison, so nothing marks the loop down). A
 readiness gate must therefore treat a sender-dropped receiver — `rx.changed()`
-returning `Err`, which fires once the dead task drops the watcher that owns the
-sender — as DOWN, and the caller must keep its handler panic-free.
+returning `Err` — as DOWN, and the caller must keep its handler panic-free. That
+signal only exists if the supervising task **owns** the watcher: move the watcher
+into the task, because a watcher held elsewhere never drops the sender and the
+gate would read a frozen `Healthy` forever.
 
 **The handler is reused, never cloned.** The caller's `FnMut` is held by the loop
 and handed to each attempt behind a mutex, so a handler carrying state (a counter,

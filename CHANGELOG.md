@@ -37,10 +37,11 @@ release; they remain reachable through the historical per-crate tags
 - **`br-util-nats-fabric` — `EphemeralAuthWatcher::run()`, a supervised
   entrypoint that survives a broker blip (#103).** `watch()` returns on its first
   stream error and returns `Ok(())` on a clean stream end, and nothing restarted
-  it: a transient NATS fault silently killed svc-auth's refresh-rotation /
-  reuse-detection watch until the pod was restarted — the same one-shot death the
-  supervised `PublishedLanguageConsumer::run()` fixed for the Published-Language
-  mirror. `run(on_change)` wraps the same supervision loop: reconcile, follow,
+  it: a service watching this bucket for cross-instance revocation lost the watch
+  on the first transient NATS fault and nothing restarted it, so it stayed blind
+  until the process was restarted — the same one-shot death the supervised
+  `PublishedLanguageConsumer::run()` fixed for the Published-Language mirror.
+  (The canonical consumer of the store itself is refresh-token rotation.) `run(on_change)` wraps the same supervision loop: reconcile, follow,
   and on any watch error or clean stream end publish `WatchHealth::Degraded`,
   back off (200 ms doubling to a 30 s cap, floor reset only by a watch that
   actually delivered a change) and re-arm — forever, with `std::convert::
@@ -125,6 +126,14 @@ release; they remain reachable through the historical per-crate tags
   were added — supervision stays the caller's.
 
 ### Changed
+
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::watch()` now marks the health
+  channel `Degraded` on a fail-closed decode/key error, not only on a stream
+  fault** (#103). Previously an undecodable value or an invalid key returned
+  `FabricError` while the channel still read `Healthy`, so a gate wired to
+  `health()` could not see a watch that had just died on a poison entry. The
+  returned errors are unchanged; only the health transition is new, and it makes
+  the raw primitive's transitions coincide with the supervised loop's.
 
 - **`br-util-nats-fabric` — the KV supervision warnings are renamed and now
   carry a `surface` field (#103).** The supervised loop is shared by two KV
