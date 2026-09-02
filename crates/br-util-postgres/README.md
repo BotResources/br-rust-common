@@ -90,6 +90,58 @@ equals the host extracted from the URL, exactly:
 | `ensure_app_role(pool, role_name, password)` | Idempotent `CREATE ROLE … LOGIN` (guarded by an `IF NOT EXISTS` `DO` block) + `ALTER ROLE … PASSWORD`. Call at startup via the **owner** pool, before `sqlx::migrate`. Validates `role_name` against `^[a-z][a-z0-9_]*$` (≤63 bytes). The role inherits Postgres's no-privilege defaults from `CREATE ROLE … LOGIN` (NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT) — there is **no** explicit hardening `ALTER`, because on PG 16+ asserting those flags requires SUPERUSER. The password is embedded as a **dollar-quoted literal** with a per-call random UUIDv7 tag, not a bind parameter — Postgres rejects bind params in DDL (`ALTER ROLE … PASSWORD $1` is a syntax error), so dollar-quoting is used instead. The generated SQL is never logged. |
 | `grant_app_access(pool, app_role)` | Post-migration GRANTs on schema `public` (USAGE, full CRUD on tables, USAGE+SELECT on sequences) **plus** `ALTER DEFAULT PRIVILEGES` so tables created by future migrations are GRANTed automatically. Must run via the same role that owns subsequent migrations. |
 
+### Migration status (opt-in feature `migrate`)
+
+Answers one question about a live database: **is it exactly at the migration
+set embedded in this binary — every migration applied, checksums matching,
+nothing dirty and nothing applied that this binary does not carry?** It is the
+report a post-deployment probe needs, and the truth travels with the artifact,
+so no migration count is ever hardcoded anywhere.
+
+Off by default: the workspace `sqlx` pin does not enable `migrate`, so a
+consumer that does not want the helper compiles none of it. Enable the
+`migrate` feature (see *Dependency* below) to get it. Building the `Migrator`
+with `sqlx::migrate!()` additionally needs sqlx's own `macros` feature in the
+consuming crate — this feature only enables `sqlx/migrate`.
+
+```rust
+use br_util_postgres::migrations_status;
+
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
+
+let status = migrations_status(&pool, &MIGRATOR).await?;
+if !status.is_current() {
+    eprintln!("{status:?}");
+    std::process::exit(1);
+}
+```
+
+| Item | Role |
+|---|---|
+| `migrations_status(pool, migrator) -> MigrationsStatus` | Reads `_sqlx_migrations` through sqlx's own `Migrate::list_applied_migrations` + `dirty_version` and diffs it against `migrator.iter()` by version and checksum. **Read-only.** |
+| `MigrationsStatus::is_current() -> bool` | The safe default, and the whole gate a probe needs: true when every **embedded** migration is applied with a matching checksum, nothing is dirty, and the database carries no migration this binary lacks — `pending`, `checksum_mismatch` and `applied_not_embedded` all empty and `dirty` `None`. A database ahead of the binary is **not** current: a service that runs `migrate!().run()` at boot crash-loops there on `VersionMissing`. |
+| `MigrationsStatus::embedded_applied() -> bool` | The lenient predicate: same, minus the `applied_not_embedded` clause. It answers "is *this binary's* own migration set in place", and is the right gate **only** for a service whose migrator is built with `set_ignore_missing(true)`, which boots over a database ahead of it. |
+
+`MigrationsStatus` is `#[non_exhaustive]`; every version list is sorted ascending:
+
+| Field | Exact meaning |
+|---|---|
+| `applied: usize` | How many embedded migrations have a row in `_sqlx_migrations`. Presence of the row is the whole criterion: a row whose checksum differs still counts as applied, and so does a row with `success = false` — sqlx's `list_applied_migrations` does not filter on `success`, which is why `dirty` is reported separately. `applied + pending.len()` equals the number of embedded migrations. |
+| `pending: Vec<i64>` | Embedded migrations with **no** row in the database — the missing tail. |
+| `checksum_mismatch: Vec<i64>` | Embedded migrations whose row exists but whose stored checksum differs from the embedded one — applied-but-since-edited. |
+| `applied_not_embedded: Vec<i64>` | Rows in the database with **no** embedded counterpart — the rollback-in-progress signal: the database has been migrated by a newer image than the one now running (a rollback, or a stale replica). They are never counted as pending, they falsify `is_current()` but not `embedded_applied()`, and they name the exact versions to look at when deciding whether to roll forward again or to re-run with `set_ignore_missing(true)`. |
+| `dirty: Option<i64>` | The lowest version whose row has `success = false` — a partially applied migration, and the same gate `Migrator::run` applies before doing anything (it aborts with `MigrateError::Dirty`). On Postgres with sqlx 0.8 this is expected to stay `None`: DDL is transactional, so a failed migration rolls its own row back rather than leaving it unsuccessful. It covers the states that outlive that guarantee — a row written by an older tool, a `no_tx` migration, or a hand-repaired table. |
+
+**It never runs, creates, or repairs anything.** No `ensure_migrations_table`,
+no `CREATE TABLE`, no `Migrator::run` — this crate does not auto-provision (the
+existing `init_pool` contract is the same). A database where
+`_sqlx_migrations` does not exist yet is not an error: the missing table
+(SQLSTATE `42P01`) is reported as *every embedded migration pending*, and the
+table is left absent.
+
+Errors map onto the existing `PostgresError::Db`: a `sqlx::migrate::MigrateError`
+is carried as `sqlx::Error::Migrate`. No new error variant.
+
 ### Errors
 
 `PostgresError`: `Config(String)`, `InvalidRoleName(String)`,
@@ -152,7 +204,9 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.2.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.2.0", version = "1.2.0" }
+# with the migration-status helper:
+# br-util-postgres = { git = "...", package = "br-util-postgres", tag = "v1.2.0", version = "1.2.0", features = ["migrate"] }
 ```
 
 ## sqlx is part of the public contract
