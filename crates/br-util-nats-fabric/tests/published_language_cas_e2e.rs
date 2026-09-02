@@ -1,3 +1,4 @@
+use br_test_support::require_nats_url;
 use br_util_nats_fabric::{
     Fabric, FabricError, KV_PUBLISHED_LANGUAGE, KvKey, PublishedLanguagePublisher,
     PublishedLanguageReader,
@@ -14,10 +15,6 @@ fn payload(label: &str) -> Payload {
     Payload {
         label: label.to_string(),
     }
-}
-
-fn require_nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {

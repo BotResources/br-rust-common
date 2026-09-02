@@ -207,10 +207,19 @@ concurrency. `max_ack_pending` follows JetStream wire semantics — use `>= 1` f
 bounded back-pressure window; `0` or a negative value means **unbounded** (no
 back-pressure), so set it deliberately. `ConsumerTuning::default()` is the `30s` /
 `256` row above. The rest
-of the config is **not** tunable: `max_deliver = -1`, `ack_policy = Explicit`,
-`deliver_policy = All` and `replay_policy = Instant` are semantic, not knobs, and
-the raw `async_nats` `pull::Config` is never exposed — the escape hatch stays
-closed. Each consumer entry point has a `_with` variant taking `&ConsumerTuning`
+of the config is not tunable today. `ack_policy = Explicit`,
+`deliver_policy = All`, `replay_policy = Instant` and the rendered
+`filter_subject(s)` are **frozen as contract** — they *are* the pull work-loop
+and the anti-over-delivery guarantee, so changing one breaks the contract rather
+than tuning it. `max_deliver = -1` is a different case: it is a **uniform default
+today, legitimately per-service tomorrow**. Unlimited redelivery makes poison
+handling the caller's explicit `term()` instead of a silent drop-on-budget, which
+is the right default, but a service that wants a finite delivery budget and a
+dead-letter path has a real need — and the answer is then a **new opt-in seam on
+`ConsumerTuning`**, exactly as `ack_wait` and `max_ack_pending` already are.
+Never a reach-around: the raw `async_nats` `pull::Config` is not exposed at any
+version, the escape hatch stays closed, and a service needing another value files
+it as a gap here rather than dropping to raw `async-nats`. Each consumer entry point has a `_with` variant taking `&ConsumerTuning`
 (`ensure_command_consumer_with`, `ensure_event_consumer_with`,
 `ensure_event_consumer_many_with`, `run_commands_with`, `run_events_with`,
 `ensure_command_durable_with`, `ensure_event_durable_with`); the
@@ -286,7 +295,12 @@ because the probe created a real consumer; they no longer are. A NATS user
 holding `STREAM.INFO` but lacking consumer-create permission now passes the
 probe and fails at the first `run_*` / `ensure_*_consumer`. The probe also says
 nothing about the presence of a producer, of messages, or of an existing durable.
-It proves stream presence and subject coverage — nothing more.
+It proves stream presence and subject coverage — nothing more. Coverage is read
+from the stream's own configured `subjects`, so a stream fed only by a `mirror`
+or a `sources` block — which binds no subjects of its own — never covers any
+coordinate and fails the probe permanently; the fixed `INTEGRATION_CMD` /
+`INTEGRATION_EVT` are declared with explicit subjects, and a mirrored variant is
+outside what this probe can verify.
 
 The `durable` argument is retained for signature stability and call-site
 readability; it names the readiness gate, and no consumer bearing it is created.
@@ -452,9 +466,25 @@ reveal it. Fanning one fact out to N coordinates therefore needs **N distinct
 `event_id`s** — which the "one fact per event" rule already implies: two
 coordinates are two facts.
 
+**The rule is positional, not typed: the dedup key is the top-level `event_id`
+field of the stored payload, whatever staged it.** The relay reads the persisted
+JSON, and if it holds a top-level `event_id` whose value is a UUID string, that
+UUID becomes `Nats-Msg-Id`. `OutboxRecord::stage_event` writes that field for
+every `IntegrationEvent<T>`, which is the contracted case — but a raw
+`OutboxRecord::stage(id, coords, value)` payload is **uncontracted caller
+content**, and if it happens to carry a top-level UUID `event_id` it is promoted
+exactly the same way. **A raw-stage caller therefore owns that field's
+uniqueness.** Two raw rows sharing one `event_id` inside the stream's duplicate
+window publish once: the broker answers the second with a duplicate ack, drops
+the frame, and the relay — which correctly reads that ack as acceptance — still
+marks the second row `PUBLISHED`. The loss is visible only as
+`RelayPass.duplicates`, the `"duplicate publish ack"` warn line and the counter.
+Either mint a distinct `event_id` per raw row, or do not put a top-level
+`event_id` in a raw payload at all.
+
 The id falls back to the **outbox row id** when the stored payload has no
-top-level `event_id` **or** carries one that is not a UUID string — the shape a
-raw `OutboxRecord::stage(id, coords, value)` produces. The row id is still unique
+top-level `event_id` **or** carries one that is not a UUID string — the ordinary
+shape of a raw `OutboxRecord::stage(id, coords, value)`. The row id is unique
 and stable per row, so the crash-replay case the relay actually needs stays
 covered; only dedup **across** producers of the same fact is unavailable for such
 a payload.
@@ -583,8 +613,11 @@ returned by `update_if`, on the `PUBLISHED_LANGUAGE` bucket:
   the key stays live. `retract` remains the unconditional delete.
 
 `Revision` is the same opaque newtype used by *Surface 3*: a caller never mints
-one, every revision originates from a `get_with_revision` or a successful
-`update_if`.
+one. On **this** surface the two calls that hand one out are `get_with_revision`
+and a successful `update_if`; `put`, `update`, `retract`, `delete_if`,
+`reconcile` and `repair_drift` return none. *Surface 3*'s `update_if` returns
+`()` and its revision-returning sibling is named
+`update_if_returning_revision` — the two surfaces differ in that one name only.
 
 The read-compare-CAS loop, keyed on an aggregate version carried in the
 published DTO:
@@ -658,8 +691,8 @@ DB timeout the incident produced) is retried on the same backoff. **Honest limit
 this reconvergence guarantee covers the outage gap, **not** the intra-cycle window
 between the bootstrap scan and the subsequent `watch_all()` subscription — a `Put`
 landing in that (millisecond) handoff window is missed until the next fault
-triggers a re-bootstrap (pre-existing bootstrap→watch race, tracked as umbrella
-issue #104).
+triggers a re-bootstrap. This is a pre-existing bootstrap→watch race, known and
+not yet closed.
 
 **Health ownership and semantics.** The supervised loop is the **sole writer** of
 the `WatchHealth` channel (the raw `watch()` primitive writes it not at all), so
@@ -779,7 +812,16 @@ blind reuse-detection).
   `get_with_revision`, write it back here). On a revision mismatch it returns the
   first-class, matchable `FabricError::RevisionConflict { key, expected }` —
   distinct from not-found (`Ok(None)` on read), `KeyAlreadyExists`, transport
-  (`Kv`) and `Decode`, so the caller can drive reuse-detection on it.
+  (`Kv`) and `Decode`, so the caller can drive reuse-detection on it. It returns
+  `()`: the new revision is **not** handed back, so a caller chaining a second
+  revision-checked operation off this write must re-read.
+- `update_if_returning_revision(&KvKey, &V, Revision) -> Result<Revision, FabricError>`
+  is the same write with the same conflict semantics, returning the **new**
+  `Revision` — the shape `PublishedLanguagePublisher::update_if` has on
+  *Surface 2*. Use it to chain (rotate then `delete_if`, or rotate twice) without
+  a re-read: a re-read between the two writes is a window in which another writer
+  can move the revision on, and the chain then acts on a revision the caller never
+  produced. `update_if` is kept unchanged for the callers that do not chain.
 - `delete_if(&KvKey, Revision) -> Result<(), FabricError>` is the
   **revision-checked delete**: it writes a delete tombstone (so a subsequent
   `get_with_revision` reads `Ok(None)`) only if the supplied `Revision` is still
@@ -834,13 +876,31 @@ blind reuse-detection).
   health channel**, so bind one watcher and reuse it: a `health()` taken from one
   `store.watcher()` while another `store.watcher()` runs the watch is a receiver
   nothing ever publishes to, frozen on its initial `Degraded`.
+  A watcher also exposes `progress() -> WatchProgressReceiver`, a
+  `tokio::sync::watch` of the `#[non_exhaustive] WatchProgress { changes,
+  skipped }` counters — entries handed to the handler, and entries skipped as
+  unreadable — with `observed()` for their sum. Like `health()`, it is per
+  watcher instance.
   `EphemeralAuthWatcher::watch(on_change)` runs the watch loop, invoking the
   caller's `FnMut(EphemeralAuthChange<V>)` per change —
-  `EphemeralAuthChange::Set { key, value }` for a put (fail-closed decode, same as
-  `entries`) and `EphemeralAuthChange::Removed { key }` for a delete / purge,
-  mirroring the Published-Language watch (same fail-closed decode, same
-  `health()` degraded/healthy transitions, same cancel-safety). The raw
+  `EphemeralAuthChange::Set { key, value }` for a put and
+  `EphemeralAuthChange::Removed { key }` for a delete / purge. The raw
   `async_nats` `Entry` is never handed to the caller — only the typed change.
+  **An entry this consumer cannot read is skipped, not fatal.** A value that
+  fails to decode into `V`, or a key `KvKey` rejects, is dropped with one
+  `tracing::warn!` naming the key and the error — never the value bytes, which
+  are credential state — counted on `progress()`, and the watch **keeps
+  running**; health stays `Healthy`, because the stream is alive. This is the
+  deliberate opposite of `PublishedLanguageConsumer`, which wedges loudly on an
+  undecodable value: that loop owns a local mirror whose convergence a poison
+  entry would silently falsify, while this one only forwards notifications and a
+  single skew-written entry must not cost the consumer every other change. A
+  poison entry here is therefore **not** surfaced as an error to the caller — it
+  is visible on `progress()` and in the warn line only, and a consumer that must
+  react to it watches `WatchProgress::skipped`.
+  `EphemeralAuthStore::entries` and `get_with_revision` are unchanged and stay
+  fail-closed: reading a poison key on purpose is still an explicit
+  `FabricError::Decode`.
   `EphemeralAuthChange::Removed` covers **TTL-expiry only when the bucket is
   declared with delete-marker TTL** (`limit_markers` / `allow_msg_ttl`): a
   TTL-expired key surfaces as a delete/purge marker on the watch only if the bucket
@@ -860,9 +920,13 @@ blind reuse-detection).
   readiness stays DOWN.
 
 `Revision` is an opaque newtype over the NATS KV sequence — the caller reads it
-from `get_with_revision` and passes it back to `update_if` or `delete_if`. A
-caller never mints a `Revision` by hand; every revision originates from
-`get_with_revision` or a successful `update_if`.
+from `get_with_revision` and passes it back to `update_if`,
+`update_if_returning_revision` or `delete_if`. A caller never mints a `Revision`
+by hand. On **this** surface exactly two calls hand one out:
+`get_with_revision` and a successful `update_if_returning_revision`; `update_if`
+returns `()`, and `create`, `create_with_ttl`, `put`, `delete` and `delete_if`
+return no revision either — so a chain that starts at a `create` needs one
+`get_with_revision` before its first revision-checked write.
 
 ### Supervised operation — `run()` (resubscribe-only)
 
@@ -899,6 +963,14 @@ away): a deleted bucket keeps the loop `Degraded` with a `warn` per attempt —
 fail-loud, never papered over — and the loop re-arms by itself once the bucket is
 back.
 
+**An unreadable entry does not restart the loop.** Because `watch()` skips it
+rather than returning, a rolling deploy in which a schema-skewed writer keeps
+publishing values this consumer cannot decode does **not** flap the supervisor:
+the watch stays up, every readable change behind the poison entry is still
+delivered, and `WatchProgress::skipped` climbs. Skipped entries also count as
+**progress**, so an attempt that only skipped still resets the backoff floor — a
+stream that is demonstrably alive never escalates to the 30 s cap.
+
 **Honest limit — the outage gap is lost, not replayed.** Resubscribe-only means a
 `Set`/`Removed` that lands while the watch is down is **never** delivered: there
 is no catch-up scan and no replay. That is sufficient for the canonical consumer
@@ -912,9 +984,10 @@ not treat the change stream as gap-free.
 only once the presence check has passed, and returns to `Degraded` for the whole
 fault + backoff window. The raw `watch()` primitive keeps driving the same
 channel for the standalone caller, and its transitions coincide with the loop's,
-so the two never contradict each other — including a fail-closed key/decode
-error, which now publishes `Degraded` before returning (it previously left the
-channel `Healthy`). **`health()` reflects the loop's
+so the two never contradict each other. A key/decode error is **not** one of
+those transitions: it is skipped, not returned, so it never moves health — an
+alive watch reads `Healthy` however many entries it had to skip. **`health()`
+reflects the loop's
 state, not the task's liveness** — the two documented stop modes leave the
 channel frozen on its last published value: an aborted or dropped task keeps
 whatever it last set (`Healthy`, if it was following), and a **panicking handler**
@@ -943,7 +1016,7 @@ from a fresh copy on recovery.
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
 | prefix enumeration (`PublishedLanguageReader::keys`/`entries`) | the `KvPrefix` to scan                 |
 | compare-and-swap KV (`EphemeralAuthStore`, `PublishedLanguagePublisher`, `Revision`) | the `KvKey`, the value, the observed revision |
-| per-key TTL on create, enumeration, change-watch and its supervised re-arm (`EphemeralAuthStore`, `EphemeralAuthWatcher::run`) | the `Duration`, the `KvPrefix`, the `on_change` handler |
+| per-key TTL on create, enumeration, change-watch and its supervised re-arm, and the watch's health/progress signals (`EphemeralAuthStore`, `EphemeralAuthWatcher::run`, `health`, `progress`) | the `Duration`, the `KvPrefix`, the `on_change` handler, the reaction to a rising `skipped` |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
 | the outbox dedup id (envelope `event_id`, row id fallback) and the duplicate-ack signals | the stream's `duplicate_window`, declared out of band |
@@ -956,6 +1029,8 @@ from a fresh copy on recovery.
 | `verify_*_durable` keeps a `durable` parameter it no longer uses | It used to create that durable (five phantom consumers accumulated in prod); the probe was fixed in place so every existing readiness call site keeps compiling and simply stops leaving a consumer behind. |
 | `EphemeralAuthWatcher::run()` reconciles by probing the bucket, while `PublishedLanguageConsumer::run()` re-bootstraps its whole mirror | `EPHEMERAL_AUTH` is CAS-written and TTL-bounded and its consumers hold no local replica — the bucket is the truth, re-read under CAS at decision time — so there is nothing to rebuild and recovery only has to re-arm the subscription; the probe exists solely to fail loud when the bucket itself is gone. |
 | `RelayPass` exists beside `RelayReport` instead of `RelayReport` gaining two fields | `RelayReport` is a plain (non-`#[non_exhaustive]`) struct in the published API, so adding a field to it is a breaking change for every consumer that constructs or exhaustively destructures one. |
+| `EphemeralAuthStore` has both `update_if` (returns `()`) and `update_if_returning_revision` | `update_if` shipped in `1.2.0` returning `()`; changing its return type is a breaking change, so the chainable form is an additive sibling rather than a corrected signature. |
+| `EphemeralAuthWatcher` skips an entry it cannot read while `PublishedLanguageConsumer` wedges on one | The consumer owns a local mirror a poison entry would silently falsify, so it must stop; the watcher only forwards notifications, and stopping cost it every other change on the bucket plus a backoff walk to the cap on each retry. |
 | The outbox dedup id prefers the envelope `event_id` over the outbox row id | It is the same key hand-rolled relays elsewhere already use, so the platform keeps **one** dedup keyspace; carrying it in a dedicated column would mean a breaking migration on a table whose DDL is consumer-owned. |
 
 ## Dependency

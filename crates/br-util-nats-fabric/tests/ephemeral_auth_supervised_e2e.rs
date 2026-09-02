@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use br_test_support::require_nats_url;
 use br_util_nats_fabric::{
     EphemeralAuthChange, EphemeralAuthStore, Fabric, KV_EPHEMERAL_AUTH, KvKey, WatchHealth,
-    WatchHealthReceiver,
+    WatchHealthReceiver, WatchProgress, WatchProgressReceiver,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -14,10 +15,6 @@ struct Payload {
 }
 
 type Seen = Arc<Mutex<Vec<EphemeralAuthChange<Payload>>>>;
-
-fn require_nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
-}
 
 async fn jetstream() -> async_nats::jetstream::Context {
     let url = require_nats_url();
@@ -181,4 +178,91 @@ async fn run_holds_degraded_and_delivers_nothing_while_the_bucket_is_absent() {
     create_bucket(&js).await;
     reach_health(&mut health, WatchHealth::Healthy, Duration::from_secs(60)).await;
     running.abort();
+}
+
+async fn raw_bucket(js: &async_nats::jetstream::Context) -> async_nats::jetstream::kv::Store {
+    js.get_key_value(KV_EPHEMERAL_AUTH)
+        .await
+        .expect("the bucket the fixture just created")
+}
+
+async fn await_progress(
+    rx: &mut WatchProgressReceiver,
+    want: impl Fn(WatchProgress) -> bool,
+    within: Duration,
+) -> WatchProgress {
+    let observed = tokio::time::timeout(within, async {
+        loop {
+            let progress = *rx.borrow_and_update();
+            if want(progress) {
+                return progress;
+            }
+            rx.changed().await.expect("progress channel alive");
+        }
+    })
+    .await;
+    observed.expect("the watch never reached the expected progress")
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker; recreates the shared EPHEMERAL_AUTH bucket, so run with --test-threads=1"]
+async fn an_entry_this_consumer_cannot_read_is_skipped_and_the_watch_keeps_delivering() {
+    let js = jetstream().await;
+    reset_bucket(&js).await;
+    let raw = raw_bucket(&js).await;
+
+    let store = open_store().await;
+    let watcher = store.watcher();
+    let mut health = watcher.health();
+    let mut progress = watcher.progress();
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let running = spawn_run(watcher, seen.clone());
+
+    reach_health(&mut health, WatchHealth::Healthy, Duration::from_secs(10)).await;
+
+    let poison = key("poison");
+    raw.put(poison.as_str(), "{ not the frozen shape".into())
+        .await
+        .expect("a schema-skewed writer puts a value this consumer cannot decode");
+
+    await_progress(&mut progress, |p| p.skipped == 1, Duration::from_secs(10)).await;
+
+    let good = key("good");
+    store
+        .put(
+            &good,
+            &Payload {
+                label: "after the poison".to_string(),
+            },
+        )
+        .await
+        .expect("put a readable value behind the poison entry");
+    await_delivery(&seen, &good, Duration::from_secs(10)).await;
+
+    let final_progress =
+        await_progress(&mut progress, |p| p.changes >= 1, Duration::from_secs(10)).await;
+    assert_eq!(
+        final_progress.skipped, 1,
+        "exactly the poison entry was skipped"
+    );
+    assert_eq!(
+        *health.borrow_and_update(),
+        WatchHealth::Healthy,
+        "a single unreadable entry does not degrade a live watch"
+    );
+    assert!(
+        !seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|change| matches!(change, EphemeralAuthChange::Set { key, .. } if key == &poison)),
+        "the unreadable entry is never handed to the caller"
+    );
+    assert!(
+        !running.is_finished(),
+        "one unreadable entry must not tear the watch down"
+    );
+    running.abort();
+
+    let _ = js.delete_key_value(KV_EPHEMERAL_AUTH).await;
 }

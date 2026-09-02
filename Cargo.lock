@@ -506,6 +506,7 @@ dependencies = [
  "br-core-events",
  "br-core-integration",
  "br-core-kernel",
+ "br-test-support",
  "chrono",
  "futures-util",
  "metrics",

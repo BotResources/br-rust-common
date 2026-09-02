@@ -11,6 +11,7 @@ use crate::kv::ephemeral_auth::EphemeralAuthStore;
 use crate::kv::ephemeral_auth_supervise::SupervisedWatch;
 use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
 use crate::kv::key::KvKey;
+use crate::kv::progress::{WatchProgressChannel, WatchProgressReceiver};
 use crate::kv::supervisor::supervise;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +36,7 @@ fn classify(operation: Operation) -> ChangeKind {
 pub struct EphemeralAuthWatcher<V> {
     kv: Store,
     health: WatchHealthChannel,
+    progress: WatchProgressChannel,
     _value: PhantomData<V>,
 }
 
@@ -46,6 +48,7 @@ where
         Self {
             kv: store.store().clone(),
             health: WatchHealthChannel::new(),
+            progress: WatchProgressChannel::new(),
             _value: PhantomData,
         }
     }
@@ -56,6 +59,14 @@ where
 
     pub fn health(&self) -> WatchHealthReceiver {
         self.health.receiver()
+    }
+
+    pub fn progress(&self) -> WatchProgressReceiver {
+        self.progress.receiver()
+    }
+
+    pub(crate) fn observed(&self) -> u64 {
+        self.progress.snapshot().observed()
     }
 
     pub async fn run<H>(&self, on_change: H) -> std::convert::Infallible
@@ -87,14 +98,22 @@ where
                 }
             };
             self.health.set(WatchHealth::Healthy);
-            let change = match Self::change_from(entry) {
-                Ok(change) => change,
-                Err(e) => {
-                    self.health.set(WatchHealth::Degraded);
-                    return Err(e);
+            let key = entry.key.clone();
+            match Self::change_from(entry) {
+                Ok(change) => {
+                    self.progress.record_change();
+                    on_change(change);
                 }
-            };
-            on_change(change);
+                Err(e) => {
+                    self.progress.record_skip();
+                    tracing::warn!(
+                        surface = "ephemeral-auth",
+                        key = %key,
+                        error = %e,
+                        "skipping an ephemeral-auth entry this consumer cannot read"
+                    );
+                }
+            }
         }
         self.health.set(WatchHealth::Degraded);
         Ok(())

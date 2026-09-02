@@ -174,3 +174,59 @@ async fn one_event_id_reused_across_two_coordinates_loses_the_second_frame_strea
 
     let _ = js.delete_stream(INTEGRATION_EVT).await;
 }
+
+#[tokio::test]
+#[ignore = "requires NATS_URL and TEST_DATABASE_URL pointing at a real broker and database"]
+async fn two_raw_staged_rows_sharing_a_uuid_event_id_collapse_to_one_frame() {
+    let js = jetstream().await;
+    recreate_event_stream(&js).await;
+    let pool = outbox_pool().await;
+    let relay = OutboxRelay::new(pool.clone(), Fabric::new(jetstream().await));
+
+    let event_id = Uuid::now_v7();
+    let first_row = Uuid::now_v7();
+    let second_row = Uuid::now_v7();
+    for row_id in [first_row, second_row] {
+        let record = OutboxRecord::stage(
+            row_id,
+            user_created(),
+            serde_json::json!({
+                "event_id": event_id.to_string(),
+                "hand_rolled": "no envelope type, just a top-level event_id",
+            }),
+        );
+        stage(&pool, &record).await.expect("persist the staged row");
+    }
+
+    let pass = relay.run_once_detailed().await.expect("relay pass");
+    assert_eq!(pass.picked, 2);
+    assert_eq!(
+        pass.published, 2,
+        "both rows are accepted and marked published"
+    );
+    assert_eq!(
+        pass.row_id_fallbacks, 0,
+        "a raw-staged payload whose top-level event_id is a UUID is promoted to the dedup key"
+    );
+    assert_eq!(
+        pass.duplicates, 1,
+        "the second raw row collides on the event_id its caller chose"
+    );
+
+    assert_eq!(row_status(&pool, first_row).await, "PUBLISHED");
+    assert_eq!(
+        row_status(&pool, second_row).await,
+        "PUBLISHED",
+        "the dropped frame still leaves its row PUBLISHED — the caller owns the uniqueness of event_id"
+    );
+
+    let stored = delivered(&js).await;
+    assert_eq!(
+        stored.len(),
+        1,
+        "the broker drops the second frame inside the duplicate window"
+    );
+    assert_eq!(message_id(&stored[0]), event_id.to_string());
+
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
+}

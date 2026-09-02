@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use br_test_support::require_nats_url;
 use br_util_nats_fabric::{
     EphemeralAuthChange, EphemeralAuthStore, Fabric, FabricError, KV_EPHEMERAL_AUTH, KvKey,
     KvPrefix,
@@ -11,10 +12,6 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 struct Payload {
     label: String,
-}
-
-fn require_nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn fabric() -> Fabric {

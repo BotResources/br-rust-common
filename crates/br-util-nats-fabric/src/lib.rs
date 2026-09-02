@@ -24,7 +24,7 @@ pub use kv::{
     EphemeralAuthChange, EphemeralAuthStore, EphemeralAuthWatcher, KV_EPHEMERAL_AUTH,
     KV_PUBLISHED_LANGUAGE, KvKey, KvKeyError, KvOp, KvPrefix, ProjectionError, ProjectionSink,
     PublishedLanguageConsumer, PublishedLanguagePublisher, PublishedLanguageReader, Revision,
-    WatchHealth, WatchHealthReceiver, reconcile,
+    WatchHealth, WatchHealthReceiver, WatchProgress, WatchProgressReceiver, reconcile,
 };
 pub use outbox::OutboxRecord;
 pub use stream::{INTEGRATION_CMD, INTEGRATION_EVT};

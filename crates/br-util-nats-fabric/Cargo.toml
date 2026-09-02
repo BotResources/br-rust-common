@@ -27,6 +27,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 br-core-kernel = { workspace = true }
+br-test-support = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 

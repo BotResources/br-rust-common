@@ -1,14 +1,11 @@
 use std::time::Duration;
 
+use br_test_support::require_nats_url;
 use br_util_nats_fabric::{
     Aggregate, Bc, CommandCoords, ConsumeErrorKind, ConsumerTuning, EventCoords, Fabric,
     FabricError, INTEGRATION_CMD, INTEGRATION_EVT, PastFact, Verb,
 };
 use uuid::Uuid;
-
-fn require_nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
-}
 
 async fn jetstream() -> async_nats::jetstream::Context {
     let url = require_nats_url();

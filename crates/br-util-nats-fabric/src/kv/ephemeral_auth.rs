@@ -66,8 +66,18 @@ where
         value: &V,
         expected: Revision,
     ) -> Result<(), FabricError> {
-        update_expecting(&self.kv, key, value, expected).await?;
+        self.update_if_returning_revision(key, value, expected)
+            .await?;
         Ok(())
+    }
+
+    pub async fn update_if_returning_revision(
+        &self,
+        key: &KvKey,
+        value: &V,
+        expected: Revision,
+    ) -> Result<Revision, FabricError> {
+        update_expecting(&self.kv, key, value, expected).await
     }
 
     pub async fn delete(&self, key: &KvKey) -> Result<(), FabricError> {
