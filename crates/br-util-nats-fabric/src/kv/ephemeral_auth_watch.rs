@@ -6,7 +6,6 @@ use serde::de::DeserializeOwned;
 
 use crate::consumer::backoff::Backoff;
 use crate::error::FabricError;
-use crate::kv::codec::decode;
 use crate::kv::ephemeral_auth::EphemeralAuthStore;
 use crate::kv::ephemeral_auth_supervise::SupervisedWatch;
 use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
@@ -143,7 +142,7 @@ where
         Ok(match classify(entry.operation) {
             ChangeKind::Removed => EphemeralAuthChange::Removed { key },
             ChangeKind::Set => EphemeralAuthChange::Set {
-                value: decode::<V>(&entry.key, &entry.value)
+                value: serde_json::from_slice::<V>(&entry.value)
                     .map_err(|_| SkipReason::UndecodableValue)?,
                 key,
             },

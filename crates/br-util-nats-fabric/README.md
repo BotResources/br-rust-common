@@ -572,11 +572,12 @@ entries to copy, what to persist — is a set of **caller-owned seams**.
 ### Keys
 
 `KvKey` / `KvPrefix` accept `[A-Za-z0-9_./-]`, reject empty and wildcard-like
-input (`*`, `>`). On the **single-key read, enumeration and publisher** paths
-encode/decode is **fail-closed**: a decode failure is an explicit
-`FabricError::Decode` naming the key, never a silent skip. The one documented
-exception is `EphemeralAuthWatcher::watch`, which skips an entry it cannot read
-rather than failing the loop — see *Surface 3 — Ephemeral Auth over KV*.
+input (`*`, `>`). On the **single-key read, enumeration, publisher and
+`PublishedLanguageConsumer`** paths encode/decode is **fail-closed**: a decode
+failure is an explicit `FabricError::Decode` naming the key, never a silent
+skip. The one documented exception is `EphemeralAuthWatcher::watch`, which skips
+an entry it cannot read rather than failing the loop — see *Surface 3 —
+Ephemeral Auth over KV*.
 
 ### Publisher mechanics
 
@@ -908,7 +909,11 @@ blind reuse-detection).
   react to it watches `WatchProgress::skipped`.
   `EphemeralAuthStore::entries` and `get_with_revision` are unchanged and stay
   fail-closed: reading a poison key on purpose is still an explicit
-  `FabricError::Decode`.
+  `FabricError::Decode`. **That error carries the `serde_json` detail — the
+  offending value fragment included — so on this bucket a caller must not log it
+  verbatim:** log a classification (the variant, the key), never `%e` / `{e}`.
+  The watch path never materialises the fragment at all; a deliberate
+  fail-closed read hands it to the caller, who owns it from there.
   `EphemeralAuthChange::Removed` covers **TTL-expiry only when the bucket is
   declared with delete-marker TTL** (`limit_markers` / `allow_msg_ttl`): a
   TTL-expired key surfaces as a delete/purge marker on the watch only if the bucket
@@ -1000,10 +1005,9 @@ so the two never contradict each other. A key/decode error is **not** one of
 those transitions: it is skipped, not returned, so it never moves health — an
 alive watch reads `Healthy` however many entries it had to skip, which is
 precisely why `WatchProgress::skipped`, not `health()`, is the recovery trigger
-for a dropped entry. **`health()`
-reflects the loop's
-state, not the task's liveness** — the two documented stop modes leave the
-channel frozen on its last published value: an aborted or dropped task keeps
+for a dropped entry. **`health()` reflects the loop's state, not the task's
+liveness** — the two documented stop modes leave the channel frozen on its last
+published value: an aborted or dropped task keeps
 whatever it last set (`Healthy`, if it was following), and a **panicking handler**
 propagates out of `run()` and kills the task the same way (the `tokio::sync`
 mutex holding the handler does not poison, so nothing marks the loop down). A
@@ -1046,7 +1050,8 @@ from a fresh copy on recovery.
 | `EphemeralAuthStore` has both `update_if` (returns `()`) and `update_if_returning_revision` | `update_if` shipped in `1.2.0` returning `()`; changing its return type is a breaking change, so the chainable form is an additive sibling rather than a corrected signature. |
 | `EphemeralAuthWatcher` skips an entry it cannot read while `PublishedLanguageConsumer` wedges on one | The consumer owns a local mirror a poison entry would silently falsify, so it must stop; the watcher only forwards notifications, and stopping cost it every other change on the bucket plus a backoff walk to the cap on each retry. |
 | A skipped entry is signalled on `progress()` and never on `health()` | Health tracks whether the subscription is alive, and it is: degrading on a value one consumer cannot read would make a schema-skewed writer look like a broker outage and would flap every readiness gate on the bucket. The loss is real but it is a per-entry loss, so it gets a per-entry counter, and `WatchProgress::skipped` is what a consumer holding derived state must watch. |
-| A skipped entry can never leave a stale key in a consumer's cache | `change_from` rejects an unusable key for both `Set` and `Removed`, and `KvKey::new` is deterministic — so a `Removed` is skipped only for a key whose `Set` was skipped too, and no handler ever saw it. The only asymmetric case is an undecodable value, which fails on `Set` alone: its `Removed` still arrives. Skipping therefore drops notifications, never leaves a consumer holding a key it can no longer be told about. |
+| A skipped entry never leaves a consumer holding a key it can no longer be told about | `change_from` rejects an unusable key for both `Set` and `Removed`, and `KvKey::new` is deterministic — so a `Removed` is skipped only for a key whose `Set` was skipped too, and no handler ever saw it. The only asymmetric case is an undecodable value, which fails on `Set` alone: its `Removed` still arrives. Skipping therefore drops notifications, never leaves a consumer holding a key it can no longer be told about. |
+| `FabricError::Decode` still carries the `serde_json` detail, and `entries` / `get_with_revision` still return it | Narrowing the error would drop the detail every other bucket needs to diagnose a decode failure, so the type stays as it is and the `EPHEMERAL_AUTH` obligation lands on the caller: a deliberate fail-closed read on this bucket must be logged as a classification, never as the formatted error. |
 | The warn on a skipped entry logs a static `reason` plus `value_len`, never the `FabricError` | `FabricError::Decode` carries the raw `serde_json` message, which quotes the offending value fragment on an `invalid type` / `invalid value` / `unknown variant` failure; on `EPHEMERAL_AUTH` that fragment is credential state, so the error string cannot reach a log sink. |
 | The outbox dedup id prefers the envelope `event_id` over the outbox row id | It is the same key hand-rolled relays elsewhere already use, so the platform keeps **one** dedup keyspace; carrying it in a dedicated column would mean a breaking migration on a table whose DDL is consumer-owned. |
 

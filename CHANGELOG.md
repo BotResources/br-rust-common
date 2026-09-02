@@ -310,7 +310,8 @@ below.
   `key`, a static `reason` (`"undecodable value"` or `"invalid key"`) and
   `value_len` — never the `FabricError`, whose `serde_json` detail would quote
   the offending value fragment, which on this bucket is credential state —
-  counted on the new `progress()` channel, and the watch continues; health stays `Healthy` (the stream is alive) and the attempt counts
+  counted on the new `progress()` channel, and the watch continues; health
+  stays `Healthy` (the stream is alive) and the attempt counts
   as **progress**, so the backoff floor is not escalated by entries the watch
   demonstrably read. **The poison entry is no longer surfaced as an error to the
   caller** — a consumer that must react to one watches `WatchProgress::skipped`,
