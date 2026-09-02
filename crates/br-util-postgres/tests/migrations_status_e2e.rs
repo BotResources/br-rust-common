@@ -41,8 +41,8 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    async fn open() -> Option<Self> {
-        let url = test_db_url()?;
+    async fn open() -> Self {
+        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
         let schema = format!("br_migstatus_{}", unique_suffix());
 
         let admin = PgPoolOptions::new()
@@ -58,7 +58,7 @@ impl Sandbox {
 
         let pool = connect_to_schema(&url, &schema, 2).await;
 
-        Some(Sandbox { url, schema, pool })
+        Sandbox { url, schema, pool }
     }
 
     async fn scratch_pool(&self) -> PgPool {
@@ -117,9 +117,7 @@ async fn embedded() -> Migrator {
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
 async fn fresh_database_reports_every_migration_pending_without_creating_the_table() {
-    let Some(sandbox) = Sandbox::open().await else {
-        return;
-    };
+    let sandbox = Sandbox::open().await;
     let migrator = embedded().await;
 
     let status = migrations_status(&sandbox.pool, &migrator)
@@ -141,9 +139,7 @@ async fn fresh_database_reports_every_migration_pending_without_creating_the_tab
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
 async fn empty_migrations_table_reports_every_migration_pending() {
-    let Some(sandbox) = Sandbox::open().await else {
-        return;
-    };
+    let sandbox = Sandbox::open().await;
     let migrator = embedded().await;
     sandbox.execute(MIGRATIONS_TABLE_DDL).await;
 
@@ -159,9 +155,7 @@ async fn empty_migrations_table_reports_every_migration_pending() {
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
 async fn fully_migrated_database_is_current() {
-    let Some(sandbox) = Sandbox::open().await else {
-        return;
-    };
+    let sandbox = Sandbox::open().await;
     let migrator = embedded().await;
     migrator.run(&sandbox.pool).await.expect("run migrations");
 
@@ -181,9 +175,7 @@ async fn fully_migrated_database_is_current() {
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
 async fn edited_migration_surfaces_as_a_checksum_mismatch() {
-    let Some(sandbox) = Sandbox::open().await else {
-        return;
-    };
+    let sandbox = Sandbox::open().await;
     let migrator = embedded().await;
     migrator.run(&sandbox.pool).await.expect("run migrations");
 
@@ -207,9 +199,7 @@ async fn edited_migration_surfaces_as_a_checksum_mismatch() {
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
 async fn database_ahead_of_the_binary_is_reported_and_is_not_current() {
-    let Some(sandbox) = Sandbox::open().await else {
-        return;
-    };
+    let sandbox = Sandbox::open().await;
     let migrator = embedded().await;
     migrator.run(&sandbox.pool).await.expect("run migrations");
 
@@ -256,9 +246,7 @@ async fn database_ahead_of_the_binary_is_reported_and_is_not_current() {
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
 async fn partially_applied_migration_is_reported_dirty() {
-    let Some(sandbox) = Sandbox::open().await else {
-        return;
-    };
+    let sandbox = Sandbox::open().await;
     let migrator = embedded().await;
     migrator.run(&sandbox.pool).await.expect("run migrations");
 

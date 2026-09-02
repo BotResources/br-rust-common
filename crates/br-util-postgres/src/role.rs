@@ -244,7 +244,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_is_idempotent_for_same_password() {
-        let Some(url) = test_db_url() else { return };
+        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
         let admin = PgPoolOptions::new()
             .max_connections(2)
             .connect(&url)
@@ -276,7 +276,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_rotates_password_on_change() {
-        let Some(url) = test_db_url() else { return };
+        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
         let admin = PgPoolOptions::new()
             .max_connections(2)
             .connect(&url)
@@ -321,7 +321,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_handles_password_with_dollar_signs() {
-        let Some(url) = test_db_url() else { return };
+        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
         let admin = PgPoolOptions::new()
             .max_connections(2)
             .connect(&url)

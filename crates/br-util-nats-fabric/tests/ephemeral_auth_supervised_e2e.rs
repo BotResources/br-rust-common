@@ -16,7 +16,7 @@ struct Payload {
 type Seen = Arc<Mutex<Vec<EphemeralAuthChange<Payload>>>>;
 
 fn nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL set")
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {

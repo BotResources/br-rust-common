@@ -17,11 +17,12 @@ pub struct UserCreatedV1 {
 }
 
 pub fn nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL must point at a JetStream-enabled broker")
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 pub fn database_url() -> String {
-    std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must point at a Postgres database")
+    std::env::var("TEST_DATABASE_URL")
+        .expect("TEST_DATABASE_URL is required for this ignored suite")
 }
 
 pub async fn jetstream() -> async_nats::jetstream::Context {

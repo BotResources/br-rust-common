@@ -20,18 +20,16 @@ use uuid::Uuid;
 
 pub const APP_PW: &str = "identity_app_pw_e2e_only";
 
-pub fn nats_url() -> Option<String> {
-    std::env::var("NATS_URL").ok()
+pub fn nats_url() -> String {
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
-pub fn prerequisites() -> Option<(String, String)> {
-    match (test_db_url(), nats_url()) {
-        (Some(db), Some(nats)) => Some((db, nats)),
-        _ => {
-            eprintln!("skipping: TEST_DATABASE_URL/NATS_URL unset");
-            None
-        }
-    }
+pub fn database_url() -> String {
+    test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite")
+}
+
+pub fn prerequisites() -> (String, String) {
+    (database_url(), nats_url())
 }
 
 pub struct PgEnv {

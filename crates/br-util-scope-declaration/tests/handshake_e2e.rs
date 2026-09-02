@@ -19,7 +19,7 @@ fn fast_config() -> ScopeDeclarationConfig {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn accepted_sets_readiness_up() {
-    let Some(_) = common::nats_url() else { return };
+    common::nats_url();
     let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
     create_fabric_streams(&js).await;
@@ -48,7 +48,7 @@ async fn accepted_sets_readiness_up() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn rejected_sets_readiness_down_with_reason() {
-    let Some(_) = common::nats_url() else { return };
+    common::nats_url();
     let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
     create_fabric_streams(&js).await;
@@ -83,7 +83,7 @@ async fn rejected_sets_readiness_down_with_reason() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn timeout_then_republish_then_accepted() {
-    let Some(_) = common::nats_url() else { return };
+    common::nats_url();
     let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
     create_fabric_streams(&js).await;
@@ -115,7 +115,7 @@ async fn timeout_then_republish_then_accepted() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn duplicate_confirmations_first_match_wins() {
-    let Some(_) = common::nats_url() else { return };
+    common::nats_url();
     let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
     create_fabric_streams(&js).await;
@@ -144,7 +144,7 @@ async fn duplicate_confirmations_first_match_wins() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn disabled_mode_publishes_nothing_and_sets_ready() {
-    let Some(_) = common::nats_url() else { return };
+    common::nats_url();
     let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
     create_fabric_streams(&js).await;
@@ -172,7 +172,7 @@ async fn disabled_mode_publishes_nothing_and_sets_ready() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn missing_stream_fails_loud() {
-    let Some(_) = common::nats_url() else { return };
+    common::nats_url();
     let _guard = serialize_fabric_streams().await;
     let js = jetstream().await;
     create_fabric_streams(&js).await;

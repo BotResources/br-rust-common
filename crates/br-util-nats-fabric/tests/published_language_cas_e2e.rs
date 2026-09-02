@@ -16,12 +16,12 @@ fn payload(label: &str) -> Payload {
     }
 }
 
-fn nats_url() -> Option<String> {
-    std::env::var("NATS_URL").ok()
+fn nats_url() -> String {
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {
-    let url = nats_url().expect("NATS_URL set");
+    let url = nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     async_nats::jetstream::new(client)
 }
@@ -57,7 +57,7 @@ fn isolated_key(suffix: &str) -> KvKey {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn get_with_revision_returns_none_for_an_absent_key() {
-    let Some(_) = nats_url() else { return };
+    nats_url();
     let publisher = publisher().await;
     let reader = PublishedLanguageReader::<Payload>::open(&fabric().await)
         .await
@@ -83,7 +83,7 @@ async fn get_with_revision_returns_none_for_an_absent_key() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn get_with_revision_returns_none_for_a_retracted_key() {
-    let Some(_) = nats_url() else { return };
+    nats_url();
     let publisher = publisher().await;
     let key = isolated_key("retracted");
 
@@ -103,7 +103,7 @@ async fn get_with_revision_returns_none_for_a_retracted_key() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn a_matching_revision_wins_and_returns_the_new_revision() {
-    let Some(_) = nats_url() else { return };
+    nats_url();
     let publisher = publisher().await;
     let reader = PublishedLanguageReader::<Payload>::open(&fabric().await)
         .await
@@ -139,7 +139,7 @@ async fn a_matching_revision_wins_and_returns_the_new_revision() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn a_stale_revision_is_refused_with_revision_conflict() {
-    let Some(_) = nats_url() else { return };
+    nats_url();
     let publisher = publisher().await;
     let key = isolated_key("cas-stale");
 
@@ -178,7 +178,7 @@ async fn a_stale_revision_is_refused_with_revision_conflict() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn delete_if_refuses_a_stale_revision_and_accepts_the_current_one() {
-    let Some(_) = nats_url() else { return };
+    nats_url();
     let publisher = publisher().await;
     let key = isolated_key("cas-delete");
 
@@ -230,7 +230,7 @@ async fn delete_if_refuses_a_stale_revision_and_accepts_the_current_one() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn put_stays_last_writer_wins_against_a_stale_holder() {
-    let Some(_) = nats_url() else { return };
+    nats_url();
     let publisher = publisher().await;
     let key = isolated_key("lww");
 
@@ -265,7 +265,7 @@ async fn put_stays_last_writer_wins_against_a_stale_holder() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn update_if_after_a_retract_conflicts() {
-    let Some(_) = nats_url() else { return };
+    nats_url();
     let publisher = publisher().await;
     let key = isolated_key("cas-retracted");
 
