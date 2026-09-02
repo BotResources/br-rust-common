@@ -1,5 +1,7 @@
+mod watch_liveness;
+
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use br_test_support::require_nats_url;
@@ -10,6 +12,7 @@ use br_util_nats_fabric::{
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
+use watch_liveness::live_watch_baseline;
 
 const SENTINEL: &str = "SENTINEL-SECRET-9f13c7a2";
 
@@ -50,15 +53,20 @@ impl<'a> MakeWriter<'a> for CapturedLogs {
 }
 
 fn capture_warnings() -> CapturedLogs {
-    let logs = CapturedLogs::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(logs.clone())
-        .with_max_level(tracing::Level::WARN)
-        .with_ansi(false)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("this suite installs the only global subscriber in its binary");
-    logs
+    static INSTALLED: OnceLock<CapturedLogs> = OnceLock::new();
+    INSTALLED
+        .get_or_init(|| {
+            let logs = CapturedLogs::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(logs.clone())
+                .with_max_level(tracing::Level::WARN)
+                .with_ansi(false)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("this suite installs the only global subscriber in its binary");
+            logs
+        })
+        .clone()
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {
@@ -170,12 +178,18 @@ async fn a_type_mismatched_value_is_skipped_without_its_bytes_reaching_a_log_lin
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let running = spawn_run(watcher, seen.clone());
     reach_healthy(&mut health, Duration::from_secs(10)).await;
+    let baseline = live_watch_baseline(&js, &mut progress).await;
 
     let poison_key = format!("auth/refresh/{}/poison", Uuid::now_v7().simple());
     raw.put(&poison_key, poison_value.clone().into())
         .await
         .expect("a schema-skewed writer puts a credential-bearing value of the wrong shape");
-    await_progress(&mut progress, |p| p.skipped == 1, Duration::from_secs(10)).await;
+    await_progress(
+        &mut progress,
+        |p| p.skipped == baseline.skipped + 1,
+        Duration::from_secs(10),
+    )
+    .await;
 
     let captured = logs.text();
     assert!(
@@ -217,6 +231,7 @@ async fn a_key_this_crate_rejects_is_skipped_for_both_its_put_and_its_delete() {
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let running = spawn_run(watcher, seen.clone());
     reach_healthy(&mut health, Duration::from_secs(10)).await;
+    let baseline = live_watch_baseline(&js, &mut progress).await;
 
     let alien_key = format!("auth/refresh/{}=rotated", Uuid::now_v7().simple());
     assert!(
@@ -235,13 +250,18 @@ async fn a_key_this_crate_rejects_is_skipped_for_both_its_put_and_its_delete() {
         .await
         .expect("delete the same alien key");
 
-    let observed = await_progress(&mut progress, |p| p.skipped == 2, Duration::from_secs(10)).await;
+    let observed = await_progress(
+        &mut progress,
+        |p| p.skipped == baseline.skipped + 2,
+        Duration::from_secs(10),
+    )
+    .await;
     assert_eq!(
-        observed.changes, 0,
+        observed.changes, baseline.changes,
         "neither the put nor the delete of an unusable key is delivered"
     );
     assert!(
-        seen.lock().unwrap().is_empty(),
+        !seen.lock().unwrap().iter().any(|c| touches(c, &alien_key)),
         "a Removed for a key whose Set was skipped is skipped too, so no cache can hold it"
     );
     assert_eq!(

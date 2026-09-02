@@ -1,3 +1,5 @@
+mod watch_liveness;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -8,6 +10,7 @@ use br_util_nats_fabric::{
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use watch_liveness::live_watch_baseline;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 struct Payload {
@@ -105,10 +108,12 @@ async fn run_re_arms_the_watch_after_the_bucket_disappears_and_comes_back() {
     let store = open_store().await;
     let watcher = store.watcher();
     let mut health = watcher.health();
+    let mut progress = watcher.progress();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let running = spawn_run(watcher, seen.clone());
 
     reach_health(&mut health, WatchHealth::Healthy, Duration::from_secs(10)).await;
+    live_watch_baseline(&js, &mut progress).await;
 
     let before = key("before");
     store
@@ -127,6 +132,7 @@ async fn run_re_arms_the_watch_after_the_bucket_disappears_and_comes_back() {
 
     create_bucket(&js).await;
     reach_health(&mut health, WatchHealth::Healthy, Duration::from_secs(60)).await;
+    live_watch_baseline(&js, &mut progress).await;
 
     let after = key("after");
     open_store()
@@ -219,13 +225,19 @@ async fn an_entry_this_consumer_cannot_read_is_skipped_and_the_watch_keeps_deliv
     let running = spawn_run(watcher, seen.clone());
 
     reach_health(&mut health, WatchHealth::Healthy, Duration::from_secs(10)).await;
+    let baseline = live_watch_baseline(&js, &mut progress).await;
 
     let poison = key("poison");
     raw.put(poison.as_str(), "{ not the frozen shape".into())
         .await
         .expect("a schema-skewed writer puts a value this consumer cannot decode");
 
-    await_progress(&mut progress, |p| p.skipped == 1, Duration::from_secs(10)).await;
+    await_progress(
+        &mut progress,
+        |p| p.skipped == baseline.skipped + 1,
+        Duration::from_secs(10),
+    )
+    .await;
 
     let good = key("good");
     store
@@ -239,10 +251,15 @@ async fn an_entry_this_consumer_cannot_read_is_skipped_and_the_watch_keeps_deliv
         .expect("put a readable value behind the poison entry");
     await_delivery(&seen, &good, Duration::from_secs(10)).await;
 
-    let final_progress =
-        await_progress(&mut progress, |p| p.changes >= 1, Duration::from_secs(10)).await;
+    let final_progress = await_progress(
+        &mut progress,
+        |p| p.changes > baseline.changes,
+        Duration::from_secs(10),
+    )
+    .await;
     assert_eq!(
-        final_progress.skipped, 1,
+        final_progress.skipped,
+        baseline.skipped + 1,
         "exactly the poison entry was skipped"
     );
     assert_eq!(

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use br_core_integration::{EventMetadata, IntegrationEvent};
@@ -26,14 +27,21 @@ pub async fn jetstream() -> async_nats::jetstream::Context {
 
 pub async fn recreate_event_stream(js: &async_nats::jetstream::Context) {
     let _ = js.delete_stream(INTEGRATION_EVT).await;
-    js.create_stream(async_nats::jetstream::stream::Config {
-        name: INTEGRATION_EVT.to_string(),
-        subjects: vec!["integration.evt.>".to_string()],
-        duplicate_window: DUPLICATE_WINDOW,
-        ..Default::default()
-    })
-    .await
-    .expect("the fixture, never the lib, declares the stream and its duplicate window");
+    let mut stream = js
+        .create_stream(async_nats::jetstream::stream::Config {
+            name: INTEGRATION_EVT.to_string(),
+            subjects: vec!["integration.evt.>".to_string()],
+            duplicate_window: DUPLICATE_WINDOW,
+            ..Default::default()
+        })
+        .await
+        .expect("the fixture, never the lib, declares the stream and its duplicate window");
+    stream.purge().await.expect("purge the fixed event stream");
+    let state = stream.info().await.expect("stream info").state.clone();
+    assert_eq!(
+        state.messages, 0,
+        "the fixture must start from an empty {INTEGRATION_EVT}"
+    );
 }
 
 pub async fn outbox_pool() -> PgPool {
@@ -82,7 +90,11 @@ pub async fn row_status(pool: &PgPool, id: Uuid) -> String {
         .expect("read the outbox row status")
 }
 
-pub async fn delivered(js: &async_nats::jetstream::Context) -> Vec<async_nats::jetstream::Message> {
+pub async fn delivered_for(
+    js: &async_nats::jetstream::Context,
+    dedup_ids: &[Uuid],
+) -> Vec<async_nats::jetstream::Message> {
+    let wanted: BTreeSet<String> = dedup_ids.iter().map(Uuid::to_string).collect();
     let stream = js.get_stream(INTEGRATION_EVT).await.expect("stream exists");
     let consumer = stream
         .create_consumer(async_nats::jetstream::consumer::pull::Config::default())
@@ -90,24 +102,30 @@ pub async fn delivered(js: &async_nats::jetstream::Context) -> Vec<async_nats::j
         .expect("an ephemeral raw consumer observes what the stream really holds");
     let mut messages = consumer
         .fetch()
-        .max_messages(16)
+        .max_messages(64)
         .messages()
         .await
         .expect("fetch every stored frame");
     let mut collected = Vec::new();
     while let Some(message) = messages.next().await {
-        collected.push(message.expect("a stored frame"));
+        let message = message.expect("a stored frame");
+        if dedup_id(&message).is_some_and(|id| wanted.contains(&id)) {
+            collected.push(message);
+        }
     }
     collected
 }
 
-pub fn message_id(message: &async_nats::jetstream::Message) -> String {
+fn dedup_id(message: &async_nats::jetstream::Message) -> Option<String> {
     message
         .headers
         .as_ref()
         .and_then(|h| h.get(async_nats::header::NATS_MESSAGE_ID))
         .map(|v| v.to_string())
-        .expect("the relay sets Nats-Msg-Id on every published frame")
+}
+
+pub fn message_id(message: &async_nats::jetstream::Message) -> String {
+    dedup_id(message).expect("the relay sets Nats-Msg-Id on every published frame")
 }
 
 pub fn coords(fact: &str) -> EventCoords {

@@ -2,7 +2,7 @@ mod outbox_fixture;
 
 use br_util_nats_fabric::{Fabric, INTEGRATION_EVT, OutboxRecord, OutboxRelay, stage};
 use outbox_fixture::{
-    DUPLICATE_WINDOW, coords, delivered, envelope, jetstream, message_id, outbox_pool,
+    DUPLICATE_WINDOW, coords, delivered_for, envelope, jetstream, message_id, outbox_pool,
     recreate_event_stream, rewind_to_pending, row_status, user_created,
 };
 use std::time::Duration;
@@ -45,7 +45,7 @@ async fn a_crash_between_publish_and_mark_replays_the_row_and_the_broker_dedups_
         "the replay must be visible as a duplicate ack, never silently absorbed"
     );
 
-    let stored = delivered(&js).await;
+    let stored = delivered_for(&js, &[event_id]).await;
     assert_eq!(
         stored.len(),
         1,
@@ -93,7 +93,7 @@ async fn a_replay_after_the_duplicate_window_is_delivered_twice_because_delivery
         "outside the window the broker stores the frame again"
     );
 
-    let stored = delivered(&js).await;
+    let stored = delivered_for(&js, &[event_id]).await;
     assert_eq!(
         stored.len(),
         2,
@@ -127,7 +127,7 @@ async fn a_payload_without_an_envelope_falls_back_to_the_row_id_and_still_publis
         "a raw stage has no envelope id, so the row id is the dedup key"
     );
 
-    let stored = delivered(&js).await;
+    let stored = delivered_for(&js, &[row_id]).await;
     assert_eq!(stored.len(), 1);
     assert_eq!(message_id(&stored[0]), row_id.to_string());
 
@@ -160,7 +160,7 @@ async fn one_event_id_reused_across_two_coordinates_loses_the_second_frame_strea
         "dedup is stream-wide, so the second coordinate collides on the same event_id"
     );
 
-    let stored = delivered(&js).await;
+    let stored = delivered_for(&js, &[event_id]).await;
     assert_eq!(
         stored.len(),
         1,
@@ -220,7 +220,7 @@ async fn two_raw_staged_rows_sharing_a_uuid_event_id_collapse_to_one_frame() {
         "the dropped frame still leaves its row PUBLISHED — the caller owns the uniqueness of event_id"
     );
 
-    let stored = delivered(&js).await;
+    let stored = delivered_for(&js, &[event_id]).await;
     assert_eq!(
         stored.len(),
         1,
