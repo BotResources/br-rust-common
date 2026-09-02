@@ -73,7 +73,7 @@ pub async fn publish_until(
     mut done: impl AsyncFnMut() -> bool,
 ) {
     wait_for(
-        &format!("the live watch to react to a put for {user_id}"),
+        "the live watch to react to a put for the published user",
         async || {
             publisher
                 .publish_user(user_id, value)
