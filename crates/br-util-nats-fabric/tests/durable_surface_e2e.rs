@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use br_util_nats_fabric::{
-    Aggregate, Bc, ConsumeErrorKind, ConsumerTuning, EventCoords, Fabric, FabricError,
-    INTEGRATION_EVT, PastFact,
+    Aggregate, Bc, CommandCoords, ConsumeErrorKind, ConsumerTuning, EventCoords, Fabric,
+    FabricError, INTEGRATION_CMD, INTEGRATION_EVT, PastFact, Verb,
 };
 use uuid::Uuid;
 
@@ -36,6 +36,15 @@ fn user_created() -> EventCoords {
         producer: Bc::new("identity").unwrap(),
         aggregate: Aggregate::new("user").unwrap(),
         fact: PastFact::new("created").unwrap(),
+        version: 1,
+    }
+}
+
+fn notification_deliver() -> CommandCoords {
+    CommandCoords {
+        receiver: Bc::new("notifier").unwrap(),
+        aggregate: Aggregate::new("notification").unwrap(),
+        verb: Verb::new("deliver").unwrap(),
         version: 1,
     }
 }
@@ -181,4 +190,91 @@ async fn ensure_event_durable_with_provisions_the_requested_ack_wait() {
     assert_eq!(info.config.max_ack_pending, 256);
 
     let _ = js.delete_stream(INTEGRATION_EVT).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn verify_command_durable_probes_the_command_stream_and_creates_no_consumer() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
+
+    let durable = format!("probe_{}", Uuid::now_v7().simple());
+    fabric()
+        .await
+        .verify_command_durable(&notification_deliver(), &durable)
+        .await
+        .expect("the command probe reads INTEGRATION_CMD, not INTEGRATION_EVT");
+
+    let names = consumer_names(&js, INTEGRATION_CMD).await;
+    assert!(
+        !names.contains(&durable),
+        "a readiness probe must not leave a phantom durable behind, found {names:?}"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn verify_command_durable_fails_when_the_command_stream_does_not_cover_the_coordinate() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.billing.>").await;
+
+    let err = fabric()
+        .await
+        .verify_command_durable(&notification_deliver(), "probe-uncovered-cmd")
+        .await
+        .expect_err("a command stream that does not bind the coordinate fails");
+
+    match err {
+        FabricError::SubjectNotCovered {
+            stream,
+            subject,
+            configured,
+        } => {
+            assert_eq!(stream, INTEGRATION_CMD);
+            assert_eq!(subject, "integration.cmd.notifier.notification.deliver.v1");
+            assert_eq!(configured, vec!["integration.cmd.billing.>".to_string()]);
+        }
+        other => panic!("expected SubjectNotCovered, got {other:?}"),
+    }
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn ensure_command_durable_with_provisions_on_the_command_stream() {
+    let Some(_) = nats_url() else { return };
+    let js = jetstream().await;
+    recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
+    let _ = js.delete_stream(INTEGRATION_EVT).await;
+
+    let durable = format!("tuned_{}", Uuid::now_v7().simple());
+    fabric()
+        .await
+        .ensure_command_durable_with(
+            &notification_deliver(),
+            &durable,
+            &ConsumerTuning {
+                ack_wait: Duration::from_secs(2),
+                max_ack_pending: 8,
+            },
+        )
+        .await
+        .expect("tuned provisioning on the command stream");
+
+    let stream = js.get_stream(INTEGRATION_CMD).await.unwrap();
+    let info = stream.consumer_info(&durable).await.expect("consumer info");
+    assert_eq!(info.config.ack_wait, Duration::from_secs(2));
+    assert_eq!(info.config.max_ack_pending, 8);
+    assert_eq!(
+        info.config.filter_subject,
+        "integration.cmd.notifier.notification.deliver.v1"
+    );
+
+    let _ = js.delete_stream(INTEGRATION_CMD).await;
 }

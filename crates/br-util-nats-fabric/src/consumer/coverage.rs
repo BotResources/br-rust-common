@@ -137,6 +137,35 @@ mod tests {
     }
 
     #[test]
+    fn matching_is_case_sensitive() {
+        assert!(!covers("integration.EVT.>", "integration.evt.x.y.v1"));
+        assert!(!covers(
+            "integration.evt.identity.user.created.v1",
+            "integration.evt.Identity.user.created.v1"
+        ));
+    }
+
+    #[test]
+    fn a_tail_wildcard_treats_an_empty_final_token_as_a_token() {
+        assert!(covers("integration.evt.>", "integration.evt."));
+    }
+
+    #[test]
+    fn a_rendered_coordinate_can_never_carry_an_empty_or_wildcard_token() {
+        use crate::coords::{Aggregate, Bc, PastFact, Verb};
+
+        for bad in ["", ".", "*", ">", "a.b"] {
+            assert!(Bc::new(bad).is_err(), "Bc must reject {bad:?}");
+            assert!(
+                Aggregate::new(bad).is_err(),
+                "Aggregate must reject {bad:?}"
+            );
+            assert!(PastFact::new(bad).is_err(), "PastFact must reject {bad:?}");
+            assert!(Verb::new(bad).is_err(), "Verb must reject {bad:?}");
+        }
+    }
+
+    #[test]
     fn a_wildcard_prefix_with_a_tail_covers_the_rest() {
         assert!(covers(
             "integration.*.identity.>",

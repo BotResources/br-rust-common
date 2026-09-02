@@ -240,9 +240,9 @@ running.
 
 #### Readiness verification (`verify_*_durable`) — a probe, not a provision
 
-`verify_command_durable` / `verify_event_durable` answer one boot question: *can
-this coordinate be consumed at all on this broker?* They **create nothing**. The
-check is two steps against the fixed stream:
+`verify_command_durable` / `verify_event_durable` answer one narrow boot
+question: *does the stream exist, and does it bind this coordinate?* They
+**create nothing**. The check is two steps against the fixed stream:
 
 1. `get_stream` on `INTEGRATION_CMD` / `INTEGRATION_EVT` — an absent stream is
    the gitops fail-loud, `FabricError::Consume { kind: NoStream }`.
@@ -253,9 +253,19 @@ check is two steps against the fixed stream:
    — the message names the stream, the coordinate, and what the stream actually
    binds.
 
+**What the probe does not check** — read this before gating readiness on it. It
+does not exercise the right to create or consume a durable, and it does not
+validate the durable name. Up to `1.2.0` these were checked *incidentally*,
+because the probe created a real consumer; they no longer are. A NATS user
+holding `STREAM.INFO` but lacking consumer-create permission now passes the
+probe and fails at the first `run_*` / `ensure_*_consumer`. The probe also says
+nothing about the presence of a producer, of messages, or of an existing durable.
+It proves stream presence and subject coverage — nothing more.
+
 The `durable` argument is retained for signature stability and call-site
 readability; it names the readiness gate, and no consumer bearing it is created.
-A probe that needs the durable to exist wants `ensure_*_durable` instead — the
+A service that wants its durable to exist and start accumulating at boot — and
+that wants the create permission proven — calls `ensure_*_durable` instead; the
 two are deliberately different operations.
 
 #### The durable consumer (explicit per-delivery acknowledgement)

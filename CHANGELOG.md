@@ -87,9 +87,15 @@ release; they remain reachable through the historical per-crate tags
   exactly one token, `>` = one-or-more tail tokens, otherwise literal). An
   uncovered subject fails with `FabricError::SubjectNotCovered`, which names the
   stream, the coordinate and what the stream actually binds. **No consumer is
-  created.** The `durable` argument is retained for signature stability and
-  call-site readability; callers wanting the durable to exist call
-  `ensure_*_durable`, which is unchanged.
+  created.** The probe therefore proves stream presence and subject coverage and
+  **nothing else**: it no longer exercises the right to create or consume a
+  durable, nor validates the durable name — both were checked *incidentally* up
+  to `1.2.0` because the probe created a consumer. A NATS user holding
+  `STREAM.INFO` but lacking consumer-create permission now passes the probe and
+  fails at the first `run_*` / `ensure_*_consumer`. A service that wants that
+  permission proven at boot, and its durable to exist and start accumulating,
+  calls `ensure_*_durable`, which is unchanged. The `durable` argument is
+  retained for signature stability and call-site readability.
 
 ### Fixed
 
