@@ -508,6 +508,7 @@ dependencies = [
  "br-core-kernel",
  "chrono",
  "futures-util",
+ "metrics",
  "serde",
  "serde_json",
  "sqlx",

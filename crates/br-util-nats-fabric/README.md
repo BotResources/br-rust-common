@@ -118,6 +118,9 @@ fabric.publish_event(&coords, &event).await?;
 // idempotent (sets the Nats-Msg-Id dedup header; caller owns the id):
 fabric.publish_command_with_id(&coords, &command, &message_id).await?;
 fabric.publish_event_with_id(&coords, &event, &message_id).await?;
+// idempotent, plus the broker's verdict on this frame:
+let outcome = fabric.publish_command_with_id_outcome(&coords, &command, &message_id).await?;
+let outcome = fabric.publish_event_with_id_outcome(&coords, &event, &message_id).await?;
 // fire-and-forget (best-effort, warns and drops on failure):
 fabric.publish_command_if_connected(&coords, &command).await;
 fabric.publish_event_if_connected(&coords, &event).await;
@@ -136,8 +139,31 @@ the broker to a single stored message, so a retry after an ambiguous ack does no
 double-write. These variants are for callers managing their **own** idempotency;
 the **sanctioned reliable / exactly-once-ish path is the `outbox` feature** — its
 relay owns the staging, retry and at-least-once delivery, and a dedup id on the
-published frame collapses the at-least-once into effectively-once on the
-consumer's stream. The caller owns the id; the fabric never mints one.
+published frame collapses the at-least-once into effectively-once **within the
+stream's duplicate window**, and only within it. The caller owns the id; the
+fabric never mints one.
+
+`publish_command_with_id_outcome` / `publish_event_with_id_outcome` are the same
+publishes, returning the broker's verdict instead of `()`:
+
+```rust,ignore
+#[non_exhaustive]
+pub enum PublishOutcome {
+    Stored { sequence: u64 },
+    Duplicate { sequence: u64 },
+}
+impl PublishOutcome {
+    pub fn sequence(&self) -> u64;
+    pub fn is_duplicate(&self) -> bool;
+}
+```
+
+`Duplicate` means the broker recognised the `Nats-Msg-Id` inside the stream's
+duplicate window and did **not** store a second copy; `sequence` is the sequence
+of the frame it already holds. Both outcomes are a **success** — the frame is on
+the stream either way. The plain `_with_id` methods are unchanged, still return
+`()`, and now delegate to the `_outcome` ones, so a caller that does not care
+about the verdict keeps its current code.
 
 ### Consuming
 
@@ -406,6 +432,94 @@ machine from `br-core-integration`; `RelayHealth` degrades on a structural
 The legacy `br_core_integration::OutboxRecord` (raw `subject: String`) was
 removed in the v1.0.0 integration-reduction step; `br_util_nats_fabric::OutboxRecord`
 (typed `EventCoords` destination) is now the only outbox record type.
+
+#### Dedup id on every relayed frame
+
+The relay publishes each row with a `Nats-Msg-Id` header. The id is the
+envelope's `event_id` lifted from the stored payload — the field
+`OutboxRecord::stage_event` writes for every `IntegrationEvent<T>` — so a relay
+retry, a crash between the publish and the status write, and a rolling deploy
+that briefly runs two relays all resolve to the same key and the broker collapses
+them to one stored frame.
+
+**JetStream dedup is scoped to the stream, not to the subject.** `INTEGRATION_EVT`
+binds `integration.evt.>` for every producer, so the rule is: **one `event_id` =
+one frame per stream per window**, whatever the coordinates. Staging the same
+`IntegrationEvent` — same `event_id` — to two different `EventCoords` inside the
+window publishes the first and makes the second **silently vanish** while its
+outbox row still goes `PUBLISHED`; only `RelayPass.duplicates` and the warn line
+reveal it. Fanning one fact out to N coordinates therefore needs **N distinct
+`event_id`s** — which the "one fact per event" rule already implies: two
+coordinates are two facts.
+
+The id falls back to the **outbox row id** when the stored payload has no
+top-level `event_id` **or** carries one that is not a UUID string — the shape a
+raw `OutboxRecord::stage(id, coords, value)` produces. The row id is still unique
+and stable per row, so the crash-replay case the relay actually needs stays
+covered; only dedup **across** producers of the same fact is unavailable for such
+a payload.
+
+**Delivery stays at-least-once.** The dedup id is a window, not a guarantee: a
+replay after the stream's duplicate window has elapsed is delivered again, by
+design. Consumers must stay idempotent.
+
+#### Observing a pass — `RelayPass`
+
+```rust,ignore
+pub async fn run_once(&self) -> Result<RelayReport, OutboxStoreError>;
+pub async fn run_once_detailed(&self) -> Result<RelayPass, OutboxStoreError>;
+
+#[non_exhaustive]
+pub struct RelayPass {
+    pub picked: usize,
+    pub published: usize,
+    pub duplicates: usize,
+    pub row_id_fallbacks: usize,
+    pub failed: usize,
+    pub retried: usize,
+    pub structural: usize,
+    pub min_retry_attempts: Option<u32>,
+}
+```
+
+`run_once` and `RelayReport` are unchanged; `run_once` now projects a
+`RelayPass`, dropping the two counters `RelayReport` has no field for.
+`duplicates` is a **strict subset of `published`** — the broker accepted the row,
+so the relay marks it published — and counts the frames answered with a duplicate
+ack. `row_id_fallbacks` counts the rows whose payload carried no usable envelope
+`event_id`; that is a routine, expected outcome for raw-staged payloads, so it is
+a counter and not a log line. Both counters are **per pick, not per row**: a row
+retried across N passes is counted N times, once per pass that picked it. The
+supervised `run()` loop uses `run_once_detailed` internally, so the signals below
+fire on the managed loop too.
+
+Each duplicate ack emits one `tracing::warn!` — `"duplicate publish ack"` with
+the outbox id, the message id, its source, the stream sequence and the subject —
+and increments the counter `outbox_relay_duplicates_total` (`OUTBOX_RELAY_DUPLICATES_TOTAL`)
+on the `metrics` facade. The counter is unlabeled: an outbox id would be
+unbounded cardinality. It is described **and initialised to zero when an
+`OutboxRelay` is constructed**, so the series exists from boot and an alert on a
+relay that has never deduplicated reads `0` rather than no-data. The facade is a
+no-op until the process installs a recorder, and the `metrics` dependency is
+scoped to the `outbox` feature, so a consumer that does not use the outbox gains
+nothing.
+
+#### Deployment notes
+
+- **The duplicate window is a stream setting the operator declares**, never the
+  lib: this crate binds streams, it does not create or tune them. The NATS
+  default is **2 minutes**. If the dedup guarantee is relied on — for instance to
+  cover a relay outage longer than that — the window must be **explicit** in the
+  stream declaration.
+- **Re-staging a row by hand inside the window returns a duplicate ack, not a
+  delivery.** That used to be invisible; it is now `RelayPass.duplicates` plus the
+  warn line and the counter.
+- **A rolling deploy that briefly runs two relays** no longer double-delivers
+  inside the window.
+- **The window is stream-wide.** Because dedup is per stream and the event stream
+  binds every producer's coordinates, a producer that reuses one `event_id` for
+  several coordinates loses every frame after the first, inside the window. Mint
+  one `event_id` per fact.
 
 ## Surface 2 — Published Language over KV
 
@@ -832,6 +946,7 @@ from a fresh copy on recovery.
 | per-key TTL on create, enumeration, change-watch and its supervised re-arm (`EphemeralAuthStore`, `EphemeralAuthWatcher::run`) | the `Duration`, the `KvPrefix`, the `on_change` handler |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
+| the outbox dedup id (envelope `event_id`, row id fallback) and the duplicate-ack signals | the stream's `duplicate_window`, declared out of band |
 
 ## Why
 
@@ -840,6 +955,8 @@ from a fresh copy on recovery.
 | `IntegrationConsumer::drain()` is `async` though it currently only drops the pull stream | The signature reserves a future awaiting drain (in-flight-ack / unsubscribe flush) and avoids a later breaking sync→async change. |
 | `verify_*_durable` keeps a `durable` parameter it no longer uses | It used to create that durable (five phantom consumers accumulated in prod); the probe was fixed in place so every existing readiness call site keeps compiling and simply stops leaving a consumer behind. |
 | `EphemeralAuthWatcher::run()` reconciles by probing the bucket, while `PublishedLanguageConsumer::run()` re-bootstraps its whole mirror | `EPHEMERAL_AUTH` is CAS-written and TTL-bounded and its consumers hold no local replica — the bucket is the truth, re-read under CAS at decision time — so there is nothing to rebuild and recovery only has to re-arm the subscription; the probe exists solely to fail loud when the bucket itself is gone. |
+| `RelayPass` exists beside `RelayReport` instead of `RelayReport` gaining two fields | `RelayReport` is a plain (non-`#[non_exhaustive]`) struct in the published API, so adding a field to it is a breaking change for every consumer that constructs or exhaustively destructures one. |
+| The outbox dedup id prefers the envelope `event_id` over the outbox row id | It is the same key hand-rolled relays elsewhere already use, so the platform keeps **one** dedup keyspace; carrying it in a dedicated column would mean a breaking migration on a table whose DDL is consumer-owned. |
 
 ## Dependency
 
