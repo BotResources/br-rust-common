@@ -4,11 +4,14 @@ use async_nats::jetstream::kv::{Operation, Store};
 use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 
+use crate::consumer::backoff::Backoff;
 use crate::error::FabricError;
 use crate::kv::codec::decode;
 use crate::kv::ephemeral_auth::EphemeralAuthStore;
+use crate::kv::ephemeral_auth_supervise::SupervisedWatch;
 use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
 use crate::kv::key::KvKey;
+use crate::kv::supervisor::supervise;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EphemeralAuthChange<V> {
@@ -47,8 +50,26 @@ where
         }
     }
 
+    pub(crate) fn store(&self) -> &Store {
+        &self.kv
+    }
+
     pub fn health(&self) -> WatchHealthReceiver {
         self.health.receiver()
+    }
+
+    pub async fn run<H>(&self, on_change: H) -> std::convert::Infallible
+    where
+        V: DeserializeOwned + Send + Sync,
+        H: FnMut(EphemeralAuthChange<V>) + Send,
+    {
+        supervise(
+            &SupervisedWatch::new(self, on_change),
+            &self.health,
+            Backoff::production(),
+            "ephemeral-auth",
+        )
+        .await
     }
 
     pub async fn watch<H>(&self, mut on_change: H) -> Result<(), FabricError>

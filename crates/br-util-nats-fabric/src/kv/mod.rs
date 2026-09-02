@@ -2,6 +2,7 @@ mod bucket;
 mod codec;
 mod consumer;
 mod ephemeral_auth;
+mod ephemeral_auth_supervise;
 mod ephemeral_auth_watch;
 mod health;
 mod key;

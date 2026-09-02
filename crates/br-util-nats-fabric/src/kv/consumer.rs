@@ -64,7 +64,13 @@ where
         F: Send + Sync,
         S::Error: std::fmt::Display,
     {
-        supervise(self, &self.health, Backoff::production()).await
+        supervise(
+            self,
+            &self.health,
+            Backoff::production(),
+            "published-language",
+        )
+        .await
     }
 
     pub async fn bootstrap(&self) -> Result<(), ProjectionError<S::Error>> {

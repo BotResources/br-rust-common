@@ -728,10 +728,12 @@ blind reuse-detection).
   TTL-expired key surfaces as a delete/purge marker on the watch only if the bucket
   emits one, so a consumer reacting to a revoke-by-expiry is coupled to that gitops
   provisioning constraint — the lib never provisions the bucket and cannot
-  guarantee the marker. The watch loops until error or stream-end and has **no
-  cancellation token**: a caller stops it by **dropping the `watch` future** (it is
-  cancel-safe — a read-only stream plus a health channel, no partial write), so
-  place it under a `tokio::select!` / `CancellationToken` on the caller side.
+  guarantee the marker. `watch()` is the **raw one-shot primitive**: it loops
+  until error or stream-end and has **no cancellation token**, so a caller stops
+  it by **dropping the `watch` future** (it is cancel-safe — a read-only stream
+  plus a health channel, no partial write) under a `tokio::select!` /
+  `CancellationToken`. A production consumer drives it through `run()` instead —
+  see *Supervised operation* below.
 - `status()` exposes the **bound bucket's cached KV state** in the bind-existing
   posture — it reads `async_nats`'s locally-cached stream info and does **not**
   round-trip the broker, so it is **not** a live reachability probe and must not
@@ -743,6 +745,61 @@ blind reuse-detection).
 from `get_with_revision` and passes it back to `update_if` or `delete_if`. A
 caller never mints a `Revision` by hand; every revision originates from
 `get_with_revision` or a successful `update_if`.
+
+### Supervised operation — `run()` (resubscribe-only)
+
+`watch(on_change)` returns on its **first** stream error, and returns `Ok(())` on
+a clean stream end. Called directly and once, a transient broker fault (a missed
+heartbeat, a node freeze, a connection drop) therefore kills the watch
+**permanently and silently**: svc-auth's refresh rotation stops seeing "this
+family was revoked / rotated elsewhere", with no error after the initial return,
+until the pod restarts. `run(on_change)` is the supervised entrypoint a service
+should use.
+
+`run()` is the same loop as `PublishedLanguageConsumer::run()` — reconcile →
+publish `Healthy` → follow the live stream; on **any** watch error **or** a clean
+stream end publish `WatchHealth::Degraded`, sleep the same bounded exponential
+backoff (200 ms doubling to a 30 s cap) and reconcile again before re-watching —
+with the same `std::convert::Infallible` return (a caller stops it by **dropping
+or aborting the task**), the same never-provisions posture, and the same
+progress rule: a recovery resets the backoff floor only when the re-established
+watch **delivered at least one change**, so an instant-fault flap escalates to
+the cap instead of hammering the broker.
+
+**One deliberate difference: the reconcile step is a bucket-presence check, not a
+wholesale re-reconciliation — the recovery is *resubscribe-only*.** The
+Published-Language loop re-runs a full `bootstrap()` because it owns a **local
+mirror** that would silently drift over the outage gap. `EPHEMERAL_AUTH` has no
+such mirror: it is compare-and-swap-written and TTL-bounded, the bucket **is**
+the truth, and the watcher's consumer reacts to changes rather than holding
+derived state — there is nothing to rebuild. So recovery only re-arms the
+subscription, gated on the bucket still being there. That gate is a **live
+`STREAM.INFO` round-trip**, deliberately **not** `status()` (which reads
+`async_nats`'s cached stream info and could never observe a bucket that went
+away): a deleted bucket keeps the loop `Degraded` with a `warn` per attempt —
+fail-loud, never papered over — and the loop re-arms by itself once the bucket is
+back.
+
+**Honest limit — the outage gap is lost, not replayed.** Resubscribe-only means a
+`Set`/`Removed` that lands while the watch is down is **never** delivered: there
+is no catch-up scan and no replay. That is sufficient for the canonical consumer
+because a rotation/reuse decision re-reads the key under CAS at decision time
+(`get_with_revision` → `update_if`), so a missed notification delays a reaction
+without corrupting a decision. A consumer that keeps **derived** state off this
+watch must re-read the bucket after a `Degraded` → `Healthy` transition; it must
+not treat the change stream as gap-free.
+
+**Health.** Under `run()` the channel is born `Degraded`, is published `Healthy`
+only once the presence check has passed, and returns to `Degraded` for the whole fault +
+backoff window, so a readiness gate wired to `health()` is truthful about
+whether the service is currently following the bucket. The raw `watch()`
+primitive keeps driving the same channel (unchanged, for the standalone caller):
+its transitions coincide with the loop's, so the two never contradict each other.
+
+**The handler is reused, never cloned.** The caller's `FnMut` is held by the loop
+and handed to each attempt behind a mutex, so a handler carrying state (a counter,
+a dedup set, a channel sender) keeps it across every re-arm instead of restarting
+from a fresh copy on recovery.
 
 ## Generic mechanics vs caller seams (summary)
 
@@ -756,7 +813,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
 | prefix enumeration (`PublishedLanguageReader::keys`/`entries`) | the `KvPrefix` to scan                 |
 | compare-and-swap KV (`EphemeralAuthStore`, `PublishedLanguagePublisher`, `Revision`) | the `KvKey`, the value, the observed revision |
-| per-key TTL on create, enumeration, change-watch (`EphemeralAuthStore`, `EphemeralAuthWatcher`) | the `Duration`, the `KvPrefix`, the `on_change` handler |
+| per-key TTL on create, enumeration, change-watch and its supervised re-arm (`EphemeralAuthStore`, `EphemeralAuthWatcher::run`) | the `Duration`, the `KvPrefix`, the `on_change` handler |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
 
@@ -766,6 +823,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | ----- | ----------------------- |
 | `IntegrationConsumer::drain()` is `async` though it currently only drops the pull stream | The signature reserves a future awaiting drain (in-flight-ack / unsubscribe flush) and avoids a later breaking sync→async change. |
 | `verify_*_durable` keeps a `durable` parameter it no longer uses | It used to create that durable (five phantom consumers accumulated in prod); the probe was fixed in place so every existing readiness call site keeps compiling and simply stops leaving a consumer behind. |
+| `EphemeralAuthWatcher::run()` reconciles by probing the bucket, while `PublishedLanguageConsumer::run()` re-bootstraps its whole mirror | `EPHEMERAL_AUTH` is CAS-written and TTL-bounded and its consumers hold no local replica — the bucket is the truth, re-read under CAS at decision time — so there is nothing to rebuild and recovery only has to re-arm the subscription; the probe exists solely to fail loud when the bucket itself is gone. |
 
 ## Dependency
 
