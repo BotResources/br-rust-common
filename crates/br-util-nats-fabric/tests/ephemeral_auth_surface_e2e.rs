@@ -1,20 +1,20 @@
+mod watch_liveness;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use br_test_support::require_nats_url;
 use br_util_nats_fabric::{
     EphemeralAuthChange, EphemeralAuthStore, Fabric, FabricError, KV_EPHEMERAL_AUTH, KvKey,
     KvPrefix,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use watch_liveness::live_watch_baseline;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 struct Payload {
     label: String,
-}
-
-fn require_nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn fabric() -> Fabric {
@@ -186,6 +186,7 @@ async fn watch_yields_removed_on_ttl_expiry() {
         .await
         .expect("open store");
     let watcher = store.watcher();
+    let mut progress = watcher.progress();
     let seen: Arc<Mutex<Vec<EphemeralAuthChange<Payload>>>> = Arc::new(Mutex::new(Vec::new()));
 
     let sink = seen.clone();
@@ -195,7 +196,7 @@ async fn watch_yields_removed_on_ttl_expiry() {
             .await;
     });
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    live_watch_baseline(&js, &mut progress).await;
 
     let k = key("auth/expiry", "fam");
     store
@@ -235,6 +236,7 @@ async fn watch_yields_set_and_removed_change_events() {
         .await
         .expect("open store");
     let watcher = store.watcher();
+    let mut progress = watcher.progress();
     let seen: Arc<Mutex<Vec<EphemeralAuthChange<Payload>>>> = Arc::new(Mutex::new(Vec::new()));
 
     let sink = seen.clone();
@@ -244,7 +246,7 @@ async fn watch_yields_set_and_removed_change_events() {
             .await;
     });
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    live_watch_baseline(&js, &mut progress).await;
 
     let k = key("auth/watch", "fam");
     store

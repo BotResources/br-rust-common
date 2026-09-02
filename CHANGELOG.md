@@ -70,7 +70,7 @@ below.
   (The canonical consumer of the store itself is refresh-token rotation.) `run(on_change)` wraps the same supervision loop: reconcile, follow,
   and on any watch error or clean stream end publish `WatchHealth::Degraded`,
   back off (200 ms doubling to a 30 s cap, floor reset only by a watch that
-  actually delivered a change) and re-arm — forever, with `std::convert::
+  observed an entry — delivered or skipped) and re-arm — forever, with `std::convert::
   Infallible` in the signature, stopped by aborting or dropping the task.
   **Recovery here is resubscribe-only, not a rebuild.** The Published-Language
   loop re-runs a full bootstrap because it owns a local mirror that would drift;
@@ -82,7 +82,9 @@ below.
   went away — so a deleted bucket keeps the loop `Degraded` and loud rather than
   looking healthy. **Honest limit:** a change that lands during the outage window
   is not replayed, so a consumer holding state derived from this watch must
-  re-read the bucket after a `Degraded` → `Healthy` transition. The caller's
+  re-read the bucket after a `Degraded` → `Healthy` transition **and on any
+  increase of `WatchProgress::skipped`** — a skipped entry never moves health,
+  so `progress()` is the only signal for that second loss class. The caller's
   handler is reused across re-arms (held behind a mutex, never cloned), so a
   stateful handler keeps its state. `watch()` is unchanged and stays public for
   tests and one-shot callers; `health()` is now truthfully driven by the loop.
@@ -220,6 +222,29 @@ below.
   probe can read the truth off the promoted artifact instead of a hardcoded
   migration count that rots at the next migration.
 
+- **`br-util-nats-fabric` — `EphemeralAuthStore::update_if_returning_revision`,
+  the chainable rotate path.** `update_if` returns `()`, so the new revision its
+  write produced was discarded and a caller chaining a second revision-checked
+  operation (rotate then `delete_if`, or rotate twice) had to re-read with
+  `get_with_revision` first — and that re-read is a window in which another
+  writer can move the revision on, so the chain then acts on a revision the
+  caller never produced. The new sibling performs the identical write with the
+  identical `FabricError::RevisionConflict { key, expected }` semantics and
+  returns the **new** `Revision`, matching the shape
+  `PublishedLanguagePublisher::update_if` has on the `PUBLISHED_LANGUAGE`
+  bucket. `update_if` is **unchanged** — changing its return type would be a
+  breaking change — and now delegates to the sibling. Precise contract: on the
+  `EPHEMERAL_AUTH` surface exactly two calls hand out a `Revision`,
+  `get_with_revision` and a successful `update_if_returning_revision`; `create`,
+  `create_with_ttl`, `put`, `delete`, `delete_if` and `update_if` return none, so
+  a chain starting at a `create` still needs one `get_with_revision`.
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::progress()`, `WatchProgress`
+  and `WatchProgressReceiver`.** A `tokio::sync::watch` of the
+  `#[non_exhaustive] WatchProgress { changes, skipped }` counters — entries
+  handed to the caller's handler, and entries skipped as unreadable — plus
+  `observed()` for their sum. It is the observable side of the tolerant watch
+  below: a skipped entry is otherwise visible only in a log line. Per watcher
+  instance, like `health()`.
 - **`br-util-directory` — `DirectoryProjector::with_impact_stager`, a
   transactional seam for reacting to a roster change.** A consumer registers an
   `Arc<dyn ImpactStager>` beside `new` / `with_config`; when a `known_*` row
@@ -268,14 +293,60 @@ below.
   manifest. `br-core-directory` and `br-util-directory` documented no install
   at all and now carry one.
 
-- **`br-util-nats-fabric` — `EphemeralAuthWatcher::watch()` now marks the health
-  channel `Degraded` on a fail-closed decode/key error, not only on a stream
-  fault** (#103). Previously an undecodable value or an invalid key returned
-  `FabricError` while the channel still read `Healthy`, so a gate wired to
-  `health()` could not see a watch that had just died on a poison entry. The
-  returned errors are unchanged; only the health transition is new, and it makes
-  the raw primitive's transitions coincide with the supervised loop's.
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::watch()` no longer dies on a
+  single entry it cannot read; it skips it and keeps running.** An undecodable
+  value or a key `KvKey` rejects used to return `FabricError` and end the watch.
+  Under `run()` that was worse than it looks: when the bad entry was the first
+  delivered, the attempt reported no progress, so the supervisor never reset its
+  backoff and a stream of skew-written entries walked the retry delay to the
+  30 s cap — and, because recovery here is resubscribe-only, every `Set`/
+  `Removed` landing in each widening gap was lost. A schema-skewed writer during
+  a rolling deploy could therefore flap every consumer of the bucket. Such an
+  entry is now dropped with one `tracing::warn!` carrying exactly `surface`,
+  `key`, a static `reason` (`"undecodable value"` or `"invalid key"`) and
+  `value_len` — never the `FabricError`, whose `serde_json` detail would quote
+  the offending value fragment, which on this bucket is credential state —
+  counted on the new `progress()` channel, and the watch continues; health
+  stays `Healthy` (the stream is alive) and the attempt counts
+  as **progress**, so the backoff floor is not escalated by entries the watch
+  demonstrably read. **The poison entry is no longer surfaced as an error to the
+  caller** — a consumer that must react to one watches `WatchProgress::skipped`,
+  which is also the trigger, beside a `Degraded` → `Healthy` transition, for
+  re-reading the bucket when it holds derived state.
+  `EphemeralAuthStore::get_with_revision` and `entries` are unchanged and stay
+  fail-closed. This is deliberately the opposite of
+  `PublishedLanguageConsumer`, which still wedges loudly on an undecodable
+  value: that loop owns a local mirror a poison entry would silently falsify,
+  while this one only forwards notifications.
 
+- **`br-util-nats-fabric` — the outbox dedup key is documented as what it
+  actually is: positional, not typed.** The relay lifts the **top-level
+  `event_id` field of the stored payload** whenever its value is a UUID string,
+  whatever staged the row. That is contracted for `OutboxRecord::stage_event`,
+  but a raw `OutboxRecord::stage(id, coords, value)` payload is uncontracted
+  caller content and is promoted exactly the same way — the README documented
+  only the missing/non-UUID fallback. **A raw-stage caller owns that field's
+  uniqueness:** two raw rows sharing one `event_id` inside the duplicate window
+  publish once, the broker answers the second with a duplicate ack and drops the
+  frame, and the relay — reading that ack as acceptance — still marks the second
+  row `PUBLISHED`; the loss shows up only as `RelayPass.duplicates`, the
+  `"duplicate publish ack"` warn line and the counter. Mint a distinct
+  `event_id` per raw row, or omit the field entirely and take the row-id
+  fallback. Documentation and a pinning e2e only; no behaviour changed.
+- **`br-util-nats-fabric` — `verify_*_durable` coverage is read from the
+  stream's own configured `subjects`.** A stream fed only by a `mirror` or a
+  `sources` block binds no subjects of its own, so it covers no coordinate and
+  fails the probe permanently. The fixed `INTEGRATION_CMD` / `INTEGRATION_EVT`
+  are declared with explicit subjects; a mirrored variant is outside what this
+  probe can verify. Documented, not changed.
+- **`br-util-nats-fabric` — `max_deliver` is documented as a uniform default,
+  not a permanent non-knob.** The README ruled it "semantic, not a knob"
+  alongside `ack_policy`, `deliver_policy` and `replay_policy`. Those three plus
+  the rendered `filter_subject(s)` are genuinely frozen as contract; `max_deliver
+  = -1` is a **default** that a service wanting a finite delivery budget and a
+  dead-letter path legitimately needs to change — and the answer is then a new
+  opt-in seam on `ConsumerTuning`, filed as a gap here, never a reach-around to
+  raw `async-nats`. No behaviour changed and no seam was added.
 - **`br-util-nats-fabric` — the KV supervision warnings are renamed and now
   carry a `surface` field (#103).** The supervised loop is shared by two KV
   surfaces, so its messages no longer hardcode the Published-Language one:

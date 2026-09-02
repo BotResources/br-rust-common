@@ -6,17 +6,32 @@ use serde::de::DeserializeOwned;
 
 use crate::consumer::backoff::Backoff;
 use crate::error::FabricError;
-use crate::kv::codec::decode;
 use crate::kv::ephemeral_auth::EphemeralAuthStore;
 use crate::kv::ephemeral_auth_supervise::SupervisedWatch;
 use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
 use crate::kv::key::KvKey;
+use crate::kv::progress::{WatchProgressChannel, WatchProgressReceiver};
 use crate::kv::supervisor::supervise;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EphemeralAuthChange<V> {
     Set { key: KvKey, value: V },
     Removed { key: KvKey },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipReason {
+    InvalidKey,
+    UndecodableValue,
+}
+
+impl SkipReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidKey => "invalid key",
+            Self::UndecodableValue => "undecodable value",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +50,7 @@ fn classify(operation: Operation) -> ChangeKind {
 pub struct EphemeralAuthWatcher<V> {
     kv: Store,
     health: WatchHealthChannel,
+    progress: WatchProgressChannel,
     _value: PhantomData<V>,
 }
 
@@ -46,6 +62,7 @@ where
         Self {
             kv: store.store().clone(),
             health: WatchHealthChannel::new(),
+            progress: WatchProgressChannel::new(),
             _value: PhantomData,
         }
     }
@@ -56,6 +73,14 @@ where
 
     pub fn health(&self) -> WatchHealthReceiver {
         self.health.receiver()
+    }
+
+    pub fn progress(&self) -> WatchProgressReceiver {
+        self.progress.receiver()
+    }
+
+    pub(crate) fn observed(&self) -> u64 {
+        self.progress.snapshot().observed()
     }
 
     pub async fn run<H>(&self, on_change: H) -> std::convert::Infallible
@@ -87,14 +112,24 @@ where
                 }
             };
             self.health.set(WatchHealth::Healthy);
-            let change = match Self::change_from(entry) {
-                Ok(change) => change,
-                Err(e) => {
-                    self.health.set(WatchHealth::Degraded);
-                    return Err(e);
+            let key = entry.key.clone();
+            let value_len = entry.value.len();
+            match Self::change_from(entry) {
+                Ok(change) => {
+                    on_change(change);
+                    self.progress.record_change();
                 }
-            };
-            on_change(change);
+                Err(reason) => {
+                    self.progress.record_skip();
+                    tracing::warn!(
+                        surface = "ephemeral-auth",
+                        key = %key,
+                        reason = reason.as_str(),
+                        value_len,
+                        "skipping an ephemeral-auth entry this consumer cannot read"
+                    );
+                }
+            }
         }
         self.health.set(WatchHealth::Degraded);
         Ok(())
@@ -102,12 +137,13 @@ where
 
     fn change_from(
         entry: async_nats::jetstream::kv::Entry,
-    ) -> Result<EphemeralAuthChange<V>, FabricError> {
-        let key = KvKey::new(entry.key.clone())?;
+    ) -> Result<EphemeralAuthChange<V>, SkipReason> {
+        let key = KvKey::new(entry.key.clone()).map_err(|_| SkipReason::InvalidKey)?;
         Ok(match classify(entry.operation) {
             ChangeKind::Removed => EphemeralAuthChange::Removed { key },
             ChangeKind::Set => EphemeralAuthChange::Set {
-                value: decode(&entry.key, &entry.value)?,
+                value: serde_json::from_slice::<V>(&entry.value)
+                    .map_err(|_| SkipReason::UndecodableValue)?,
                 key,
             },
         })
@@ -131,5 +167,11 @@ mod tests {
     #[test]
     fn purge_classifies_as_removed() {
         assert_eq!(classify(Operation::Purge), ChangeKind::Removed);
+    }
+
+    #[test]
+    fn skip_reasons_render_as_static_discriminants() {
+        assert_eq!(SkipReason::InvalidKey.as_str(), "invalid key");
+        assert_eq!(SkipReason::UndecodableValue.as_str(), "undecodable value");
     }
 }

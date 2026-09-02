@@ -27,8 +27,10 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 br-core-kernel = { workspace = true }
+br-test-support = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+tracing-subscriber = { workspace = true }
 
 [[test]]
 name = "outbox_relay_e2e"
