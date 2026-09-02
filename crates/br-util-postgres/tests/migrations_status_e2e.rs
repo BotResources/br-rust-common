@@ -114,6 +114,12 @@ async fn embedded() -> Migrator {
         .expect("resolve the fixture migration set")
 }
 
+async fn embedded_reversible() -> Migrator {
+    Migrator::new(Path::new("tests/migrations_reversible_fixture"))
+        .await
+        .expect("resolve the reversible fixture migration set")
+}
+
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
 async fn fresh_database_reports_every_migration_pending_without_creating_the_table() {
@@ -263,4 +269,39 @@ async fn partially_applied_migration_is_reported_dirty() {
     assert_eq!(status.dirty, Some(SECOND));
     assert!(status.pending.is_empty());
     assert!(!status.is_current());
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a reachable Postgres"]
+async fn reversible_migration_set_reports_each_version_once_and_becomes_current() {
+    let sandbox = Sandbox::open().await;
+    let migrator = embedded_reversible().await;
+
+    assert_eq!(
+        migrator.iter().count(),
+        4,
+        "the reversible fixture must resolve one entry per file"
+    );
+
+    let before = migrations_status(&sandbox.pool, &migrator)
+        .await
+        .expect("status against a fresh database");
+
+    assert_eq!(before.applied, 0);
+    assert_eq!(before.pending, vec![FIRST, SECOND]);
+    assert!(!before.is_current());
+
+    migrator.run(&sandbox.pool).await.expect("run migrations");
+
+    let after = migrations_status(&sandbox.pool, &migrator)
+        .await
+        .expect("status against a fully migrated reversible set");
+
+    assert_eq!(after.applied, 2);
+    assert!(after.pending.is_empty());
+    assert!(after.checksum_mismatch.is_empty());
+    assert!(after.applied_not_embedded.is_empty());
+    assert_eq!(after.dirty, None);
+    assert!(after.embedded_applied());
+    assert!(after.is_current());
 }

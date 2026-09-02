@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sqlx::PgPool;
 use sqlx::migrate::{AppliedMigration, Migrate, MigrateError, Migration, Migrator};
@@ -35,7 +35,9 @@ pub async fn migrations_status(
 
     let applied = match conn.list_applied_migrations().await {
         Ok(applied) => applied,
-        Err(e) if is_missing_migrations_table(&e) => return Ok(everything_pending(migrator)),
+        Err(e) if is_missing_migrations_table(&e) => {
+            return Ok(compare(migrator.iter(), &[], None));
+        }
         Err(e) => return Err(as_postgres_error(e)),
     };
 
@@ -56,46 +58,43 @@ fn as_postgres_error(error: MigrateError) -> PostgresError {
     PostgresError::Db(sqlx::Error::from(error))
 }
 
-fn everything_pending(migrator: &Migrator) -> MigrationsStatus {
-    let mut pending: Vec<i64> = migrator.iter().map(|m| m.version).collect();
-    pending.sort_unstable();
-
-    MigrationsStatus {
-        applied: 0,
-        pending,
-        checksum_mismatch: Vec::new(),
-        applied_not_embedded: Vec::new(),
-        dirty: None,
-    }
-}
-
 fn compare<'a>(
     embedded: impl Iterator<Item = &'a Migration>,
     applied: &[AppliedMigration],
     dirty: Option<i64>,
 ) -> MigrationsStatus {
-    let mut unmatched: HashMap<i64, &[u8]> = applied
+    let rows: HashMap<i64, &[u8]> = applied
         .iter()
         .map(|m| (m.version, m.checksum.as_ref()))
         .collect();
 
+    let mut embedded_versions: HashSet<i64> = HashSet::new();
     let mut applied_count = 0usize;
     let mut pending = Vec::new();
     let mut checksum_mismatch = Vec::new();
 
     for migration in embedded {
-        match unmatched.remove(&migration.version) {
+        embedded_versions.insert(migration.version);
+
+        if migration.migration_type.is_down_migration() {
+            continue;
+        }
+
+        match rows.get(&migration.version) {
             None => pending.push(migration.version),
             Some(checksum) => {
                 applied_count += 1;
-                if checksum != migration.checksum.as_ref() {
+                if *checksum != migration.checksum.as_ref() {
                     checksum_mismatch.push(migration.version);
                 }
             }
         }
     }
 
-    let mut applied_not_embedded: Vec<i64> = unmatched.into_keys().collect();
+    let mut applied_not_embedded: Vec<i64> = rows
+        .into_keys()
+        .filter(|version| !embedded_versions.contains(version))
+        .collect();
 
     pending.sort_unstable();
     checksum_mismatch.sort_unstable();
@@ -124,6 +123,25 @@ mod tests {
             Cow::Borrowed(sql),
             false,
         )
+    }
+
+    fn reversible(version: i64, up_sql: &'static str, down_sql: &'static str) -> [Migration; 2] {
+        [
+            Migration::new(
+                version,
+                Cow::Borrowed("fixture"),
+                MigrationType::ReversibleUp,
+                Cow::Borrowed(up_sql),
+                false,
+            ),
+            Migration::new(
+                version,
+                Cow::Borrowed("fixture"),
+                MigrationType::ReversibleDown,
+                Cow::Borrowed(down_sql),
+                false,
+            ),
+        ]
     }
 
     fn applied(migration: &Migration) -> AppliedMigration {
@@ -216,6 +234,99 @@ mod tests {
         assert_eq!(status.dirty, Some(1));
         assert!(!status.embedded_applied());
         assert!(!status.is_current());
+    }
+
+    #[test]
+    fn down_migrations_are_never_pending() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+
+        let status = compare(pair.iter(), &[], None);
+
+        assert_eq!(status.applied, 0);
+        assert_eq!(status.pending, vec![1]);
+        assert!(!status.is_current());
+    }
+
+    #[test]
+    fn fully_applied_reversible_set_is_current() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let rows = vec![applied(&pair[0])];
+
+        let status = compare(pair.iter(), &rows, None);
+
+        assert_eq!(status.applied, 1);
+        assert!(status.pending.is_empty());
+        assert!(status.checksum_mismatch.is_empty());
+        assert!(status.applied_not_embedded.is_empty());
+        assert!(status.is_current());
+    }
+
+    #[test]
+    fn fully_applied_reversible_set_with_a_database_ahead_is_not_current() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let ahead = migration(9, "SELECT 9");
+        let rows = vec![applied(&pair[0]), applied(&ahead)];
+
+        let status = compare(pair.iter(), &rows, None);
+
+        assert!(status.pending.is_empty());
+        assert_eq!(status.applied_not_embedded, vec![9]);
+        assert!(status.embedded_applied());
+        assert!(!status.is_current());
+    }
+
+    #[test]
+    fn a_version_carried_only_by_a_down_entry_still_counts_as_embedded() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let orphan_down = &pair[1];
+        let rows = vec![applied(orphan_down)];
+
+        let status = compare(std::iter::once(orphan_down), &rows, None);
+
+        assert!(status.applied_not_embedded.is_empty());
+        assert!(status.pending.is_empty());
+        assert!(status.checksum_mismatch.is_empty());
+        assert!(status.is_current());
+    }
+
+    #[test]
+    fn checksum_is_compared_against_the_up_migration() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let rows = vec![applied(&pair[1])];
+
+        let status = compare(pair.iter(), &rows, None);
+
+        assert_eq!(status.applied, 1);
+        assert!(status.pending.is_empty());
+        assert_eq!(status.checksum_mismatch, vec![1]);
+        assert!(!status.is_current());
+    }
+
+    #[test]
+    fn a_down_migration_listed_first_does_not_shadow_its_up_row() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let reordered = [pair[1].clone(), pair[0].clone()];
+        let rows = vec![applied(&pair[0])];
+
+        let status = compare(reordered.iter(), &rows, None);
+
+        assert_eq!(status.applied, 1);
+        assert!(status.pending.is_empty());
+        assert!(status.checksum_mismatch.is_empty());
+        assert!(status.applied_not_embedded.is_empty());
+        assert!(status.is_current());
+    }
+
+    #[test]
+    fn a_reversible_pair_is_counted_once_alongside_simple_migrations() {
+        let pair = reversible(2, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let embedded = [migration(1, "SELECT 1"), pair[0].clone(), pair[1].clone()];
+        let rows = vec![applied(&embedded[0])];
+
+        let status = compare(embedded.iter(), &rows, None);
+
+        assert_eq!(status.applied, 1);
+        assert_eq!(status.pending, vec![2]);
     }
 
     #[test]

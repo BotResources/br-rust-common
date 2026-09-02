@@ -202,6 +202,11 @@ below.
   `embedded_applied()` is the lenient variant (same, minus the
   `applied_not_embedded` clause) for the service whose migrator is built with
   `set_ignore_missing(true)` and therefore boots over a database ahead of it.
+  Down migrations are **ignored**: `migrator.iter()` yields one entry per file,
+  so a reversible migration contributes an up *and* a down entry under the same
+  version, and only the up half is counted, reported pending and
+  checksum-compared — exactly the half `Migrator::run` applies. A fully applied
+  reversible migration set is therefore `is_current()`.
   The helper **never runs, creates or repairs anything**: no `ensure_migrations_table`, no `Migrator::run`, and a database
   where `_sqlx_migrations` does not exist yet (SQLSTATE `42P01`) is reported as
   *every embedded migration pending* rather than an error, leaving the table
