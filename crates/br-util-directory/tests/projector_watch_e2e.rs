@@ -63,6 +63,41 @@ async fn a_watch_in_flight_reports_healthy() {
 
 #[tokio::test]
 #[ignore = "requires NATS_URL and TEST_DATABASE_URL pointing at a real broker and Postgres"]
+async fn health_returns_to_degraded_when_the_watch_task_is_aborted() {
+    let (nats, database) = infra();
+    let exclusive = exclusive_projection(&database).await;
+    let fabric = fabric(&nats).await;
+    let pool = isolated_pool(&database).await;
+
+    let publisher = DirectoryPublisher::open(&fabric).await.expect("publisher");
+    publisher.write_meta(&manifest()).await.expect("write meta");
+
+    let projector = Arc::new(DirectoryProjector::new(fabric, pool));
+    let mut health = projector.health();
+    let running = projector.clone();
+    let watching = tokio::spawn(async move { running.watch().await });
+    healthy(&mut health).await;
+
+    watching.abort();
+    let joined = watching.await;
+    assert!(
+        joined
+            .expect_err("the watch task is cancelled")
+            .is_cancelled(),
+        "the watch future was dropped, not returned"
+    );
+
+    assert_eq!(
+        *health.borrow_and_update(),
+        WatchHealth::Degraded,
+        "a projector whose watch was aborted is not healthy"
+    );
+
+    exclusive.release().await;
+}
+
+#[tokio::test]
+#[ignore = "requires NATS_URL and TEST_DATABASE_URL pointing at a real broker and Postgres"]
 async fn a_live_retract_stages_an_impact_only_when_it_deletes_a_row() {
     let (nats, database) = infra();
     let exclusive = exclusive_projection(&database).await;
@@ -150,7 +185,7 @@ async fn health_returns_to_degraded_when_the_watch_ends() {
     let watching = tokio::spawn(async move { running.watch().await });
     healthy(&mut health).await;
 
-    publish_until(&publisher, user_id, &user("ada@example.test"), || {
+    publish_until(&publisher, user_id, &user("ada@example.test"), async || {
         watching.is_finished()
     })
     .await;

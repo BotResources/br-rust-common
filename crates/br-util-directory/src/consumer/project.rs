@@ -72,13 +72,11 @@ impl DirectoryProjector {
         let watch_groups = self.config.consumption_scope().consumes_groups();
         let watch_service_accounts = manifest.publishes_service_accounts();
 
-        self.health
+        let _active = self
+            .health
             .activate(&active_streams(watch_groups, watch_service_accounts));
-        let outcome = self
-            .watch_streams(watch_groups, watch_service_accounts)
-            .await;
-        self.health.deactivate();
-        outcome
+        self.watch_streams(watch_groups, watch_service_accounts)
+            .await
     }
 
     async fn watch_streams(

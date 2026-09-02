@@ -12,6 +12,17 @@ pub async fn staged_keys(pool: &PgPool, key: Uuid) -> i64 {
     count
 }
 
+pub async fn staged_in(pool: &PgPool, namespace: &str, key: Uuid) -> i64 {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM staged_impact WHERE namespace = $1 AND key = $2")
+            .bind(namespace)
+            .bind(key.to_string())
+            .fetch_one(pool)
+            .await
+            .expect("count staged impacts in a namespace");
+    count
+}
+
 pub async fn user_row(pool: &PgPool, user_id: Uuid) -> Option<(String, String)> {
     sqlx::query_as("SELECT email, xmin::text FROM known_users WHERE user_id = $1")
         .bind(user_id)

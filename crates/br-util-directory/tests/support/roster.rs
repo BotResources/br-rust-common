@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
 
 use br_core_directory::{
     DIRECTORY_META_VERSION, DirectoryMeta, PublishedEntity, PublishedGroup,
@@ -10,7 +9,7 @@ use br_util_nats_fabric::Fabric;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::reads::user_row;
+use super::reads::{user_row, wait_for};
 
 pub fn manifest() -> DirectoryMeta {
     DirectoryMeta {
@@ -40,6 +39,11 @@ pub fn user(email: &str) -> PublishedUser {
     .expect("a published user")
 }
 
+pub fn nameless_user(email: &str) -> PublishedUser {
+    PublishedUser::new(email.to_string(), None, None, BTreeMap::new())
+        .expect("a published user with no name")
+}
+
 pub fn group(name: &str, members: &[Uuid]) -> PublishedGroup {
     PublishedGroup::new(name.to_string(), members.to_vec(), BTreeMap::new())
         .expect("a published group")
@@ -56,38 +60,29 @@ pub async fn publish_until_projected(
     user_id: Uuid,
     value: &PublishedUser,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        publisher
-            .publish_user(user_id, value)
-            .await
-            .expect("publish the user");
-        if user_row(pool, user_id).await.is_some() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("the live watch never delivered a put for {user_id}");
+    publish_until(publisher, user_id, value, async || {
+        user_row(pool, user_id).await.is_some()
+    })
+    .await;
 }
 
 pub async fn publish_until(
     publisher: &DirectoryPublisher,
     user_id: Uuid,
     value: &PublishedUser,
-    mut done: impl FnMut() -> bool,
+    mut done: impl AsyncFnMut() -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        publisher
-            .publish_user(user_id, value)
-            .await
-            .expect("publish the user");
-        if done() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("the live watch never reacted to a put for {user_id}");
+    wait_for(
+        "the live watch to react to a put for the published user",
+        async || {
+            publisher
+                .publish_user(user_id, value)
+                .await
+                .expect("publish the user");
+            done().await
+        },
+    )
+    .await;
 }
 
 pub async fn drop_published_user(fabric: &Fabric, user_id: Uuid) {

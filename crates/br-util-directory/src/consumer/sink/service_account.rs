@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::sync::LazyLock;
 
 use br_core_directory::{
     PublishedServiceAccount, service_account_id_from_kv_key, service_account_kv_key,
@@ -6,13 +7,13 @@ use br_core_directory::{
 use br_util_nats_fabric::{KvKey, ProjectionSink};
 
 use crate::consumer::sink::context::SinkContext;
+use crate::consumer::sink::upsert::change_detecting_upsert;
 use crate::error::DirectoryError;
-use crate::impact::ForeignRef;
+use crate::impact::{ForeignRef, Impact};
 
-const UPSERT: &str = "INSERT INTO known_service_accounts AS t (service_account_id, name) \
-     VALUES ($1, $2) \
-     ON CONFLICT (service_account_id) DO UPDATE SET name = EXCLUDED.name \
-     WHERE t.name IS DISTINCT FROM EXCLUDED.name";
+static UPSERT: LazyLock<String> = LazyLock::new(|| {
+    change_detecting_upsert("known_service_accounts", "service_account_id", &["name"])
+});
 
 pub(crate) struct ServiceAccountSink {
     context: SinkContext,
@@ -37,25 +38,23 @@ impl ProjectionSink<PublishedServiceAccount> for ServiceAccountSink {
             return Ok(());
         };
 
-        let mut tx = self.context.pool().begin().await?;
-        let changed = sqlx::query(UPSERT)
-            .bind(service_account_id)
-            .bind(&value.name)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected()
-            > 0;
-        if changed {
-            self.context
-                .stage_change(&mut tx, || ForeignRef::service_account(service_account_id))
-                .await?;
-        }
-        tx.commit().await?;
-
-        if changed {
-            self.context.record_change();
-        }
-        Ok(())
+        self.context
+            .apply_single_statement(async |conn| {
+                let changed = sqlx::query(UPSERT.as_str())
+                    .bind(service_account_id)
+                    .bind(&value.name)
+                    .execute(&mut *conn)
+                    .await?
+                    .rows_affected()
+                    > 0;
+                Ok(match changed {
+                    true => vec![Impact::changed(ForeignRef::service_account(
+                        service_account_id,
+                    ))],
+                    false => Vec::new(),
+                })
+            })
+            .await
     }
 
     async fn retract(&self, key: &KvKey) -> Result<(), Self::Error> {
@@ -63,25 +62,23 @@ impl ProjectionSink<PublishedServiceAccount> for ServiceAccountSink {
             return Ok(());
         };
 
-        let mut tx = self.context.pool().begin().await?;
-        let deleted =
-            sqlx::query("DELETE FROM known_service_accounts WHERE service_account_id = $1")
-                .bind(service_account_id)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected()
-                > 0;
-        if deleted {
-            self.context
-                .stage_change(&mut tx, || ForeignRef::service_account(service_account_id))
-                .await?;
-        }
-        tx.commit().await?;
-
-        if deleted {
-            self.context.record_change();
-        }
-        Ok(())
+        self.context
+            .apply_single_statement(async |conn| {
+                let deleted =
+                    sqlx::query("DELETE FROM known_service_accounts WHERE service_account_id = $1")
+                        .bind(service_account_id)
+                        .execute(&mut *conn)
+                        .await?
+                        .rows_affected()
+                        > 0;
+                Ok(match deleted {
+                    true => vec![Impact::changed(ForeignRef::service_account(
+                        service_account_id,
+                    ))],
+                    false => Vec::new(),
+                })
+            })
+            .await
     }
 
     async fn known_keys(&self) -> Result<BTreeSet<KvKey>, Self::Error> {
