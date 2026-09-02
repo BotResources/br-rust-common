@@ -37,13 +37,20 @@ async fn jetstream() -> async_nats::jetstream::Context {
 
 async fn recreate_stream(js: &async_nats::jetstream::Context, name: &str, bind: &str) {
     let _ = js.delete_stream(name).await;
-    js.create_stream(async_nats::jetstream::stream::Config {
-        name: name.to_string(),
-        subjects: vec![bind.to_string()],
-        ..Default::default()
-    })
-    .await
-    .expect("create fixed stream");
+    let mut stream = js
+        .create_stream(async_nats::jetstream::stream::Config {
+            name: name.to_string(),
+            subjects: vec![bind.to_string()],
+            ..Default::default()
+        })
+        .await
+        .expect("create fixed stream");
+    stream.purge().await.expect("purge the fixed stream");
+    let state = stream.info().await.expect("stream info").state.clone();
+    assert_eq!(
+        state.messages, 0,
+        "the fixture must start from an empty {name}"
+    );
 }
 
 fn command(label: &str, correlation_id: Uuid) -> IntegrationCommand<Payload> {
@@ -1337,6 +1344,11 @@ async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
         .expect("recv ok")
         .expect("a redelivery");
     assert_eq!(
+        second.payload().unwrap().payload.label,
+        "again",
+        "the redelivery must be the same frame, not a second one the fixture left on the stream"
+    );
+    assert_eq!(
         second.delivered_count(),
         Some(2),
         "delivered_count increments on redelivery"
@@ -1426,6 +1438,11 @@ async fn delivered_count_increments_across_redeliveries() {
             .expect("recv within deadline")
             .expect("recv ok")
             .expect("a delivery");
+        assert_eq!(
+            delivery.payload().unwrap().payload.label,
+            "retry",
+            "every attempt must be the same frame, not a second one the fixture left on the stream"
+        );
         assert_eq!(
             delivery.delivered_count(),
             Some(expected),

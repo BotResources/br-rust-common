@@ -33,14 +33,21 @@ async fn jetstream() -> async_nats::jetstream::Context {
 
 async fn recreate_event_stream(js: &async_nats::jetstream::Context, duplicate_window: Duration) {
     let _ = js.delete_stream(INTEGRATION_EVT).await;
-    js.create_stream(async_nats::jetstream::stream::Config {
-        name: INTEGRATION_EVT.to_string(),
-        subjects: vec!["integration.evt.>".to_string()],
-        duplicate_window,
-        ..Default::default()
-    })
-    .await
-    .expect("create fixed event stream");
+    let mut stream = js
+        .create_stream(async_nats::jetstream::stream::Config {
+            name: INTEGRATION_EVT.to_string(),
+            subjects: vec!["integration.evt.>".to_string()],
+            duplicate_window,
+            ..Default::default()
+        })
+        .await
+        .expect("create fixed event stream");
+    stream.purge().await.expect("purge the fixed event stream");
+    let state = stream.info().await.expect("stream info").state.clone();
+    assert_eq!(
+        state.messages, 0,
+        "the fixture must start from an empty {INTEGRATION_EVT}"
+    );
 }
 
 fn user_created_coords() -> EventCoords {
