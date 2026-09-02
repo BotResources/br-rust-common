@@ -1,17 +1,25 @@
+use std::sync::Arc;
+
 use br_core_directory::{DirectoryMeta, PublishedGroup, PublishedServiceAccount, PublishedUser};
-use br_util_nats_fabric::{Fabric, PublishedLanguageConsumer};
+use br_util_nats_fabric::{Fabric, PublishedLanguageConsumer, WatchHealth, WatchHealthReceiver};
 use sqlx::PgPool;
 
 use crate::consumer::config::DirectoryConsumerConfig;
+use crate::consumer::health::{DirectoryStream, ProjectorHealth};
 use crate::consumer::manifest::{ManifestState, read_manifest};
-use crate::consumer::sink::{GroupSink, ServiceAccountSink, UserSink};
+use crate::consumer::progress::{ProgressChannel, ProjectorProgressReceiver};
+use crate::consumer::sink::{GroupSink, ServiceAccountSink, SinkContext, UserSink};
 use crate::error::DirectoryError;
+use crate::impact::ImpactStager;
 use crate::keys::{groups_prefix, service_accounts_prefix, users_prefix};
 
 pub struct DirectoryProjector {
     fabric: Fabric,
     pool: PgPool,
     config: DirectoryConsumerConfig,
+    stager: Option<Arc<dyn ImpactStager>>,
+    progress: ProgressChannel,
+    health: ProjectorHealth,
 }
 
 impl DirectoryProjector {
@@ -24,7 +32,23 @@ impl DirectoryProjector {
             fabric,
             pool,
             config,
+            stager: None,
+            progress: ProgressChannel::new(),
+            health: ProjectorHealth::new(),
         }
+    }
+
+    pub fn with_impact_stager(mut self, stager: Arc<dyn ImpactStager>) -> Self {
+        self.stager = Some(stager);
+        self
+    }
+
+    pub fn progress(&self) -> ProjectorProgressReceiver {
+        self.progress.receiver()
+    }
+
+    pub fn health(&self) -> WatchHealthReceiver {
+        self.health.receiver()
     }
 
     pub async fn reconcile(&self) -> Result<DirectoryMeta, DirectoryError> {
@@ -48,19 +72,52 @@ impl DirectoryProjector {
         let watch_groups = self.config.consumption_scope().consumes_groups();
         let watch_service_accounts = manifest.publishes_service_accounts();
 
-        let users = self.user_consumer().await?;
-        let users_watch = async { users.watch().await.map_err(DirectoryError::from) };
+        self.health
+            .activate(&active_streams(watch_groups, watch_service_accounts));
+        let outcome = self
+            .watch_streams(watch_groups, watch_service_accounts)
+            .await;
+        self.health.deactivate();
+        outcome
+    }
+
+    async fn watch_streams(
+        &self,
+        watch_groups: bool,
+        watch_service_accounts: bool,
+    ) -> Result<(), DirectoryError> {
+        let users_watch = async {
+            let users = self.user_consumer().await?;
+            self.health
+                .set(DirectoryStream::Users, WatchHealth::Healthy);
+            let outcome = users.watch().await;
+            self.health
+                .set(DirectoryStream::Users, WatchHealth::Degraded);
+            outcome.map_err(DirectoryError::from)
+        };
 
         let groups_watch = async {
             if watch_groups {
-                self.group_consumer().await?.watch().await?;
+                let groups = self.group_consumer().await?;
+                self.health
+                    .set(DirectoryStream::Groups, WatchHealth::Healthy);
+                let outcome = groups.watch().await;
+                self.health
+                    .set(DirectoryStream::Groups, WatchHealth::Degraded);
+                outcome?;
             }
             Ok::<(), DirectoryError>(())
         };
 
         let service_accounts_watch = async {
             if watch_service_accounts {
-                self.service_account_consumer().await?.watch().await?;
+                let service_accounts = self.service_account_consumer().await?;
+                self.health
+                    .set(DirectoryStream::ServiceAccounts, WatchHealth::Healthy);
+                let outcome = service_accounts.watch().await;
+                self.health
+                    .set(DirectoryStream::ServiceAccounts, WatchHealth::Degraded);
+                outcome?;
             }
             Ok::<(), DirectoryError>(())
         };
@@ -76,6 +133,14 @@ impl DirectoryProjector {
         }
     }
 
+    fn sink_context(&self) -> SinkContext {
+        SinkContext::new(
+            self.pool.clone(),
+            self.stager.clone(),
+            self.progress.clone(),
+        )
+    }
+
     async fn user_consumer(
         &self,
     ) -> Result<
@@ -87,7 +152,7 @@ impl DirectoryProjector {
         DirectoryError,
     > {
         let filter = self.config.user_copy_filter();
-        let sink = UserSink::new(self.pool.clone(), self.config.clone());
+        let sink = UserSink::new(self.sink_context(), self.config.clone());
         Ok(PublishedLanguageConsumer::open(
             &self.fabric,
             vec![users_prefix()],
@@ -103,7 +168,7 @@ impl DirectoryProjector {
         PublishedLanguageConsumer<PublishedGroup, fn(&PublishedGroup) -> bool, GroupSink>,
         DirectoryError,
     > {
-        let sink = GroupSink::new(self.pool.clone());
+        let sink = GroupSink::new(self.sink_context());
         Ok(PublishedLanguageConsumer::open(
             &self.fabric,
             vec![groups_prefix()],
@@ -123,7 +188,7 @@ impl DirectoryProjector {
         >,
         DirectoryError,
     > {
-        let sink = ServiceAccountSink::new(self.pool.clone());
+        let sink = ServiceAccountSink::new(self.sink_context());
         Ok(PublishedLanguageConsumer::open(
             &self.fabric,
             vec![service_accounts_prefix()],
@@ -134,10 +199,47 @@ impl DirectoryProjector {
     }
 }
 
+fn active_streams(watch_groups: bool, watch_service_accounts: bool) -> Vec<DirectoryStream> {
+    let mut streams = vec![DirectoryStream::Users];
+    if watch_groups {
+        streams.push(DirectoryStream::Groups);
+    }
+    if watch_service_accounts {
+        streams.push(DirectoryStream::ServiceAccounts);
+    }
+    streams
+}
+
 fn keep_all_group(_group: &PublishedGroup) -> bool {
     true
 }
 
 fn keep_all_service_account(_service_account: &PublishedServiceAccount) -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn users_are_always_an_active_stream() {
+        assert_eq!(active_streams(false, false), vec![DirectoryStream::Users]);
+    }
+
+    #[test]
+    fn groups_and_service_accounts_are_active_only_when_watched() {
+        assert_eq!(
+            active_streams(true, true),
+            vec![
+                DirectoryStream::Users,
+                DirectoryStream::Groups,
+                DirectoryStream::ServiceAccounts
+            ]
+        );
+        assert_eq!(
+            active_streams(false, true),
+            vec![DirectoryStream::Users, DirectoryStream::ServiceAccounts]
+        );
+    }
 }

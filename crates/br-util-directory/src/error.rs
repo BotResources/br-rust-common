@@ -23,6 +23,14 @@ pub enum DirectoryError {
     #[cfg(feature = "consumer")]
     #[error("directory pool initialization error: {0}")]
     Pool(String),
+
+    #[cfg(feature = "consumer")]
+    #[error("directory foreign reference namespace is invalid")]
+    InvalidForeignNamespace,
+
+    #[cfg(feature = "consumer")]
+    #[error("directory foreign reference key is invalid")]
+    InvalidForeignKey,
 }
 
 #[cfg(feature = "consumer")]

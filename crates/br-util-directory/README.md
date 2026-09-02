@@ -111,6 +111,99 @@ trait DirectorySource {
   that does not declare an entity returns `None` / `false` / empty from that
   entity's readers.
 
+### Change detection, impacts and the stager seam (#114)
+
+Every sink write is now **change-detecting** and **transactional**:
+
+- `known_users` / `known_service_accounts` / `known_groups` upsert with
+  `ON CONFLICT (…) DO UPDATE SET … WHERE (t.cols…) IS DISTINCT FROM (EXCLUDED.cols…)`;
+  `rows_affected() == 0` means the row was already identical, so **no row
+  version is written** (no dead tuple, no bloat) and nothing downstream is
+  notified.
+- A **group** is changed when its name changed **or** its recomposed member set
+  differs from the set read at the top of the transaction
+  (`SELECT user_id FROM known_user_group WHERE group_id = $1 … FOR UPDATE`,
+  compared as a set). Memberships are rewritten only when the sets differ.
+- A `retract` counts as a change only when a row was actually deleted.
+
+An adopter that has to react to a roster change registers a stager:
+
+```text
+pub const USER_NAMESPACE: &str            = "identity.user";
+pub const GROUP_NAMESPACE: &str           = "identity.group";
+pub const SERVICE_ACCOUNT_NAMESPACE: &str = "identity.service_account";
+
+pub struct ForeignRef;                       // (namespace, key), validated at construction
+impl ForeignRef {
+    pub fn new(namespace: &str, key: &str) -> Result<Self, DirectoryError>;
+    pub fn namespace(&self) -> &str;
+    pub fn key(&self) -> &str;
+}
+
+#[non_exhaustive]
+pub enum Impact { ForeignChanged { foreign: ForeignRef } }
+
+#[async_trait]
+pub trait ImpactStager: Send + Sync {
+    async fn stage_in(&self, conn: &mut sqlx::PgConnection, impacts: &[Impact])
+        -> Result<(), DirectoryError>;
+}
+
+impl DirectoryProjector {
+    pub fn with_impact_stager(self, stager: Arc<dyn ImpactStager>) -> Self;   // beside new / with_config
+}
+```
+
+`DirectoryProjector::new(fabric, pool).with_impact_stager(stager)` and
+`with_config(fabric, pool, config).with_impact_stager(stager)` are both valid —
+the builder composes with either constructor. When a stager is registered and
+**only when the row actually changed**, the sink calls `stage_in` **inside the
+same transaction** as the roster write, with one
+`Impact::ForeignChanged { foreign }` carrying the entity's namespace and its
+`Uuid` rendered as the key. The mirror produces no other variant: it can only
+say *this foreign fact changed*; noun/resource addressing belongs to whatever
+consumes the impacts. `Impact` is `#[non_exhaustive]`.
+
+**Adopter note — grants.** A stager writes to the **adopter's own** tables in
+the sink's transaction, so those tables need a grant on the runtime app role
+(precedent: svc-charter `0006_least_privilege_grants.sql`). Without it the
+stager fails and, because it runs inside the transaction, **the roster upsert
+rolls back with it** — the projection stops converging. That coupling is the
+point (an impact is never staged for a write that did not commit), but it is a
+new way for a missing grant to break the mirror.
+
+Without a stager the behaviour is identical to `1.2.0` apart from the
+transaction wrapper and the suppressed no-op writes.
+
+### Two supervision signals (#114)
+
+```text
+impl DirectoryProjector {
+    pub fn progress(&self) -> ProjectorProgressReceiver;   // watch::Receiver<ProjectorProgress>
+    pub fn health(&self)   -> WatchHealthReceiver;         // br_util_nats_fabric::WatchHealth
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ProjectorProgress { pub changes: u64 }
+```
+
+- `progress()` — a monotonic counter bumped **once per committed change**, on
+  exactly the same predicate that decides whether to stage an impact. An
+  unchanged upsert never bumps it; a rolled-back transaction never bumps it.
+  Both `reconcile()` and `watch()` feed it.
+- `health()` — the **worst-of** composition over the streams that are active for
+  this projector (users always; groups when the consumption scope includes them;
+  service accounts when the producer manifest declares them). It is `Healthy`
+  only while every active stream's KV watch is running, and `Degraded`
+  otherwise — **including before `watch()` starts and after it returns**, which
+  is the truthful state rather than an optimistic one.
+
+**Supervision is the caller's.** This crate has no loop, no backoff and no
+re-reconcile: `watch()` still returns on the first stream error. The two signals
+exist so a supervisor above the crate can decide when to restart it and when to
+report readiness.
+
 ### Missing manifest is DEGRADED, never a purge (#69)
 
 A missing `identity/_meta` no longer means "empty roster → delete every local
@@ -163,11 +256,15 @@ Unit tests cover the **pure logic**, no I/O: `member_rows` (recompose),
 extract / filter), `DirectorySnapshot` (resolve / extensions / membership /
 service accounts, **auto-degrade**, and **order-independent convergence**: a
 group's membership is correct even when set before the member user is projected),
-key rendering. The KV/PG round-trip —
-real-NATS + real-PG orphan-delete, extension survival, pass→fail orphan, the
-users-only scope, the absent-manifest fail-closed — is the **conformance-directory**
-battery in `br-e2e-harness` (a post-tag follow-up there, out of scope for this
-crate).
+key rendering, `ForeignRef` validation, the progress channel and the
+worst-of health composition. `tests/projector_e2e.rs` covers the projector
+against **real NATS + real Postgres** (`#[ignore]`, gated on `NATS_URL` and
+`TEST_DATABASE_URL`, each test in its own Postgres schema): the no-op upsert
+(proven by an unchanged `xmin`), the single staged impact on a real change, the
+stager-failure rollback, the group name/member-set predicate, and the
+stager-less path. The rest of the KV/PG round-trip — orphan-delete, extension
+survival, pass→fail orphan, the users-only scope, the absent-manifest
+fail-closed — is the **conformance-directory** battery in `br-e2e-harness`.
 
 ## Why
 
@@ -175,8 +272,10 @@ crate).
 |---|---|
 | No KV engine in this crate | The generic upsert/retract/reconcile/orphan-delete/bootstrap/watch is `br-util-nats-fabric`'s; this crate keeps only the directory *meaning* (keys, DTOs, schema, recompose). |
 | `DirectorySource` is the only publisher seam | The project owns its domain→`Published*` mapping; the kit owns the reconcile mechanism. |
-| The user sink re-upserts on every projected entry | An idempotent `ON CONFLICT … DO UPDATE` over the KV scan is cheaper than re-reading the local row to diff; only deletes need the observed-vs-desired set. |
+| The sinks upsert with an `IS DISTINCT FROM` guard instead of blind `DO UPDATE` | The projector re-projects the whole prefix on every reconcile, so a blind upsert rewrote every row on every boot — dead tuples, and no way to tell a real roster change from a re-scan. The guard makes `rows_affected()` the single, NULL-correct definition of "changed", which is what both the impact and the progress signal key off. |
 | Group upsert replaces its junction rows in one transaction | A membership change is atomic and idempotent under redelivery. |
+| The group sink reads its member set back before rewriting it | Delete-then-insert makes `rows_affected()` meaningless for memberships (it reports rows touched, not a difference). Reading the current set under `FOR UPDATE` and comparing it with the recomposed one is the only honest "changed" for a group, and it also skips the rewrite when nothing moved. |
+| A stager failure rolls the roster write back | An impact that outlives its write is a lie to whoever reacts to it, and a write with no impact is a silently-missed reaction. Sharing one transaction is what makes the pair atomic; the cost is the grant note above. |
 | Memberships are group-derived, `user_id` has no FK | A membership is recomposed straight from the group's `member_ids`, independent of whether that user has a `known_users` row. The user, group and service-account watches are independent streams with no inter-entity re-trigger, so a group can project before one of its members' user entry (or a member may be filtered out / never published under a scoped roster). A FK + member-existence guard silently dropped such a row and never re-projected the group when the user later arrived (`is_member` stayed wrong). So `known_user_group.user_id` carries no FK; the group reconcile/watch replaces a group's rows from its `member_ids` (delete-then-insert) — order-independent convergence. A member with no `known_users` row is legitimate, not an orphan; `is_member` is correct regardless, while `resolve_user` returns `None` for a filtered/not-yet-projected user (the expected scoped behavior). |
 | Manifest absent = fail-closed, not empty roster | Treating an absent manifest as empty orphan-deleted every local row (a PII purge) when a consumer merely booted ahead of identity. Fail-closed leaves the projection intact. |
 | Readers resolve over `DirectorySnapshot`, a pure projection | Resolution + auto-degrade stay unit-testable with no I/O; the PG-backed readers mirror the semantics, proven in the e2e conformance battery. |
