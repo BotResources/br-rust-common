@@ -34,6 +34,31 @@ release; they remain reachable through the historical per-crate tags
   **dev**-dependency instead, and a unit test deserializes the refusal body and
   asserts its `extensions.code` still equals `ErrorCode::Unauthenticated
   .as_str()`, so a drift between the two crates fails the build.
+- **`br-util-nats-fabric` — a revision/compare-and-swap surface on the
+  Published-Language publisher and reader.** `PUBLISHED_LANGUAGE` writes were
+  last-writer-wins only, so two writers racing for the same key silently
+  clobbered each other and a read-modify-write could not be made safe without
+  leaving the Fabric. The `EphemeralAuthStore` CAS contract is now also
+  available on this bucket:
+  `PublishedLanguageReader::get_with_revision` and
+  `PublishedLanguagePublisher::get_with_revision` return
+  `Option<(V, Revision)>` (an absent, deleted or purged key reads `None`; an
+  undecodable value stays a fail-closed `FabricError::Decode`);
+  `PublishedLanguagePublisher::update_if(key, value, expected)` writes only
+  against the current revision and returns the **new** `Revision`, so a caller
+  can chain writes without a re-read; `delete_if(key, expected)` tombstones only
+  against the current revision. Both raise the first-class, matchable
+  `FabricError::RevisionConflict { key, expected }` on a mismatch, and write
+  nothing. `put`, `update`, `retract`, `reconcile` and `repair_drift` are
+  unchanged and stay last-writer-wins — the right default for a single-owner
+  mirror. A `RevisionConflict` also covers a key another writer has retracted,
+  so a retry loop must re-read with `get_with_revision` rather than retry
+  blind. `Revision` is the existing opaque newtype: a caller never mints one,
+  every revision originates from a `get_with_revision` or a successful
+  `update_if`. The revision-checked
+  primitives and their error mapping now live in one place
+  (`kv/revision.rs`) shared by both buckets, so the two surfaces cannot drift.
+  Purely additive; no consumer re-pin is forced.
 
 ## [1.2.0] — 2026-07-22
 

@@ -406,6 +406,58 @@ object that still belongs); `retract` deletes only for a real disappearance.
 applies the minimal op set (put changed/new, delete orphans); `repair_drift` is
 the periodic re-run of the same reconcile.
 
+### Compare-and-swap on Published Language
+
+`put` / `update` / `retract` / `reconcile` / `repair_drift` stay **last-writer-wins**:
+they ignore the revision chain, and a concurrent writer silently clobbers. That
+is the right default for a single-owner mirror, where the publisher is the sole
+authority for its prefix. When two writers can race for the same key, the
+publisher and the reader also expose the revision-checked path — the same
+contract as `EphemeralAuthStore` (see *Surface 3*), plus the new revision
+returned by `update_if`, on the `PUBLISHED_LANGUAGE` bucket:
+
+- `PublishedLanguageReader::get_with_revision(&KvKey) -> Result<Option<(V, Revision)>, FabricError>`
+  and `PublishedLanguagePublisher::get_with_revision(…)` (same signature) read
+  the current value and its `Revision`. A genuinely absent key, and a deleted or
+  purged one, both read `Ok(None)`; an undecodable value is `FabricError::Decode`,
+  never a silent `None`.
+- `PublishedLanguagePublisher::update_if(&KvKey, &V, Revision) -> Result<Revision, FabricError>`
+  writes only if the supplied `Revision` is still the last revision for the key,
+  and returns the **new** `Revision` on success — chain further writes off that
+  value without a re-read. On a mismatch it returns the first-class, matchable
+  `FabricError::RevisionConflict { key, expected }` and **nothing is written**.
+  A `RevisionConflict` also covers a key another writer has **retracted** — the
+  tombstone moved the revision on, so it is indistinguishable from a clobber.
+  Re-read with `get_with_revision` before retrying: `None` means the key is
+  gone, and a retry loop that does not re-read spins forever on it.
+- `PublishedLanguagePublisher::delete_if(&KvKey, Revision) -> Result<(), FabricError>`
+  writes a delete tombstone only if the supplied `Revision` is still the last
+  revision; on a mismatch it returns the same `FabricError::RevisionConflict` and
+  the key stays live. `retract` remains the unconditional delete.
+
+`Revision` is the same opaque newtype used by *Surface 3*: a caller never mints
+one, every revision originates from a `get_with_revision` or a successful
+`update_if`.
+
+The read-compare-CAS loop, keyed on an aggregate version carried in the
+published DTO:
+
+```rust,ignore
+loop {
+    let Some((current, revision)) = publisher.get_with_revision(&key).await? else {
+        break;
+    };
+    if current.version >= desired.version {
+        break;
+    }
+    match publisher.update_if(&key, &desired, revision).await {
+        Ok(_) => break,
+        Err(FabricError::RevisionConflict { .. }) => continue,
+        Err(err) => return Err(err),
+    }
+}
+```
+
 ### Consumer mechanics (the generic enablers of the directory's filter/extension/selection)
 
 `PublishedLanguageConsumer` is generic over the value `V` and parameterised by
@@ -549,7 +601,9 @@ bucket's TTL (`max_age`) is declared at provisioning and the opener only binds,
 never provisions. As with the Published-Language facades, the raw `async_nats`
 KV `Store` is never handed to a caller — there is no untyped escape hatch, and
 the compare-and-swap contract below is the **only** sanctioned revision-aware
-path.
+path on the `EPHEMERAL_AUTH` bucket. The `PUBLISHED_LANGUAGE` bucket has its own
+revision-aware path — see *Compare-and-swap on Published Language* under
+*Surface 2*.
 
 This surface exists for credential state that needs **optimistic concurrency**
 — the canonical consumer is svc-auth refresh-token rotation, whose
@@ -655,7 +709,7 @@ blind reuse-detection).
 `Revision` is an opaque newtype over the NATS KV sequence — the caller reads it
 from `get_with_revision` and passes it back to `update_if` or `delete_if`. A
 caller never mints a `Revision` by hand; every revision originates from
-`get_with_revision`.
+`get_with_revision` or a successful `update_if`.
 
 ## Generic mechanics vs caller seams (summary)
 
@@ -667,7 +721,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | bootstrap scan + watch loop, fail-closed codec         | the prefix selection                         |
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
 | prefix enumeration (`PublishedLanguageReader::keys`/`entries`) | the `KvPrefix` to scan                 |
-| compare-and-swap KV (`EphemeralAuthStore`, `Revision`) | the `KvKey`, the value, the observed revision |
+| compare-and-swap KV (`EphemeralAuthStore`, `PublishedLanguagePublisher`, `Revision`) | the `KvKey`, the value, the observed revision |
 | per-key TTL on create, enumeration, change-watch (`EphemeralAuthStore`, `EphemeralAuthWatcher`) | the `Duration`, the `KvPrefix`, the `on_change` handler |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
