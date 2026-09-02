@@ -245,10 +245,6 @@ below.
   `observed()` for their sum. It is the observable side of the tolerant watch
   below: a skipped entry is otherwise visible only in a log line. Per watcher
   instance, like `health()`.
-- **`br-test-support` — `nats_url` / `require_nats_url`.** The `NATS_URL`
-  counterparts of the existing database readers, `Option`-returning and
-  panicking. Every NATS e2e suite hand-rolled the panicking reader; they now
-  share one. Dev-only crate, not published.
 - **`br-util-directory` — `DirectoryProjector::with_impact_stager`, a
   transactional seam for reacting to a roster change.** A consumer registers an
   `Arc<dyn ImpactStager>` beside `new` / `with_config`; when a `known_*` row
