@@ -15,12 +15,12 @@ struct Payload {
 
 type Seen = Arc<Mutex<Vec<EphemeralAuthChange<Payload>>>>;
 
-fn nats_url() -> Option<String> {
-    std::env::var("NATS_URL").ok()
+fn nats_url() -> String {
+    std::env::var("NATS_URL").expect("NATS_URL set")
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {
-    let url = nats_url().expect("NATS_URL set");
+    let url = nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     async_nats::jetstream::new(client)
 }
@@ -46,7 +46,7 @@ async fn reset_bucket(js: &async_nats::jetstream::Context) {
 }
 
 async fn open_store() -> EphemeralAuthStore<Payload> {
-    let url = nats_url().expect("NATS_URL set");
+    let url = nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     let fabric = Fabric::new(async_nats::jetstream::new(client));
     EphemeralAuthStore::<Payload>::open(&fabric)
@@ -100,9 +100,8 @@ fn spawn_run(
 }
 
 #[tokio::test]
-#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker; recreates the shared EPHEMERAL_AUTH bucket, so run with --test-threads=1"]
 async fn run_re_arms_the_watch_after_the_bucket_disappears_and_comes_back() {
-    let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     reset_bucket(&js).await;
 
@@ -153,9 +152,8 @@ async fn run_re_arms_the_watch_after_the_bucket_disappears_and_comes_back() {
 }
 
 #[tokio::test]
-#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker; recreates the shared EPHEMERAL_AUTH bucket, so run with --test-threads=1"]
 async fn run_holds_degraded_and_delivers_nothing_while_the_bucket_is_absent() {
-    let Some(_) = nats_url() else { return };
     let js = jetstream().await;
     reset_bucket(&js).await;
 

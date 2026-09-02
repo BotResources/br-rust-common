@@ -126,6 +126,20 @@ release; they remain reachable through the historical per-crate tags
 
 ### Changed
 
+- **`br-util-nats-fabric` — the KV supervision warnings are renamed and now
+  carry a `surface` field (#103).** The supervised loop is shared by two KV
+  surfaces, so its messages no longer hardcode the Published-Language one:
+  `"published-language re-reconciliation failed; retrying"` →
+  `"kv re-reconciliation failed; retrying"`,
+  `"published-language watch stream ended; re-reconciling after backoff"` →
+  `"kv watch stream ended; re-reconciling after backoff"`,
+  `"published-language watch failed; re-reconciling after backoff"` →
+  `"kv watch failed; re-reconciling after backoff"`, and
+  `"backing off before re-bootstrap"` → `"backing off before re-reconciling"`.
+  Every one of the four now carries `surface = "published-language" |
+  "ephemeral-auth"`. **An ops alert or log filter matching the old message
+  strings stops matching** — rematch on the new text plus `surface`.
+
 - **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
   now verify instead of provisioning** (#107). Signatures are unchanged; the
   behaviour is not. The probe is `get_stream` on the fixed stream (absent →

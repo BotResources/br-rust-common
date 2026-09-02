@@ -716,8 +716,12 @@ blind reuse-detection).
   `PublishedLanguageReader::entries`.
 - `watcher() -> EphemeralAuthWatcher<V>` opens a change watch over the bound
   bucket so a service reacts to "this family was just revoked / rotated elsewhere"
-  **without polling**. `EphemeralAuthWatcher::watch(on_change)` runs the watch
-  loop, invoking the caller's `FnMut(EphemeralAuthChange<V>)` per change —
+  **without polling**. Each call mints a **fresh watcher with its own
+  health channel**, so bind one watcher and reuse it: a `health()` taken from one
+  `store.watcher()` while another `store.watcher()` runs the watch is a receiver
+  nothing ever publishes to, frozen on its initial `Degraded`.
+  `EphemeralAuthWatcher::watch(on_change)` runs the watch loop, invoking the
+  caller's `FnMut(EphemeralAuthChange<V>)` per change —
   `EphemeralAuthChange::Set { key, value }` for a put (fail-closed decode, same as
   `entries`) and `EphemeralAuthChange::Removed { key }` for a delete / purge,
   mirroring the Published-Language watch (same fail-closed decode, same
@@ -790,11 +794,18 @@ watch must re-read the bucket after a `Degraded` → `Healthy` transition; it mu
 not treat the change stream as gap-free.
 
 **Health.** Under `run()` the channel is born `Degraded`, is published `Healthy`
-only once the presence check has passed, and returns to `Degraded` for the whole fault +
-backoff window, so a readiness gate wired to `health()` is truthful about
-whether the service is currently following the bucket. The raw `watch()`
-primitive keeps driving the same channel (unchanged, for the standalone caller):
-its transitions coincide with the loop's, so the two never contradict each other.
+only once the presence check has passed, and returns to `Degraded` for the whole
+fault + backoff window. The raw `watch()` primitive keeps driving the same
+channel (unchanged, for the standalone caller): its transitions coincide with the
+loop's, so the two never contradict each other. **`health()` reflects the loop's
+state, not the task's liveness** — the two documented stop modes leave the
+channel frozen on its last published value: an aborted or dropped task keeps
+whatever it last set (`Healthy`, if it was following), and a **panicking handler**
+propagates out of `run()` and kills the task the same way (the `tokio::sync`
+mutex holding the handler does not poison, so nothing marks the loop down). A
+readiness gate must therefore treat a sender-dropped receiver — `rx.changed()`
+returning `Err`, which fires once the dead task drops the watcher that owns the
+sender — as DOWN, and the caller must keep its handler panic-free.
 
 **The handler is reused, never cloned.** The caller's `FnMut` is held by the loop
 and handed to each attempt behind a mutex, so a handler carrying state (a counter,

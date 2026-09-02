@@ -87,18 +87,30 @@ where
                 }
             };
             self.health.set(WatchHealth::Healthy);
-            let key = KvKey::new(entry.key.clone())?;
-            let change = match classify(entry.operation) {
-                ChangeKind::Removed => EphemeralAuthChange::Removed { key },
-                ChangeKind::Set => {
-                    let value = decode(&entry.key, &entry.value)?;
-                    EphemeralAuthChange::Set { key, value }
+            let change = match Self::change_from(entry) {
+                Ok(change) => change,
+                Err(e) => {
+                    self.health.set(WatchHealth::Degraded);
+                    return Err(e);
                 }
             };
             on_change(change);
         }
         self.health.set(WatchHealth::Degraded);
         Ok(())
+    }
+
+    fn change_from(
+        entry: async_nats::jetstream::kv::Entry,
+    ) -> Result<EphemeralAuthChange<V>, FabricError> {
+        let key = KvKey::new(entry.key.clone())?;
+        Ok(match classify(entry.operation) {
+            ChangeKind::Removed => EphemeralAuthChange::Removed { key },
+            ChangeKind::Set => EphemeralAuthChange::Set {
+                value: decode(&entry.key, &entry.value)?,
+                key,
+            },
+        })
     }
 }
 
