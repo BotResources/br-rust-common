@@ -406,6 +406,34 @@ object that still belongs); `retract` deletes only for a real disappearance.
 applies the minimal op set (put changed/new, delete orphans); `repair_drift` is
 the periodic re-run of the same reconcile.
 
+### Compare-and-swap on Published Language
+
+`put` / `update` / `retract` / `reconcile` / `repair_drift` stay **last-writer-wins**:
+they ignore the revision chain, and a concurrent writer silently clobbers. That
+is the right default for a single-owner mirror, where the publisher is the sole
+authority for its prefix. When two writers can race for the same key, the
+publisher and the reader also expose the revision-checked path — the same
+contract as `EphemeralAuthStore` (see *Surface 3*), on the `PUBLISHED_LANGUAGE`
+bucket:
+
+- `PublishedLanguageReader::get_with_revision(&KvKey) -> Result<Option<(V, Revision)>, FabricError>`
+  and `PublishedLanguagePublisher::get_with_revision(…)` (same signature) read
+  the current value and its `Revision`. A genuinely absent key, and a deleted or
+  purged one, both read `Ok(None)`; an undecodable value is `FabricError::Decode`,
+  never a silent `None`.
+- `PublishedLanguagePublisher::update_if(&KvKey, &V, Revision) -> Result<Revision, FabricError>`
+  writes only if the supplied `Revision` is still the last revision for the key,
+  and returns the **new** `Revision` on success — chain further writes off that
+  value without a re-read. On a mismatch it returns the first-class, matchable
+  `FabricError::RevisionConflict { key, expected }` and **nothing is written**.
+- `PublishedLanguagePublisher::delete_if(&KvKey, Revision) -> Result<(), FabricError>`
+  writes a delete tombstone only if the supplied `Revision` is still the last
+  revision; on a mismatch it returns the same `FabricError::RevisionConflict` and
+  the key stays live. `retract` remains the unconditional delete.
+
+`Revision` is the same opaque newtype used by *Surface 3*: a caller never mints
+one, every revision originates from a `get_with_revision`.
+
 ### Consumer mechanics (the generic enablers of the directory's filter/extension/selection)
 
 `PublishedLanguageConsumer` is generic over the value `V` and parameterised by

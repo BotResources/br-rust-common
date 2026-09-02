@@ -10,6 +10,7 @@ use crate::fabric::Fabric;
 use crate::kv::codec::encode;
 use crate::kv::key::{KvKey, KvPrefix};
 use crate::kv::reconcile::{KvOp, reconcile};
+use crate::kv::revision::{Revision, delete_expecting, read_with_revision, update_expecting};
 use crate::kv::scan::scan_entries;
 
 pub struct PublishedLanguagePublisher<V> {
@@ -43,6 +44,26 @@ where
 
     pub async fn update(&self, key: &KvKey, value: &V) -> Result<(), FabricError> {
         self.put(key, value).await
+    }
+
+    pub async fn get_with_revision(
+        &self,
+        key: &KvKey,
+    ) -> Result<Option<(V, Revision)>, FabricError> {
+        read_with_revision(&self.kv, key).await
+    }
+
+    pub async fn update_if(
+        &self,
+        key: &KvKey,
+        value: &V,
+        expected: Revision,
+    ) -> Result<Revision, FabricError> {
+        update_expecting(&self.kv, key, value, expected).await
+    }
+
+    pub async fn delete_if(&self, key: &KvKey, expected: Revision) -> Result<(), FabricError> {
+        delete_expecting(&self.kv, key, expected).await
     }
 
     pub async fn retract(&self, key: &KvKey) -> Result<(), FabricError> {

@@ -8,6 +8,7 @@ use crate::error::FabricError;
 use crate::fabric::Fabric;
 use crate::kv::codec::decode;
 use crate::kv::key::{KvKey, KvPrefix};
+use crate::kv::revision::{Revision, read_with_revision};
 use crate::kv::scan::{scan_entries, scan_keys};
 
 pub struct PublishedLanguageReader<V> {
@@ -36,6 +37,13 @@ where
         };
         let value = decode(key.as_str(), &bytes)?;
         Ok(Some(value))
+    }
+
+    pub async fn get_with_revision(
+        &self,
+        key: &KvKey,
+    ) -> Result<Option<(V, Revision)>, FabricError> {
+        read_with_revision(&self.kv, key).await
     }
 
     pub async fn keys(&self, prefix: &KvPrefix) -> Result<Vec<KvKey>, FabricError> {
