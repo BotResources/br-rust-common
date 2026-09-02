@@ -2,6 +2,7 @@ pub(crate) mod backoff;
 mod bind;
 mod bound;
 mod config;
+mod coverage;
 mod handle;
 mod open;
 mod provision;

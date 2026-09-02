@@ -156,8 +156,10 @@ exist (gitops); an absent stream fails loud with
 `FabricError::Consume { kind: NoStream }`. An **empty coordinate set** is rejected
 before any create (it would make the consumer vacuum the whole stream) with
 `FabricError::FilterMismatch`. `ensure_command_durable` / `ensure_event_durable`
-(and the retained `verify_command_durable` / `verify_event_durable` aliases)
-perform the same create-or-bind without running, for a readiness gate.
+perform the same create-or-bind without running, for a service that wants its
+durable to exist and start accumulating before the work loop opens; their
+`ensure_command_durable_with` / `ensure_event_durable_with` variants take a
+`&ConsumerTuning`, exactly as the consume path does.
 
 The fabric owns the durable's `ConsumerConfig` — the contract is:
 
@@ -235,6 +237,26 @@ deleted consumer surfaces as `ConsumerGone` and terminates. The initial bind
 stays fail-loud and is **not** covered by recovery: `run_*` returns the first
 bind error to the caller, recovery only guards a loop that already started
 running.
+
+#### Readiness verification (`verify_*_durable`) — a probe, not a provision
+
+`verify_command_durable` / `verify_event_durable` answer one boot question: *can
+this coordinate be consumed at all on this broker?* They **create nothing**. The
+check is two steps against the fixed stream:
+
+1. `get_stream` on `INTEGRATION_CMD` / `INTEGRATION_EVT` — an absent stream is
+   the gitops fail-loud, `FabricError::Consume { kind: NoStream }`.
+2. the rendered coordinate subject must be **covered by the stream's configured
+   `subjects`**, matched with NATS token semantics (`*` = exactly one token, `>` =
+   one-or-more tail tokens, anything else literal). A subject the stream does not
+   bind fails with `FabricError::SubjectNotCovered { stream, subject, configured }`
+   — the message names the stream, the coordinate, and what the stream actually
+   binds.
+
+The `durable` argument is retained for signature stability and call-site
+readability; it names the readiness gate, and no consumer bearing it is created.
+A probe that needs the durable to exist wants `ensure_*_durable` instead — the
+two are deliberately different operations.
 
 #### The durable consumer (explicit per-delivery acknowledgement)
 
@@ -718,6 +740,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | ------------------------------------------------------ | -------------------------------------------- |
 | the v1 grammar, fixed streams, fixed bucket            | the business coordinates + payload type      |
 | subject rendering, durable create-or-bind + its config | the durable name                             |
+| readiness subject-coverage matching against the stream binding | the coordinate to probe                 |
 | reconcile op computation, orphan detection             | the desired set                              |
 | bootstrap scan + watch loop, fail-closed codec         | the prefix selection                         |
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
@@ -732,6 +755,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | Thing | Why it is the way it is |
 | ----- | ----------------------- |
 | `IntegrationConsumer::drain()` is `async` though it currently only drops the pull stream | The signature reserves a future awaiting drain (in-flight-ack / unsubscribe flush) and avoids a later breaking sync→async change. |
+| `verify_*_durable` keeps a `durable` parameter it no longer uses | It used to create that durable (five phantom consumers accumulated in prod); the probe was fixed in place so every existing readiness call site keeps compiling and simply stops leaving a consumer behind. |
 
 ## Dependency
 

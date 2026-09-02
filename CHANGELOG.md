@@ -72,6 +72,48 @@ release; they remain reachable through the historical per-crate tags
   `deliver_policy = All`, `replay_policy = Instant`, `max_deliver = -1` and the
   rendered `filter_subject(s)` stay frozen as contract and Fabric-owned. No raw
   `pull::Config` is exposed; the escape hatch stays closed.
+- **`br-util-nats-fabric` — `FabricError::SubjectNotCovered { stream, subject,
+  configured }`**, the typed verdict of the readiness probe below. Additive on
+  the `#[non_exhaustive]` `FabricError`.
+
+### Changed
+
+- **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
+  now verify instead of provisioning** (#107). Signatures are unchanged; the
+  behaviour is not. The probe is `get_stream` on the fixed stream (absent →
+  `FabricError::Consume { kind: NoStream }`, the unchanged gitops fail-loud)
+  **plus** a check that the rendered coordinate subject is covered by the
+  stream's configured `subjects`, matched with NATS token semantics (`*` =
+  exactly one token, `>` = one-or-more tail tokens, otherwise literal). An
+  uncovered subject fails with `FabricError::SubjectNotCovered`, which names the
+  stream, the coordinate and what the stream actually binds. **No consumer is
+  created.** The `durable` argument is retained for signature stability and
+  call-site readability; callers wanting the durable to exist call
+  `ensure_*_durable`, which is unchanged.
+
+### Fixed
+
+- **`br-util-nats-fabric` — readiness probes no longer leave phantom durable
+  consumers behind** (#107). `verify_*_durable` were pure aliases of
+  `ensure_*_durable`: every boot created a real durable, filtered on the probed
+  subject, that nobody ever read from. On a busy subject that durable
+  accumulated unacked pending messages until the stream's `max_age` expired
+  them — bounded, not a leak, but JetStream metrics permanently showed
+  consumers with a growing backlog and zero acks, which is exactly the shape of
+  a broken consumer and would eventually mask a real incident.
+
+### Ops note
+
+- **The five phantom durables created by the `1.2.0` and earlier
+  `verify_*_durable` must be deleted by ops only *after* the affected services
+  re-pin** to a release carrying the fix — deleted earlier they are simply
+  recreated at the next boot. On the botresources.ai fabric these are
+  `charter-boot-probe` (twice: on
+  `integration.evt.charter.tenet.published.v1` and on
+  `integration.cmd.notifier.notification.deliver.v1`),
+  `projects-notifier-probe`, `timesheet-notifier-probe`,
+  `svc-website-notifier-readiness` and
+  `svc-website-anon-writer-notifier-readiness`.
 
 ## [1.2.0] — 2026-07-22
 
