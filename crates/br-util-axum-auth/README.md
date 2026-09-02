@@ -50,6 +50,12 @@ response is not a validation oracle. The precise cause (which check failed) goes
 `tracing::warn!` server-side; the header value is never logged (it may carry a
 forged passport payload).
 
+## Why
+
+| Thing | Why it is the way it is |
+|---|---|
+| A second sibling fn, not the pluggable refusal-formatter seam offered in #109 | Two fixed bodies is the whole known demand, and a formatter seam would let a service render a cause-dependent body — which breaks the opaque-refusal invariant this crate exists to hold. A third body becomes a third sibling. |
+
 The middleware does **not** enforce any policy beyond presence and
 decodability — `is_active`, `is_super_admin`, RLS, scope checks, etc. are
 the handler's or a separate layer's responsibility.
