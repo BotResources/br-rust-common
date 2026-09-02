@@ -261,3 +261,39 @@ async fn put_stays_last_writer_wins_against_a_stale_holder() {
         .expect("key is live");
     assert_eq!(value, payload("v4"));
 }
+
+#[tokio::test]
+#[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
+async fn update_if_after_a_retract_conflicts() {
+    let Some(_) = nats_url() else { return };
+    let publisher = publisher().await;
+    let key = isolated_key("cas-retracted");
+
+    publisher.put(&key, &payload("v1")).await.expect("put");
+    let (_, live) = publisher
+        .get_with_revision(&key)
+        .await
+        .expect("get")
+        .expect("key is live");
+    publisher.retract(&key).await.expect("retract");
+
+    let err = publisher
+        .update_if(&key, &payload("v2"), live)
+        .await
+        .expect_err("the retracted key must refuse its last live revision");
+    match err {
+        FabricError::RevisionConflict {
+            key: conflicted, ..
+        } => assert_eq!(conflicted, key.as_str()),
+        other => panic!("expected RevisionConflict, got {other:?}"),
+    }
+
+    assert!(
+        publisher
+            .get_with_revision(&key)
+            .await
+            .expect("get")
+            .is_none(),
+        "re-reading is what tells a retry loop the key is gone, not the conflict itself"
+    );
+}

@@ -51,8 +51,11 @@ release; they remain reachable through the historical per-crate tags
   `FabricError::RevisionConflict { key, expected }` on a mismatch, and write
   nothing. `put`, `update`, `retract`, `reconcile` and `repair_drift` are
   unchanged and stay last-writer-wins — the right default for a single-owner
-  mirror. `Revision` is the existing opaque newtype: a caller never mints one,
-  every revision originates from a `get_with_revision`. The revision-checked
+  mirror. A `RevisionConflict` also covers a key another writer has retracted,
+  so a retry loop must re-read with `get_with_revision` rather than retry
+  blind. `Revision` is the existing opaque newtype: a caller never mints one,
+  every revision originates from a `get_with_revision` or a successful
+  `update_if`. The revision-checked
   primitives and their error mapping now live in one place
   (`kv/revision.rs`) shared by both buckets, so the two surfaces cannot drift.
   Purely additive; no consumer re-pin is forced.

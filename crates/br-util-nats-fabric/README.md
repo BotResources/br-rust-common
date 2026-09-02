@@ -413,8 +413,8 @@ they ignore the revision chain, and a concurrent writer silently clobbers. That
 is the right default for a single-owner mirror, where the publisher is the sole
 authority for its prefix. When two writers can race for the same key, the
 publisher and the reader also expose the revision-checked path — the same
-contract as `EphemeralAuthStore` (see *Surface 3*), on the `PUBLISHED_LANGUAGE`
-bucket:
+contract as `EphemeralAuthStore` (see *Surface 3*), plus the new revision
+returned by `update_if`, on the `PUBLISHED_LANGUAGE` bucket:
 
 - `PublishedLanguageReader::get_with_revision(&KvKey) -> Result<Option<(V, Revision)>, FabricError>`
   and `PublishedLanguagePublisher::get_with_revision(…)` (same signature) read
@@ -426,13 +426,18 @@ bucket:
   and returns the **new** `Revision` on success — chain further writes off that
   value without a re-read. On a mismatch it returns the first-class, matchable
   `FabricError::RevisionConflict { key, expected }` and **nothing is written**.
+  A `RevisionConflict` also covers a key another writer has **retracted** — the
+  tombstone moved the revision on, so it is indistinguishable from a clobber.
+  Re-read with `get_with_revision` before retrying: `None` means the key is
+  gone, and a retry loop that does not re-read spins forever on it.
 - `PublishedLanguagePublisher::delete_if(&KvKey, Revision) -> Result<(), FabricError>`
   writes a delete tombstone only if the supplied `Revision` is still the last
   revision; on a mismatch it returns the same `FabricError::RevisionConflict` and
   the key stays live. `retract` remains the unconditional delete.
 
 `Revision` is the same opaque newtype used by *Surface 3*: a caller never mints
-one, every revision originates from a `get_with_revision`.
+one, every revision originates from a `get_with_revision` or a successful
+`update_if`.
 
 ### Consumer mechanics (the generic enablers of the directory's filter/extension/selection)
 
@@ -695,7 +700,7 @@ caller never mints a `Revision` by hand; every revision originates from
 | bootstrap scan + watch loop, fail-closed codec         | the prefix selection                         |
 | exact-key single-key read (`PublishedLanguageReader`)  | the `KvKey` to read                          |
 | prefix enumeration (`PublishedLanguageReader::keys`/`entries`) | the `KvPrefix` to scan                 |
-| compare-and-swap KV (`EphemeralAuthStore`, `Revision`) | the `KvKey`, the value, the observed revision |
+| compare-and-swap KV (`EphemeralAuthStore`, `PublishedLanguagePublisher`, `Revision`) | the `KvKey`, the value, the observed revision |
 | per-key TTL on create, enumeration, change-watch (`EphemeralAuthStore`, `EphemeralAuthWatcher`) | the `Duration`, the `KvPrefix`, the `on_change` handler |
 | the copy-filter *mechanism*                            | the `Fn(&V) -> bool` predicate               |
 | the projection *mechanism* (full `V` to the sink)      | the `ProjectionSink<V>` (what to persist)    |
