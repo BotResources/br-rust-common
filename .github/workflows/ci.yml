@@ -307,7 +307,12 @@ jobs:
       - name: cargo test (TLS handshake)
         env:
           TEST_TLS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-        run: cargo test -p br-util-postgres --locked -- --ignored full_handshake_succeeds
+        run: |
+          set -euo pipefail
+          cargo test -p br-util-postgres --locked -- --ignored --exact \
+            pool::live_tls_tests::full_handshake_succeeds \
+            | tee tls-handshake.log
+          grep -qE '^test result: ok\. 1 passed' tls-handshake.log
       - name: stop Postgres
         if: always()
         run: docker rm -f pg-tls || true
@@ -579,10 +584,6 @@ jobs:
     # Per-crate × {UT only, UT+E2E} so the Δ column shows exactly how much
     # of each crate is protected *only* by the e2e jobs — that is the
     # surface that would silently regress if those jobs were skipped.
-    # Needs *both* backends (PG + NATS) up while the --ignored tests run:
-    # every --ignored suite fails loud on a missing NATS_URL /
-    # TEST_DATABASE_URL. full_handshake_succeeds is skipped here because
-    # this job's Postgres serves plaintext (the e2e-postgres-tls job owns it).
     services:
       postgres:
         image: postgres:16-alpine

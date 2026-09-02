@@ -34,7 +34,8 @@ mod live_tests {
     use super::*;
     use crate::role::ensure_app_role;
     use br_test_support::{
-        cleanup_role, open_pool_as, setup_caller, test_db_url, unique_role_name, unique_table_name,
+        cleanup_role, open_pool_as, require_test_db_url, setup_caller, unique_role_name,
+        unique_table_name,
     };
     use sqlx::Row;
     use sqlx::postgres::PgPoolOptions;
@@ -69,7 +70,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_grants_table_dml() {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
         let table = unique_table_name();
 
@@ -130,7 +131,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_covers_tables_created_after_grant() {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
 
         grant_app_access(&owner_pool, &app_role)
@@ -164,7 +165,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_grants_sequence_usage() {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
         let table = unique_table_name();
 
@@ -198,7 +199,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_is_idempotent() {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
 
         grant_app_access(&owner_pool, &app_role)

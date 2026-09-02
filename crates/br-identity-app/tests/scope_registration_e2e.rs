@@ -219,7 +219,7 @@ async fn invalid_declaration_is_rejected_registry_untouched_and_acked() {
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL (real PG)"]
 async fn save_classifies_cross_owner_unique_violation_as_scope_conflict() {
-    let db = common::database_url();
+    let db = common::require_test_db_url();
     let pg = PgEnv::bootstrap(&db).await;
     let repo = ScopeRegistryRepository::new(pg.app_pool.clone());
 
@@ -341,7 +341,7 @@ async fn scope_conflict_yields_rejected_confirmation_without_redelivery() {
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL (real PG, non-superuser app role)"]
 async fn app_role_has_least_privilege_on_registry_tables() {
-    let db = common::database_url();
+    let db = common::require_test_db_url();
     let pg = PgEnv::bootstrap(&db).await;
     let app = pg.app_pool().await;
 

@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::str::FromStr;
 
-use br_test_support::{test_db_url, unique_suffix};
+use br_test_support::{require_test_db_url, unique_suffix};
 use br_util_postgres::migrations_status;
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
@@ -42,7 +42,7 @@ struct Sandbox {
 
 impl Sandbox {
     async fn open() -> Self {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let schema = format!("br_migstatus_{}", unique_suffix());
 
         let admin = PgPoolOptions::new()

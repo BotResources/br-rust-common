@@ -32,6 +32,10 @@ below.
 
 ### Added
 
+- **`br-test-support` — `require_test_db_url` / `require_test_tls_db_url`.**
+  Panicking counterparts to the existing `Option`-returning readers, for an
+  `#[ignore]`-gated suite that must fail loud rather than skip when its
+  environment is absent. The `Option` variants are unchanged.
 - **`br-util-axum-auth` — `passport_header_graphql_middleware`, an opt-in
   sibling whose 401 refusal body is GraphQL-shaped** (#109). The existing
   `passport_header_middleware` refuses with the plain-text body `unauthorized`,

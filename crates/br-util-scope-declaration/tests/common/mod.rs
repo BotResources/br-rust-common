@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 pub const DECLARE_SUBJECT: &str = "integration.cmd.identity.service_scope.declare.v1";
 
-pub fn nats_url() -> String {
+pub fn require_nats_url() -> String {
     std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
@@ -45,7 +45,7 @@ pub fn notifier_declaration() -> ScopeDeclaration {
 }
 
 pub async fn jetstream() -> async_nats::jetstream::Context {
-    let url = nats_url();
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     async_nats::jetstream::new(client)
 }

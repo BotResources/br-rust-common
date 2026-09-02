@@ -224,7 +224,7 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
-    use br_test_support::{cleanup_role, setup_caller, test_db_url, unique_role_name};
+    use br_test_support::{cleanup_role, require_test_db_url, setup_caller, unique_role_name};
     use sqlx::Connection;
     use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
     use std::str::FromStr;
@@ -244,7 +244,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_is_idempotent_for_same_password() {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let admin = PgPoolOptions::new()
             .max_connections(2)
             .connect(&url)
@@ -276,7 +276,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_rotates_password_on_change() {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let admin = PgPoolOptions::new()
             .max_connections(2)
             .connect(&url)
@@ -321,7 +321,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn ensure_app_role_handles_password_with_dollar_signs() {
-        let url = test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite");
+        let url = require_test_db_url();
         let admin = PgPoolOptions::new()
             .max_connections(2)
             .connect(&url)

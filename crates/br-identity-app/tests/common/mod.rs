@@ -9,7 +9,7 @@ use br_core_scope::{
 use br_identity_app::{
     ConfirmationPublisher, ScopeDeclarationPipeline, ScopeRegistryRepository, migrate,
 };
-pub use br_test_support::test_db_url;
+pub use br_test_support::require_test_db_url;
 use br_test_support::{cleanup_role, open_pool_as, unique_suffix};
 use br_util_nats_fabric::{Fabric, INTEGRATION_CMD, INTEGRATION_EVT, command_subject};
 use chrono::Utc;
@@ -20,16 +20,12 @@ use uuid::Uuid;
 
 pub const APP_PW: &str = "identity_app_pw_e2e_only";
 
-pub fn nats_url() -> String {
+pub fn require_nats_url() -> String {
     std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
-pub fn database_url() -> String {
-    test_db_url().expect("TEST_DATABASE_URL is required for this ignored suite")
-}
-
 pub fn prerequisites() -> (String, String) {
-    (database_url(), nats_url())
+    (require_test_db_url(), require_nats_url())
 }
 
 pub struct PgEnv {
