@@ -13,6 +13,7 @@ br-core-auth = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+br-util-graphql = { workspace = true, features = ["graphql"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }

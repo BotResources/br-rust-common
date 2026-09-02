@@ -19,17 +19,34 @@ its own identity extraction (e.g. parses a JWT directly).
 
 | Item | Kind | Behavior |
 |---|---|---|
-| `passport_header_middleware` | `async fn(Request<Body>, Next) -> Response` | Reads `X-Passport`, decodes via `Passport::from_header`, inserts the `Passport` as a request extension, then forwards to the next layer. |
+| `passport_header_middleware` | `async fn(Request<Body>, Next) -> Response` | Reads `X-Passport`, decodes via `Passport::from_header`, inserts the `Passport` as a request extension, then forwards to the next layer. Refuses with a plain-text body. |
+| `passport_header_graphql_middleware` | `async fn(Request<Body>, Next) -> Response` | Identical decode path and identical acceptance behavior; refuses with a GraphQL-shaped JSON body instead. Opt-in — pick one or the other per router, they are siblings, not a replacement. |
 
 Response semantics:
 
-| Condition | Response |
-|---|---|
-| Header missing, empty, non-UTF8, or malformed (bad base64 / bad JSON / wrong shape) | `401 Unauthorized` — uniform opaque body `"unauthorized"` |
-| Header valid | Continues; `request.extensions().get::<Passport>()` returns `Some(...)`. |
+| Condition | `passport_header_middleware` | `passport_header_graphql_middleware` |
+|---|---|---|
+| Header missing, empty, non-UTF8, or malformed (bad base64 / bad JSON / wrong shape) | `401` · `text/plain; charset=utf-8` · body `unauthorized` | `401` · `application/json` · body below |
+| Header valid | Continues; `request.extensions().get::<Passport>()` returns `Some(...)`. | Identical. |
 
-Every rejection returns the **same** opaque 401, so the response is not a
-validation oracle. The precise cause (which check failed) goes to
+The GraphQL refusal body is exactly these bytes, on every rejection cause:
+
+```json
+{"errors":[{"message":"unauthorized","extensions":{"code":"UNAUTHENTICATED"}}]}
+```
+
+`UNAUTHENTICATED` is the canonical wire string of
+[`br-util-graphql`](../br-util-graphql/README.md)'s
+`ErrorCode::Unauthenticated`. That crate owns the contract; this one hardcodes
+the string rather than depending on it, so a service mounting the middleware
+does not pull `async-graphql` in. `br-util-graphql` is a **dev**-dependency
+here, and a unit test deserializes the refusal body and asserts its
+`extensions.code` still equals `ErrorCode::Unauthenticated.as_str()` — drift
+between the two crates fails the build, it does not ship.
+
+Every rejection returns the **same** opaque 401 — byte-identical body,
+whichever middleware is mounted — so the response is not a validation
+oracle. The precise cause (which check failed) goes to
 `tracing::warn!` server-side; the header value is never logged (it may carry a
 forged passport payload).
 
@@ -57,6 +74,18 @@ async fn me(Extension(passport): Extension<Passport>) -> String {
 let app = Router::new()
     .route("/me", get(me))
     .layer(middleware::from_fn(passport_header_middleware));
+```
+
+For a GraphQL endpoint, mount the sibling instead so an unauthenticated call
+gets a body its client can parse:
+
+```rust
+use axum::routing::post;
+use br_util_axum_auth::passport_header_graphql_middleware;
+
+let app = Router::new()
+    .route("/graphql", post(graphql_handler))
+    .layer(middleware::from_fn(passport_header_graphql_middleware));
 ```
 
 To make a route public (skip the middleware), put it on a separate `Router`

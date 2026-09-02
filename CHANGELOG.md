@@ -9,6 +9,32 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
+## [Unreleased]
+
+### Added
+
+- **`br-util-axum-auth` — `passport_header_graphql_middleware`, an opt-in
+  sibling whose 401 refusal body is GraphQL-shaped.** The existing
+  `passport_header_middleware` refuses with the plain-text body `unauthorized`,
+  which a GraphQL client cannot parse — so every service fronting a GraphQL
+  endpoint re-implemented the refusal rendering locally (svc-jobs 0.1.0 did
+  exactly that, keeping the lib's decoding). The new middleware shares the same
+  decode path (`Passport::from_header`), the same acceptance behaviour and the
+  same `401`, and renders `{"errors":[{"message":"unauthorized","extensions":
+  {"code":"UNAUTHENTICATED"}}]}` with `content-type: application/json`. It is a
+  **sibling, not a swap**: `passport_header_middleware` is unchanged, mounting
+  it costs nothing new, and a service picks one per router. The opaque-refusal
+  invariant holds on both paths — missing, empty, non-UTF-8 and undecodable
+  headers all render byte-identical bodies, so neither middleware is a
+  validation oracle; the cause still goes to `tracing::warn!` only.
+  `UNAUTHENTICATED` is the wire string owned by `br-util-graphql`'s
+  `ErrorCode::Unauthenticated`, but it is **hardcoded** here rather than
+  imported: depending on `br-util-graphql` would drag `async-graphql` into
+  every service that only wants Passport decoding. `br-util-graphql` is a
+  **dev**-dependency instead, and a unit test deserializes the refusal body and
+  asserts its `extensions.code` still equals `ErrorCode::Unauthenticated
+  .as_str()`, so a drift between the two crates fails the build.
+
 ## [1.2.0] — 2026-07-22
 
 ### Added
