@@ -76,45 +76,6 @@ release; they remain reachable through the historical per-crate tags
   configured }`**, the typed verdict of the readiness probe below. Additive on
   the `#[non_exhaustive]` `FabricError`.
 
-### Changed
-
-- **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
-  now verify instead of provisioning** (#107). Signatures are unchanged; the
-  behaviour is not. The probe is `get_stream` on the fixed stream (absent →
-  `FabricError::Consume { kind: NoStream }`, the unchanged gitops fail-loud)
-  **plus** a check that the rendered coordinate subject is covered by the
-  stream's configured `subjects`, matched with NATS token semantics (`*` =
-  exactly one token, `>` = one-or-more tail tokens, otherwise literal). An
-  uncovered subject fails with `FabricError::SubjectNotCovered`, which names the
-  stream, the coordinate and what the stream actually binds. **No consumer is
-  created.** The probe therefore proves stream presence and subject coverage and
-  **nothing else**: it no longer exercises the right to create or consume a
-  durable, nor validates the durable name — both were checked *incidentally* up
-  to `1.2.0` because the probe created a consumer. A NATS user holding
-  `STREAM.INFO` but lacking consumer-create permission now passes the probe and
-  fails at the first `run_*` / `ensure_*_consumer`. A service that wants that
-  permission proven at boot, and its durable to exist and start accumulating,
-  calls `ensure_*_durable`, which is unchanged. The `durable` argument is
-  retained for signature stability and call-site readability.
-
-### Fixed
-
-- **`br-util-nats-fabric` — readiness probes no longer leave phantom durable
-  consumers behind** (#107). `verify_*_durable` were pure aliases of
-  `ensure_*_durable`: every boot created a real durable, filtered on the probed
-  subject, that nobody ever read from. On a busy subject that durable
-  accumulated unacked pending messages until the stream's `max_age` expired
-  them — bounded, not a leak, but JetStream metrics permanently showed
-  consumers with a growing backlog and zero acks, which is exactly the shape of
-  a broken consumer and would eventually mask a real incident.
-
-### Ops note
-
-- **Durable consumers created by pre-`1.3.0` `verify_*_durable` probes are no
-  longer recreated once a service re-pins.** Delete them from the streams only
-  *after* every consumer of that stream has re-pinned — deleted earlier, they
-  are recreated on the next boot. They are recognisable as durables filtered on
-  a single coordinate subject with a growing backlog and zero acks.
 - **`br-util-directory` — `DirectoryProjector::with_impact_stager`, a
   transactional seam for reacting to a roster change.** A consumer registers an
   `Arc<dyn ImpactStager>` beside `new` / `with_config`; when a `known_*` row
@@ -140,6 +101,26 @@ release; they remain reachable through the historical per-crate tags
 
 ### Changed
 
+- **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
+  now verify instead of provisioning** (#107). Signatures are unchanged; the
+  behaviour is not. The probe is `get_stream` on the fixed stream (absent →
+  `FabricError::Consume { kind: NoStream }`, the unchanged gitops fail-loud)
+  **plus** a check that the rendered coordinate subject is covered by the
+  stream's configured `subjects`, matched with NATS token semantics (`*` =
+  exactly one token, `>` = one-or-more tail tokens, otherwise literal). An
+  uncovered subject fails with `FabricError::SubjectNotCovered`, which names the
+  stream, the coordinate and what the stream actually binds. **No consumer is
+  created.** The probe therefore proves stream presence and subject coverage and
+  **nothing else**: it no longer exercises the right to create or consume a
+  durable, nor validates the durable name — both were checked *incidentally* up
+  to `1.2.0` because the probe created a consumer. A NATS user holding
+  `STREAM.INFO` but lacking consumer-create permission now passes the probe and
+  fails at the first `run_*` / `ensure_*_consumer`. A service that wants that
+  permission proven at boot, and its durable to exist and start accumulating,
+  calls `ensure_*_durable`, which is unchanged. The `durable` argument is
+  retained for signature stability and call-site readability.
+
+
 - **`br-util-directory` — the user and service-account sinks now write inside a
   transaction** (the group sink already did), and all three upsert with
   `ON CONFLICT (…) DO UPDATE SET … WHERE (t.cols…) IS DISTINCT FROM
@@ -156,6 +137,24 @@ release; they remain reachable through the historical per-crate tags
   stager fails and, sharing the transaction, **rolls the roster upsert back with
   it** — the mirror stops converging. Grant before registering a stager.
 
+### Fixed
+
+- **`br-util-nats-fabric` — readiness probes no longer leave phantom durable
+  consumers behind** (#107). `verify_*_durable` were pure aliases of
+  `ensure_*_durable`: every boot created a real durable, filtered on the probed
+  subject, that nobody ever read from. On a busy subject that durable
+  accumulated unacked pending messages until the stream's `max_age` expired
+  them — bounded, not a leak, but JetStream metrics permanently showed
+  consumers with a growing backlog and zero acks, which is exactly the shape of
+  a broken consumer and would eventually mask a real incident.
+
+### Ops note
+
+- **Durable consumers created by pre-`1.3.0` `verify_*_durable` probes are no
+  longer recreated once a service re-pins.** Delete them from the streams only
+  *after* every consumer of that stream has re-pinned — deleted earlier, they
+  are recreated on the next boot. They are recognisable as durables filtered on
+  a single coordinate subject with a growing backlog and zero acks.
 ## [1.2.0] — 2026-07-22
 
 ### Added
