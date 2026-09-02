@@ -93,7 +93,7 @@ equals the host extracted from the URL, exactly:
 ### Migration status (opt-in feature `migrate`)
 
 Answers one question about a live database: **is it exactly at the migration
-set embedded in this binary — every migration applied, checksums matching,
+set embedded in this binary — every up migration applied, checksums matching,
 nothing dirty and nothing applied that this binary does not carry?** It is the
 report a post-deployment probe needs, and the truth travels with the artifact,
 so no migration count is ever hardcoded anywhere.
@@ -119,7 +119,7 @@ if !status.is_current() {
 | Item | Role |
 |---|---|
 | `migrations_status(pool, migrator) -> MigrationsStatus` | Reads `_sqlx_migrations` through sqlx's own `Migrate::list_applied_migrations` + `dirty_version` and diffs it against `migrator.iter()` by version and checksum, **counting up migrations only**. **Read-only.** |
-| `MigrationsStatus::is_current() -> bool` | The safe default, and the whole gate a probe needs: true when every **embedded** migration is applied with a matching checksum, nothing is dirty, and the database carries no migration this binary lacks — `pending`, `checksum_mismatch` and `applied_not_embedded` all empty and `dirty` `None`. A database ahead of the binary is **not** current: a service that runs `migrate!().run()` at boot crash-loops there on `VersionMissing`. |
+| `MigrationsStatus::is_current() -> bool` | The safe default, and the whole gate a probe needs: true when every **embedded up** migration is applied with a matching checksum, nothing is dirty, and the database carries no migration this binary lacks — `pending`, `checksum_mismatch` and `applied_not_embedded` all empty and `dirty` `None`. A database ahead of the binary is **not** current: a service that runs `migrate!().run()` at boot crash-loops there on `VersionMissing`. |
 | `MigrationsStatus::embedded_applied() -> bool` | The lenient predicate: same, minus the `applied_not_embedded` clause. It answers "is *this binary's* own migration set in place", and is the right gate **only** for a service whose migrator is built with `set_ignore_missing(true)`, which boots over a database ahead of it. |
 
 `MigrationsStatus` is `#[non_exhaustive]`; every version list is sorted ascending:

@@ -262,6 +262,34 @@ mod tests {
     }
 
     #[test]
+    fn fully_applied_reversible_set_with_a_database_ahead_is_not_current() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let ahead = migration(9, "SELECT 9");
+        let rows = vec![applied(&pair[0]), applied(&ahead)];
+
+        let status = compare(pair.iter(), &rows, None);
+
+        assert!(status.pending.is_empty());
+        assert_eq!(status.applied_not_embedded, vec![9]);
+        assert!(status.embedded_applied());
+        assert!(!status.is_current());
+    }
+
+    #[test]
+    fn a_version_carried_only_by_a_down_entry_still_counts_as_embedded() {
+        let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
+        let orphan_down = &pair[1];
+        let rows = vec![applied(orphan_down)];
+
+        let status = compare(std::iter::once(orphan_down), &rows, None);
+
+        assert!(status.applied_not_embedded.is_empty());
+        assert!(status.pending.is_empty());
+        assert!(status.checksum_mismatch.is_empty());
+        assert!(status.is_current());
+    }
+
+    #[test]
     fn checksum_is_compared_against_the_up_migration() {
         let pair = reversible(1, "CREATE TABLE widget ()", "DROP TABLE widget");
         let rows = vec![applied(&pair[1])];
