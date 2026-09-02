@@ -51,7 +51,7 @@ mod tests {
     fn graphql_refusal_is_json_typed_401() {
         let response = graphql_unauthorized();
 
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), ErrorCode::Unauthenticated.http_status());
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/json"
@@ -60,6 +60,9 @@ mod tests {
 
     #[test]
     fn text_refusal_is_plain_401() {
-        assert_eq!(text_unauthorized().status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            text_unauthorized().status(),
+            ErrorCode::Unauthenticated.http_status()
+        );
     }
 }
