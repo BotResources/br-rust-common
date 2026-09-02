@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-machete
       - run: cargo machete
@@ -157,7 +157,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: semver
-      - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-semver-checks
       - name: cargo semver-checks (per-crate, unified baseline)
@@ -247,7 +247,7 @@ jobs:
         # iterates over tables owned by owner B and fails with
         # "permission denied for table". Sequential matches the
         # single-service / single-database production shape.
-        run: cargo test -p br-util-postgres --all-features --locked -- --ignored --test-threads=1
+        run: cargo test -p br-util-postgres --all-features --locked -- --ignored --test-threads=1 --skip full_handshake_succeeds
 
   e2e-postgres-tls:
     name: e2e (br-util-postgres TLS handshake)
@@ -306,10 +306,13 @@ jobs:
           exit 1
       - name: cargo test (TLS handshake)
         env:
-          # Drives only full_handshake_succeeds; the other live tests skip
-          # silently because TEST_DATABASE_URL is unset in this job.
           TEST_TLS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-        run: cargo test -p br-util-postgres --locked -- --ignored full_handshake_succeeds
+        run: |
+          set -euo pipefail
+          cargo test -p br-util-postgres --locked -- --ignored --exact \
+            pool::live_tls_tests::full_handshake_succeeds \
+            | tee tls-handshake.log
+          grep -qE '^test result: ok\. 1 passed' tls-handshake.log
       - name: stop Postgres
         if: always()
         run: docker rm -f pg-tls || true
@@ -581,9 +584,6 @@ jobs:
     # Per-crate × {UT only, UT+E2E} so the Δ column shows exactly how much
     # of each crate is protected *only* by the e2e jobs — that is the
     # surface that would silently regress if those jobs were skipped.
-    # Needs *both* backends (PG + NATS) up while the --ignored tests run,
-    # otherwise br-util-postgres or br-core-integration live tests
-    # early-return and contribute 0 to the E2E column.
     services:
       postgres:
         image: postgres:16-alpine
@@ -612,7 +612,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: coverage
-      - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-llvm-cov
       - name: start NATS JetStream broker
@@ -653,7 +653,7 @@ jobs:
         run: cargo llvm-cov report --json --output-path coverage-ut.json
       - name: instrument + run e2e tests (accumulating)
         # See e2e-postgres job comment for why --test-threads=1.
-        run: cargo llvm-cov --workspace --locked --no-clean -- --ignored --test-threads=1
+        run: cargo llvm-cov --workspace --locked --no-clean -- --ignored --test-threads=1 --skip full_handshake_succeeds
       - name: snapshot UT+E2E report
         run: cargo llvm-cov report --json --output-path coverage-ut-e2e.json
       - name: generate lcov (UT+E2E)

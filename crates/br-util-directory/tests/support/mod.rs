@@ -42,8 +42,7 @@ impl ExclusiveProjection {
 pub fn infra() -> (String, String) {
     let nats = std::env::var("NATS_URL")
         .expect("NATS_URL and TEST_DATABASE_URL are required for this ignored suite");
-    let database = br_test_support::test_db_url()
-        .expect("NATS_URL and TEST_DATABASE_URL are required for this ignored suite");
+    let database = br_test_support::require_test_db_url();
     (nats, database)
 }
 

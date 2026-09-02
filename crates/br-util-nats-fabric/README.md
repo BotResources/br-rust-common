@@ -961,7 +961,7 @@ from a fresh copy on recovery.
 ## Dependency
 
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.2.0", version = "1.2.0" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.3.0", version = "1.3.0" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.2.0", version = "1.2.0", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.3.0", version = "1.3.0", features = ["outbox"] }
 ```

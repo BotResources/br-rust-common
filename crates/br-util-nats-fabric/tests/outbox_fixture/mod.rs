@@ -16,16 +16,17 @@ pub struct UserCreatedV1 {
     user_id: Uuid,
 }
 
-pub fn nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL must point at a JetStream-enabled broker")
+pub fn require_nats_url() -> String {
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
-pub fn database_url() -> String {
-    std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must point at a Postgres database")
+pub fn require_database_url() -> String {
+    std::env::var("TEST_DATABASE_URL")
+        .expect("TEST_DATABASE_URL is required for this ignored suite")
 }
 
 pub async fn jetstream() -> async_nats::jetstream::Context {
-    let client = async_nats::connect(&nats_url())
+    let client = async_nats::connect(&require_nats_url())
         .await
         .expect("connect to NATS");
     async_nats::jetstream::new(client)
@@ -44,7 +45,7 @@ pub async fn recreate_event_stream(js: &async_nats::jetstream::Context) {
 }
 
 pub async fn outbox_pool() -> PgPool {
-    let pool = PgPool::connect(&database_url())
+    let pool = PgPool::connect(&require_database_url())
         .await
         .expect("connect to Postgres");
     sqlx::query(

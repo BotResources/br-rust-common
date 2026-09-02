@@ -283,6 +283,18 @@ stager-less path. The rest of the KV/PG round-trip — orphan-delete, extension
 survival, pass→fail orphan, the users-only scope, the absent-manifest
 fail-closed — is the **conformance-directory** battery in `br-e2e-harness`.
 
+## Install
+
+```toml
+[dependencies]
+br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "v1.3.0", version = "1.3.0", features = ["consumer"] }
+# the identity side, which writes the roster:
+# br-util-directory = { git = "...", package = "br-util-directory", tag = "v1.3.0", version = "1.3.0", features = ["publisher"] }
+```
+
+`default = []`: pick `consumer` (the `known_*` projection + readers),
+`publisher` (the roster writer), or both.
+
 ## Why
 
 | Thing | Why it is the way it is |

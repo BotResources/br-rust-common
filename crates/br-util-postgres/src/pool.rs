@@ -268,7 +268,7 @@ mod tests {
 
 #[cfg(test)]
 mod live_tls_tests {
-    use br_test_support::{test_db_url, test_tls_db_url};
+    use br_test_support::{require_test_db_url, require_test_tls_db_url};
     use sqlx::Connection;
     use sqlx::postgres::PgConnection;
 
@@ -280,7 +280,7 @@ mod live_tls_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a (plaintext) PG 16+"]
     async fn backend_is_compiled_in() {
-        let Some(url) = test_db_url() else { return };
+        let url = require_test_db_url();
         let tls_url = with_param(&url, "sslmode=require");
 
         let err = PgConnection::connect(&tls_url)
@@ -306,7 +306,7 @@ mod live_tls_tests {
     #[tokio::test]
     #[ignore = "requires TEST_TLS_DATABASE_URL pointing at a TLS-enabled PG 16+"]
     async fn full_handshake_succeeds() {
-        let Some(url) = test_tls_db_url() else { return };
+        let url = require_test_tls_db_url();
         let tls_url = with_param(&url, "sslmode=require");
 
         PgConnection::connect(&tls_url)

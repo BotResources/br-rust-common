@@ -9,12 +9,35 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
-## [Unreleased]
+## [1.3.0] — 2026-09-02
+
+**Behaviour migration — `verify_command_durable` / `verify_event_durable`
+(#107).** Both were aliases of their `ensure_*` counterpart and created the
+durable they claimed to only probe. They now probe and create nothing. The
+signatures are unchanged, so this is compile-compatible, but it is runtime-
+relevant: a service that relied on a boot-time `verify_*_durable` to provision
+the durable its work loop later binds will find it missing after re-pinning.
+Call `ensure_command_durable` / `ensure_event_durable` (or the `_with` variants
+for custom `ConsumerTuning`) wherever provisioning was the intent, and keep
+`verify_*` for readiness probing only.
+
+**Deployment note — `duplicate_window`.** The outbox relay's dedup guarantee
+rests on a JetStream stream setting this crate never declares: `duplicate_window`
+defaults to 2 minutes, and the operator must make it explicit in the stream
+declaration for the guarantee to be relied on. Inside the window a manual
+re-stage yields a duplicate ack rather than a second delivery, and a rolling
+deploy that briefly runs two relays is absorbed. Details and the third
+consequence (the window is stream-wide, not per subject) are under *Ops note*
+below.
 
 ### Added
 
+- **`br-test-support` — `require_test_db_url` / `require_test_tls_db_url`.**
+  Panicking counterparts to the existing `Option`-returning readers, for an
+  `#[ignore]`-gated suite that must fail loud rather than skip when its
+  environment is absent. The `Option` variants are unchanged.
 - **`br-util-axum-auth` — `passport_header_graphql_middleware`, an opt-in
-  sibling whose 401 refusal body is GraphQL-shaped.** The existing
+  sibling whose 401 refusal body is GraphQL-shaped** (#109). The existing
   `passport_header_middleware` refuses with the plain-text body `unauthorized`,
   which a GraphQL client cannot parse — so every service fronting a GraphQL
   endpoint re-implemented the refusal rendering locally (svc-jobs 0.1.0 did
@@ -61,7 +84,7 @@ release; they remain reachable through the historical per-crate tags
   stateful handler keeps its state. `watch()` is unchanged and stays public for
   tests and one-shot callers; `health()` is now truthfully driven by the loop.
 - **`br-util-nats-fabric` — a revision/compare-and-swap surface on the
-  Published-Language publisher and reader.** `PUBLISHED_LANGUAGE` writes were
+  Published-Language publisher and reader** (#112). `PUBLISHED_LANGUAGE` writes were
   last-writer-wins only, so two writers racing for the same key silently
   clobbered each other and a read-modify-write could not be made safe without
   leaving the Fabric. The `EphemeralAuthStore` CAS contract is now also
@@ -158,7 +181,8 @@ release; they remain reachable through the historical per-crate tags
   consumer not using the outbox gains nothing, and the `metrics` facade is a
   no-op until the process installs a recorder.
 - **`br-util-postgres` — `migrations_status`, a read-only report answering "is
-  this database exactly at the migration set embedded in this binary?"** Behind a new opt-in cargo feature `migrate`
+  this database exactly at the migration set embedded in this binary?"** (#110)
+  Behind a new opt-in cargo feature `migrate`
   (`migrate = ["sqlx/migrate"]`): the workspace `sqlx` pin does not enable
   `migrate`, so a consumer that does not want the helper compiles none of it and
   gains no dependency. `migrations_status(&PgPool, &Migrator) ->
@@ -212,6 +236,14 @@ release; they remain reachable through the historical per-crate tags
   were added — supervision stays the caller's.
 
 ### Changed
+
+- **Every crate README install snippet now pins `version = "1.3.0"` beside
+  `tag = "v1.3.0"`.** `br-util-broadcast` and fifteen others documented a
+  tag-only git dependency, which a consumer running `cargo-deny` with
+  `wildcards = "deny"` rejects — the version requirement of a tag-only git
+  dependency reads as `*`, so those snippets did not paste into a working
+  manifest. `br-core-directory` and `br-util-directory` documented no install
+  at all and now carry one.
 
 - **`br-util-nats-fabric` — `EphemeralAuthWatcher::watch()` now marks the health
   channel `Degraded` on a fail-closed decode/key error, not only on a stream

@@ -15,12 +15,12 @@ struct Payload {
 
 type Seen = Arc<Mutex<Vec<EphemeralAuthChange<Payload>>>>;
 
-fn nats_url() -> String {
-    std::env::var("NATS_URL").expect("NATS_URL set")
+fn require_nats_url() -> String {
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {
-    let url = nats_url();
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     async_nats::jetstream::new(client)
 }
@@ -46,7 +46,7 @@ async fn reset_bucket(js: &async_nats::jetstream::Context) {
 }
 
 async fn open_store() -> EphemeralAuthStore<Payload> {
-    let url = nats_url();
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     let fabric = Fabric::new(async_nats::jetstream::new(client));
     EphemeralAuthStore::<Payload>::open(&fabric)

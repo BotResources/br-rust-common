@@ -6,12 +6,12 @@ use br_util_nats_fabric::{
 };
 use uuid::Uuid;
 
-fn nats_url() -> Option<String> {
-    std::env::var("NATS_URL").ok()
+fn require_nats_url() -> String {
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {
-    let url = nats_url().expect("NATS_URL set");
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     async_nats::jetstream::new(client)
 }
@@ -62,7 +62,7 @@ async fn consumer_names(js: &async_nats::jetstream::Context, stream: &str) -> Ve
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn verify_event_durable_passes_on_a_covering_stream_and_creates_no_consumer() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_EVT, "integration.evt.>").await;
 
@@ -85,7 +85,7 @@ async fn verify_event_durable_passes_on_a_covering_stream_and_creates_no_consume
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn verify_event_durable_fails_loud_when_the_stream_is_absent() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let _ = js.delete_stream(INTEGRATION_EVT).await;
 
@@ -110,7 +110,7 @@ async fn verify_event_durable_fails_loud_when_the_stream_is_absent() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn verify_event_durable_fails_when_the_stream_does_not_cover_the_coordinate() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_EVT, "integration.evt.billing.>").await;
 
@@ -147,7 +147,7 @@ async fn verify_event_durable_fails_when_the_stream_does_not_cover_the_coordinat
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_event_durable_with_provisions_the_requested_ack_wait() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_EVT, "integration.evt.>").await;
 
@@ -195,7 +195,7 @@ async fn ensure_event_durable_with_provisions_the_requested_ack_wait() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn verify_command_durable_probes_the_command_stream_and_creates_no_consumer() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
     let _ = js.delete_stream(INTEGRATION_EVT).await;
@@ -219,7 +219,7 @@ async fn verify_command_durable_probes_the_command_stream_and_creates_no_consume
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn verify_command_durable_fails_when_the_command_stream_does_not_cover_the_coordinate() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.billing.>").await;
 
@@ -248,7 +248,7 @@ async fn verify_command_durable_fails_when_the_command_stream_does_not_cover_the
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_command_durable_with_provisions_on_the_command_stream() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
     let _ = js.delete_stream(INTEGRATION_EVT).await;

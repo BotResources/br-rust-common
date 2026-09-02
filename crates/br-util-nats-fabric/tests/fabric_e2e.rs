@@ -19,31 +19,38 @@ struct Payload {
     label: String,
 }
 
-fn nats_url() -> Option<String> {
-    std::env::var("NATS_URL").ok()
+fn require_nats_url() -> String {
+    std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
 }
 
 async fn fabric() -> Fabric {
-    let url = nats_url().expect("NATS_URL set");
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     Fabric::new(async_nats::jetstream::new(client))
 }
 
 async fn jetstream() -> async_nats::jetstream::Context {
-    let url = nats_url().expect("NATS_URL set");
+    let url = require_nats_url();
     let client = async_nats::connect(&url).await.expect("connect to NATS");
     async_nats::jetstream::new(client)
 }
 
 async fn recreate_stream(js: &async_nats::jetstream::Context, name: &str, bind: &str) {
     let _ = js.delete_stream(name).await;
-    js.create_stream(async_nats::jetstream::stream::Config {
-        name: name.to_string(),
-        subjects: vec![bind.to_string()],
-        ..Default::default()
-    })
-    .await
-    .expect("create fixed stream");
+    let mut stream = js
+        .create_stream(async_nats::jetstream::stream::Config {
+            name: name.to_string(),
+            subjects: vec![bind.to_string()],
+            ..Default::default()
+        })
+        .await
+        .expect("create fixed stream");
+    stream.purge().await.expect("purge the fixed stream");
+    let state = stream.info().await.expect("stream info").state.clone();
+    assert_eq!(
+        state.messages, 0,
+        "the fixture must start from an empty {name}"
+    );
 }
 
 fn command(label: &str, correlation_id: Uuid) -> IntegrationCommand<Payload> {
@@ -75,7 +82,7 @@ fn event(label: &str, correlation_id: Uuid) -> IntegrationEvent<Payload> {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn command_renders_grammar_and_a_matching_durable_consumes_it() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -127,7 +134,7 @@ async fn command_renders_grammar_and_a_matching_durable_consumes_it() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn a_pre_existing_widened_durable_converges_to_the_libs_filter() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_EVT, "integration.evt.>").await;
 
@@ -167,7 +174,7 @@ async fn a_pre_existing_widened_durable_converges_to_the_libs_filter() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn awaiter_matches_by_correlation_id() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_EVT, "integration.evt.>").await;
 
@@ -198,7 +205,7 @@ async fn awaiter_matches_by_correlation_id() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn command_awaiter_matches_by_correlation_id() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -229,7 +236,7 @@ async fn command_awaiter_matches_by_correlation_id() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn command_awaiter_matches_one_of_several_coords() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -275,7 +282,7 @@ async fn command_awaiter_matches_one_of_several_coords() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn command_awaiter_returns_none_at_the_deadline() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -304,7 +311,7 @@ async fn command_awaiter_returns_none_at_the_deadline() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn command_awaiter_fails_loud_when_the_command_stream_is_absent() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let _ = js.delete_stream(INTEGRATION_CMD).await;
 
@@ -328,7 +335,7 @@ async fn command_awaiter_fails_loud_when_the_command_stream_is_absent() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn published_language_binds_the_existing_shared_bucket() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     ensure_published_language_bucket(&js).await;
 
@@ -361,7 +368,7 @@ fn isolated_key(suffix: &str) -> String {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn single_key_get_returns_none_for_an_absent_key() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let _ = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -376,7 +383,7 @@ async fn single_key_get_returns_none_for_an_absent_key() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn single_key_get_returns_the_decoded_value_for_a_present_key() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -399,7 +406,7 @@ async fn single_key_get_returns_the_decoded_value_for_a_present_key() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn single_key_get_fails_closed_on_an_undecodable_value() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -422,7 +429,7 @@ async fn single_key_get_fails_closed_on_an_undecodable_value() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -464,7 +471,7 @@ async fn single_key_get_is_exact_and_does_not_match_a_prefix_sibling() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn enumeration_returns_only_the_prefix_scoped_keys_and_entries() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -521,7 +528,7 @@ async fn enumeration_returns_only_the_prefix_scoped_keys_and_entries() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn enumeration_entries_fails_closed_on_an_undecodable_value() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -558,7 +565,7 @@ async fn enumeration_entries_fails_closed_on_an_undecodable_value() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn enumeration_on_an_unmatched_prefix_returns_a_legitimate_empty() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -607,7 +614,7 @@ impl ProjectionSink<Payload> for RecordingSink {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn watch_delivers_a_live_slash_keyed_directory_put() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -665,7 +672,7 @@ async fn watch_delivers_a_live_slash_keyed_directory_put() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn supervised_run_bootstraps_reconciles_and_follows_live_puts() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -776,7 +783,7 @@ async fn supervised_run_bootstraps_reconciles_and_follows_live_puts() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn supervised_run_recovers_from_a_real_watch_stream_fault_and_converges_the_gap() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let store = ensure_published_language_bucket(&js).await;
     let fabric = fabric().await;
@@ -895,7 +902,7 @@ fn ephemeral_key(suffix: &str) -> KvKey {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ephemeral_auth_binds_the_existing_shared_bucket() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     ensure_ephemeral_auth_bucket(&js).await;
 
@@ -906,7 +913,7 @@ async fn ephemeral_auth_binds_the_existing_shared_bucket() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn concurrent_update_if_on_the_same_revision_has_exactly_one_winner() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -964,7 +971,7 @@ async fn concurrent_update_if_on_the_same_revision_has_exactly_one_winner() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn put_performs_the_unconditional_revoke_family_wipe() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -1005,7 +1012,7 @@ async fn put_performs_the_unconditional_revoke_family_wipe() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn delete_then_get_with_revision_reads_absent() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let raw = ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -1039,7 +1046,7 @@ async fn delete_then_get_with_revision_reads_absent() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn create_re_creates_through_a_post_delete_tombstone() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let raw = ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -1087,7 +1094,7 @@ async fn create_re_creates_through_a_post_delete_tombstone() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn delete_if_with_the_current_revision_removes_the_key() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let raw = ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -1127,7 +1134,7 @@ async fn delete_if_with_the_current_revision_removes_the_key() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn delete_if_with_a_stale_revision_conflicts_and_keeps_the_key() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let raw = ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -1186,7 +1193,7 @@ async fn delete_if_with_a_stale_revision_conflicts_and_keeps_the_key() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn create_on_a_live_key_returns_key_already_exists() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -1232,7 +1239,7 @@ async fn create_on_a_live_key_returns_key_already_exists() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn get_with_revision_fails_closed_on_an_undecodable_value() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let raw = ensure_ephemeral_auth_bucket(&js).await;
     let fabric = fabric().await;
@@ -1265,7 +1272,7 @@ fn deliver_coords() -> CommandCoords {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_command_consumer_acks_and_the_message_is_not_redelivered() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -1303,7 +1310,7 @@ async fn ensure_command_consumer_acks_and_the_message_is_not_redelivered() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -1337,6 +1344,11 @@ async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
         .expect("recv ok")
         .expect("a redelivery");
     assert_eq!(
+        second.payload().unwrap().payload.label,
+        "again",
+        "the redelivery must be the same frame, not a second one the fixture left on the stream"
+    );
+    assert_eq!(
         second.delivered_count(),
         Some(2),
         "delivered_count increments on redelivery"
@@ -1349,7 +1361,7 @@ async fn nak_redelivers_after_the_delay_and_delivered_count_increments() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn a_poison_frame_is_routable_to_term_and_the_loop_survives() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -1403,7 +1415,7 @@ async fn a_poison_frame_is_routable_to_term_and_the_loop_survives() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn delivered_count_increments_across_redeliveries() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -1426,6 +1438,11 @@ async fn delivered_count_increments_across_redeliveries() {
             .expect("recv within deadline")
             .expect("recv ok")
             .expect("a delivery");
+        assert_eq!(
+            delivery.payload().unwrap().payload.label,
+            "retry",
+            "every attempt must be the same frame, not a second one the fixture left on the stream"
+        );
         assert_eq!(
             delivery.delivered_count(),
             Some(expected),
@@ -1468,7 +1485,7 @@ async fn round_trip_a_command(fabric: &Fabric, js: &async_nats::jetstream::Conte
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn connect_dials_and_the_returned_fabric_publishes_and_consumes() {
-    let Some(url) = nats_url() else { return };
+    let url = require_nats_url();
     let fabric = Fabric::connect(&url).await.expect("Fabric::connect dials");
     let js = jetstream().await;
     round_trip_a_command(&fabric, &js).await;
@@ -1477,7 +1494,7 @@ async fn connect_dials_and_the_returned_fabric_publishes_and_consumes() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn connect_with_credentials_dials_and_the_returned_fabric_round_trips() {
-    let Some(url) = nats_url() else { return };
+    let url = require_nats_url();
     let auth = NatsAuth {
         user: std::env::var("NATS_USER").unwrap_or_else(|_| "fabric".to_string()),
         password: std::env::var("NATS_PASSWORD").unwrap_or_else(|_| "fabric".to_string()),
@@ -1507,7 +1524,7 @@ async fn connect_fails_loud_with_a_distinct_variant_on_an_unreachable_broker() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_command_consumer_creates_an_absent_durable_and_consumes() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     recreate_stream(&js, INTEGRATION_CMD, "integration.cmd.>").await;
 
@@ -1537,7 +1554,7 @@ async fn ensure_command_consumer_creates_an_absent_durable_and_consumes() {
 #[tokio::test]
 #[ignore = "requires NATS_URL pointing at a JetStream-enabled broker"]
 async fn ensure_command_consumer_fails_loud_when_the_stream_is_absent() {
-    let Some(_) = nats_url() else { return };
+    require_nats_url();
     let js = jetstream().await;
     let _ = js.delete_stream(INTEGRATION_CMD).await;
 
