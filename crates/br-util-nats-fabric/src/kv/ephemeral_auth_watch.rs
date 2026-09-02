@@ -4,11 +4,14 @@ use async_nats::jetstream::kv::{Operation, Store};
 use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 
+use crate::consumer::backoff::Backoff;
 use crate::error::FabricError;
 use crate::kv::codec::decode;
 use crate::kv::ephemeral_auth::EphemeralAuthStore;
+use crate::kv::ephemeral_auth_supervise::SupervisedWatch;
 use crate::kv::health::{WatchHealth, WatchHealthChannel, WatchHealthReceiver};
 use crate::kv::key::KvKey;
+use crate::kv::supervisor::supervise;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EphemeralAuthChange<V> {
@@ -47,8 +50,26 @@ where
         }
     }
 
+    pub(crate) fn store(&self) -> &Store {
+        &self.kv
+    }
+
     pub fn health(&self) -> WatchHealthReceiver {
         self.health.receiver()
+    }
+
+    pub async fn run<H>(&self, on_change: H) -> std::convert::Infallible
+    where
+        V: DeserializeOwned + Send + Sync,
+        H: FnMut(EphemeralAuthChange<V>) + Send,
+    {
+        supervise(
+            &SupervisedWatch::new(self, on_change),
+            &self.health,
+            Backoff::production(),
+            "ephemeral-auth",
+        )
+        .await
     }
 
     pub async fn watch<H>(&self, mut on_change: H) -> Result<(), FabricError>
@@ -66,18 +87,30 @@ where
                 }
             };
             self.health.set(WatchHealth::Healthy);
-            let key = KvKey::new(entry.key.clone())?;
-            let change = match classify(entry.operation) {
-                ChangeKind::Removed => EphemeralAuthChange::Removed { key },
-                ChangeKind::Set => {
-                    let value = decode(&entry.key, &entry.value)?;
-                    EphemeralAuthChange::Set { key, value }
+            let change = match Self::change_from(entry) {
+                Ok(change) => change,
+                Err(e) => {
+                    self.health.set(WatchHealth::Degraded);
+                    return Err(e);
                 }
             };
             on_change(change);
         }
         self.health.set(WatchHealth::Degraded);
         Ok(())
+    }
+
+    fn change_from(
+        entry: async_nats::jetstream::kv::Entry,
+    ) -> Result<EphemeralAuthChange<V>, FabricError> {
+        let key = KvKey::new(entry.key.clone())?;
+        Ok(match classify(entry.operation) {
+            ChangeKind::Removed => EphemeralAuthChange::Removed { key },
+            ChangeKind::Set => EphemeralAuthChange::Set {
+                value: decode(&entry.key, &entry.value)?,
+                key,
+            },
+        })
     }
 }
 

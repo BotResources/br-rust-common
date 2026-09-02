@@ -34,6 +34,32 @@ release; they remain reachable through the historical per-crate tags
   **dev**-dependency instead, and a unit test deserializes the refusal body and
   asserts its `extensions.code` still equals `ErrorCode::Unauthenticated
   .as_str()`, so a drift between the two crates fails the build.
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::run()`, a supervised
+  entrypoint that survives a broker blip (#103).** `watch()` returns on its first
+  stream error and returns `Ok(())` on a clean stream end, and nothing restarted
+  it: a service watching this bucket for cross-instance revocation lost the watch
+  on the first transient NATS fault and nothing restarted it, so it stayed blind
+  until the process was restarted — the same one-shot death the supervised
+  `PublishedLanguageConsumer::run()` fixed for the Published-Language mirror.
+  (The canonical consumer of the store itself is refresh-token rotation.) `run(on_change)` wraps the same supervision loop: reconcile, follow,
+  and on any watch error or clean stream end publish `WatchHealth::Degraded`,
+  back off (200 ms doubling to a 30 s cap, floor reset only by a watch that
+  actually delivered a change) and re-arm — forever, with `std::convert::
+  Infallible` in the signature, stopped by aborting or dropping the task.
+  **Recovery here is resubscribe-only, not a rebuild.** The Published-Language
+  loop re-runs a full bootstrap because it owns a local mirror that would drift;
+  `EPHEMERAL_AUTH` is compare-and-swap-written and TTL-bounded, its consumers
+  hold no local copy, and the bucket itself is the truth (re-read under CAS at
+  decision time), so recovery just re-opens the subscription. Its only gate is a
+  live bucket-presence probe — a real `STREAM.INFO` round-trip, deliberately not
+  `status()`, which reads cached stream info and could never notice a bucket that
+  went away — so a deleted bucket keeps the loop `Degraded` and loud rather than
+  looking healthy. **Honest limit:** a change that lands during the outage window
+  is not replayed, so a consumer holding state derived from this watch must
+  re-read the bucket after a `Degraded` → `Healthy` transition. The caller's
+  handler is reused across re-arms (held behind a mutex, never cloned), so a
+  stateful handler keeps its state. `watch()` is unchanged and stays public for
+  tests and one-shot callers; `health()` is now truthfully driven by the loop.
 - **`br-util-nats-fabric` — a revision/compare-and-swap surface on the
   Published-Language publisher and reader.** `PUBLISHED_LANGUAGE` writes were
   last-writer-wins only, so two writers racing for the same key silently
@@ -100,6 +126,28 @@ release; they remain reachable through the historical per-crate tags
   were added — supervision stays the caller's.
 
 ### Changed
+
+- **`br-util-nats-fabric` — `EphemeralAuthWatcher::watch()` now marks the health
+  channel `Degraded` on a fail-closed decode/key error, not only on a stream
+  fault** (#103). Previously an undecodable value or an invalid key returned
+  `FabricError` while the channel still read `Healthy`, so a gate wired to
+  `health()` could not see a watch that had just died on a poison entry. The
+  returned errors are unchanged; only the health transition is new, and it makes
+  the raw primitive's transitions coincide with the supervised loop's.
+
+- **`br-util-nats-fabric` — the KV supervision warnings are renamed and now
+  carry a `surface` field (#103).** The supervised loop is shared by two KV
+  surfaces, so its messages no longer hardcode the Published-Language one:
+  `"published-language re-reconciliation failed; retrying"` →
+  `"kv re-reconciliation failed; retrying"`,
+  `"published-language watch stream ended; re-reconciling after backoff"` →
+  `"kv watch stream ended; re-reconciling after backoff"`,
+  `"published-language watch failed; re-reconciling after backoff"` →
+  `"kv watch failed; re-reconciling after backoff"`, and
+  `"backing off before re-bootstrap"` → `"backing off before re-reconciling"`.
+  Every one of the four now carries `surface = "published-language" |
+  "ephemeral-auth"`. **An ops alert or log filter matching the old message
+  strings stops matching** — rematch on the new text plus `surface`.
 
 - **`br-util-nats-fabric` — `verify_command_durable` / `verify_event_durable`
   now verify instead of provisioning** (#107). Signatures are unchanged; the
