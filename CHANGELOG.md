@@ -33,7 +33,7 @@ below.
 ### Added
 
 - **`br-util-axum-auth` — `passport_header_graphql_middleware`, an opt-in
-  sibling whose 401 refusal body is GraphQL-shaped.** The existing
+  sibling whose 401 refusal body is GraphQL-shaped** (#109). The existing
   `passport_header_middleware` refuses with the plain-text body `unauthorized`,
   which a GraphQL client cannot parse — so every service fronting a GraphQL
   endpoint re-implemented the refusal rendering locally (svc-jobs 0.1.0 did
@@ -80,7 +80,7 @@ below.
   stateful handler keeps its state. `watch()` is unchanged and stays public for
   tests and one-shot callers; `health()` is now truthfully driven by the loop.
 - **`br-util-nats-fabric` — a revision/compare-and-swap surface on the
-  Published-Language publisher and reader.** `PUBLISHED_LANGUAGE` writes were
+  Published-Language publisher and reader** (#112). `PUBLISHED_LANGUAGE` writes were
   last-writer-wins only, so two writers racing for the same key silently
   clobbered each other and a read-modify-write could not be made safe without
   leaving the Fabric. The `EphemeralAuthStore` CAS contract is now also
@@ -177,7 +177,8 @@ below.
   consumer not using the outbox gains nothing, and the `metrics` facade is a
   no-op until the process installs a recorder.
 - **`br-util-postgres` — `migrations_status`, a read-only report answering "is
-  this database exactly at the migration set embedded in this binary?"** Behind a new opt-in cargo feature `migrate`
+  this database exactly at the migration set embedded in this binary?"** (#110)
+  Behind a new opt-in cargo feature `migrate`
   (`migrate = ["sqlx/migrate"]`): the workspace `sqlx` pin does not enable
   `migrate`, so a consumer that does not want the helper compiles none of it and
   gains no dependency. `migrations_status(&PgPool, &Migrator) ->
@@ -231,6 +232,14 @@ below.
   were added — supervision stays the caller's.
 
 ### Changed
+
+- **Every crate README install snippet now pins `version = "1.3.0"` beside
+  `tag = "v1.3.0"`.** `br-util-broadcast` and fifteen others documented a
+  tag-only git dependency, which a consumer running `cargo-deny` with
+  `wildcards = "deny"` rejects — the version requirement of a tag-only git
+  dependency reads as `*`, so those snippets did not paste into a working
+  manifest. `br-core-directory` and `br-util-directory` documented no install
+  at all and now carry one.
 
 - **`br-util-nats-fabric` — `EphemeralAuthWatcher::watch()` now marks the health
   channel `Degraded` on a fail-closed decode/key error, not only on a stream
