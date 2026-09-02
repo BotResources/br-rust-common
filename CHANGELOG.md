@@ -110,16 +110,11 @@ release; they remain reachable through the historical per-crate tags
 
 ### Ops note
 
-- **The five phantom durables created by the `1.2.0` and earlier
-  `verify_*_durable` must be deleted by ops only *after* the affected services
-  re-pin** to a release carrying the fix — deleted earlier they are simply
-  recreated at the next boot. On the botresources.ai fabric these are
-  `charter-boot-probe` (twice: on
-  `integration.evt.charter.tenet.published.v1` and on
-  `integration.cmd.notifier.notification.deliver.v1`),
-  `projects-notifier-probe`, `timesheet-notifier-probe`,
-  `svc-website-notifier-readiness` and
-  `svc-website-anon-writer-notifier-readiness`.
+- **Durable consumers created by pre-`1.3.0` `verify_*_durable` probes are no
+  longer recreated once a service re-pins.** Delete them from the streams only
+  *after* every consumer of that stream has re-pinned — deleted earlier, they
+  are recreated on the next boot. They are recognisable as durables filtered on
+  a single coordinate subject with a growing backlog and zero acks.
 
 ## [1.2.0] — 2026-07-22
 
