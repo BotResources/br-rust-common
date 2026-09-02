@@ -50,7 +50,7 @@ small so a leaked pool surfaces fast.
 
 | Thing | Why it is the way it is |
 |---|---|
-| Dev-dependency only | Test scaffolding must not enter any crate's dependency closure or public API; dev-deps are not transitive, so consumers stay unaffected (issue #47). |
+| Dev-dependency only | Test scaffolding must not enter any crate's dependency closure or public API; dev-deps are not transitive, so consumers stay unaffected. |
 | `cleanup_role` swallows errors | It is post-assertion teardown of an already-ephemeral role; failing it would mask the real test outcome, and `DROP … IF EXISTS` is idempotent. |
 | Passwords are inline literals | These roles live only for the duration of one e2e test against a disposable database; they are never real credentials. |
 | Both an `Option` and a `require_*` reader per variable | A suite whose environment is genuinely optional self-skips on the `Option`; a suite that would otherwise pass while testing nothing takes the panicking reader, and the panic names the one variable that is missing rather than every variable the test might have wanted. |

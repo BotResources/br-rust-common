@@ -9,9 +9,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Least privilege: this workflow only reads the repo (checkout + checks). No
-# job pushes tags, comments, or releases, so the read-only default applies to
-# every job and no job-level override is needed.
 permissions:
   contents: read
 
@@ -24,8 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: with @stable the ref itself selects the toolchain, so when
-      # pinned to a SHA we must name the toolchain explicitly via `toolchain:`.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -38,28 +33,13 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-targets --locked
       - name: cargo test (doctests)
-        # `--all-targets` deliberately excludes doctests, so the README usage
-        # examples — included as the crate root doc via `#![doc =
-        # include_str!("../README.md")]` — would never run without this step.
-        # That is the mechanism that keeps a README example from drifting from
-        # the code (a call to a method that does not exist fails here).
         run: cargo test --workspace --doc --locked
 
   conformance-feature:
     name: br-core-values --all-features (conformance)
     runs-on: ubuntu-latest
-    # The workspace-wide clippy/test in `fmt-clippy-test` run WITHOUT
-    # --all-features, so br-core-values' off-by-default `conformance` feature
-    # (the `assert_lowercase_roundtrip` helper + its tests) is never compiled,
-    # linted, or run there. A shipped conformance helper that no job exercises
-    # is a false assurance, so this sibling job guards exactly that feature.
-    # Scoped to -p br-core-values (not a workspace --all-features flip) on
-    # purpose: it keeps global CI policy unchanged and rebases cleanly against
-    # other branches that also touch this file.
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -94,10 +74,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # @master is the moving branch that doubles as the toolchain selector;
-      # pinned here for supply-chain safety. The job picks its toolchain
-      # explicitly via `toolchain:` below, so the SHA pin is purely the
-      # resolver and the MSRV intent is unchanged.
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: "1.88"
@@ -113,8 +89,6 @@ jobs:
       RUSTDOCFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -149,8 +123,6 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -208,12 +180,6 @@ jobs:
   e2e-postgres:
     name: e2e (br-util-postgres vs PG 16)
     runs-on: ubuntu-latest
-    # Two regressions (0.5.0, 0.5.1) shipped because
-    # `ensure_app_role` was never exercised against a real PG with the
-    # production privilege model (non-superuser CREATEROLE caller). The
-    # `#[ignore]`-gated `live_tests` module in crates/br-util-postgres/
-    # src/role.rs bootstraps that caller from the admin URL below and
-    # runs the rotation / idempotence / dollar-password scenarios.
     services:
       postgres:
         image: postgres:16-alpine
@@ -232,8 +198,6 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -241,27 +205,13 @@ jobs:
         with:
           key: e2e-postgres
       - name: cargo test (live PG tests)
-        # --test-threads=1: the live tests bootstrap a non-superuser
-        # CREATEROLE owner per test, then run `GRANT ON ALL TABLES IN
-        # SCHEMA public TO <app>`. With parallel tests, owner A's GRANT
-        # iterates over tables owned by owner B and fails with
-        # "permission denied for table". Sequential matches the
-        # single-service / single-database production shape.
         run: cargo test -p br-util-postgres --all-features --locked -- --ignored --test-threads=1 --skip full_handshake_succeeds
 
   e2e-postgres-tls:
     name: e2e (br-util-postgres TLS handshake)
     runs-on: ubuntu-latest
-    # Proves the sqlx TLS backend works end-to-end against a TLS-enabled
-    # Postgres, not just that it is compiled in (the `backend_is_compiled_in`
-    # test in the e2e-postgres job covers the compiled-in half against a
-    # plaintext server). GHA `services:` cannot mount a generated cert or
-    # override the image command to pass `-c ssl=on`, so — like e2e-nats —
-    # the server is started via `docker run` in a step.
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -272,17 +222,9 @@ jobs:
         run: |
           set -euo pipefail
           certdir="$(mktemp -d)"
-          # Self-signed cert. CN/SAN are irrelevant for trust because the test
-          # connects with sslmode=require (encrypt, do not verify the cert) —
-          # exactly the remote-host posture validate_database_tls enforces.
-          # BUT the cert must be X.509 **v3**: rustls/webpki rejects a v1 cert
-          # with UnsupportedCertVersion at parse time, before the
-          # accept-invalid-cert policy applies. `-addext` forces v3.
           openssl req -new -x509 -days 1 -nodes \
             -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost" \
             -out "$certdir/server.crt" -keyout "$certdir/server.key"
-          # Postgres requires the key to be owned by the run-as user (uid 70
-          # in postgres:16-alpine) and mode 600, or it refuses to start.
           chmod 600 "$certdir/server.key"
           sudo chown 70:70 "$certdir/server.crt" "$certdir/server.key"
           docker run -d --name pg-tls \
@@ -320,16 +262,10 @@ jobs:
   e2e-nats:
     name: e2e (br-util-nats-fabric vs NATS JetStream)
     runs-on: ubuntu-latest
-    # GHA `services:` cannot override an image's CMD, but NATS needs
-    # `-js` (enable JetStream) and `-m 8222` (monitoring for healthcheck).
-    # We start the broker via `docker run` in a step — the ubuntu-latest
-    # hosted runner ships a ready Docker daemon, so `docker run` just works.
     env:
       NATS_URL: nats://localhost:4222
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -340,10 +276,7 @@ jobs:
         run: |
           docker run -d --name nats-jetstream \
             -p 4222:4222 -p 8222:8222 \
-            nats:2-alpine -js -m 8222
-          # Wait for /healthz to flip to "ok" before letting tests fire.
-          # NATS starts in <1s normally; 30 retries × 1s is generous
-          # cover for cold-pulled image + slow runner.
+            nats:2.14.1-alpine -js -m 8222
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
               echo "NATS ready after ${i}s"
@@ -355,10 +288,6 @@ jobs:
           docker logs nats-jetstream >&2
           exit 1
       - name: cargo test (live NATS tests)
-        # --test-threads=1: tests share a single JetStream namespace and
-        # each one creates/deletes its own stream; sequential execution
-        # avoids racy create/delete ordering. Same reasoning as the
-        # e2e-postgres job.
         run: cargo test -p br-util-nats-fabric --locked -- --ignored --test-threads=1
       - name: stop NATS
         if: always()
@@ -367,18 +296,10 @@ jobs:
   e2e-scope-declaration:
     name: e2e (br-util-scope-declaration vs NATS JetStream)
     runs-on: ubuntu-latest
-    # The boot-time handshake helper is exercised against a real JetStream by
-    # the `#[ignore]`-gated suite in crates/br-util-scope-declaration/tests/:
-    # a stub receiver subscribes to the declare subject and echoes the
-    # correlation_id, proving subscribe-first, re-publish-on-timeout, the
-    # readiness flips, and the disabled/scopeless paths. Same docker-run NATS
-    # pattern as e2e-nats (GHA services can't pass `-js`).
     env:
       NATS_URL: nats://localhost:4222
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -389,10 +310,7 @@ jobs:
         run: |
           docker run -d --name nats-jetstream \
             -p 4222:4222 -p 8222:8222 \
-            nats:2-alpine -js -m 8222
-          # Wait for /healthz to flip to "ok" before letting tests fire.
-          # NATS starts in <1s normally; 30 retries × 1s is generous
-          # cover for cold-pulled image + slow runner.
+            nats:2.14.1-alpine -js -m 8222
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
               echo "NATS ready after ${i}s"
@@ -404,9 +322,6 @@ jobs:
           docker logs nats-jetstream >&2
           exit 1
       - name: cargo test (live handshake tests)
-        # --test-threads=1: tests share a single JetStream namespace and each
-        # one creates/deletes its own stream; sequential execution avoids racy
-        # create/delete ordering. Same reasoning as the e2e-nats job.
         run: cargo test -p br-util-scope-declaration --locked -- --ignored --test-threads=1
       - name: stop NATS
         if: always()
@@ -415,12 +330,6 @@ jobs:
   e2e-identity-app:
     name: e2e (br-identity-app vs PG 16 + NATS JetStream)
     runs-on: ubuntu-latest
-    # The scope-registration slice's pipeline (load → judge → save → dispatch)
-    # is exercised against *both* real backends by the `#[ignore]`-gated suite
-    # in crates/br-identity-app/tests/: a real Postgres holds the registry and
-    # a real JetStream carries the declare command and the accepted/rejected
-    # confirmation. Postgres rides GHA `services:` (its CMD needs no override);
-    # NATS needs `-js`, so — like e2e-nats — it starts via docker run.
     services:
       postgres:
         image: postgres:16-alpine
@@ -440,8 +349,6 @@ jobs:
       NATS_URL: nats://localhost:4222
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -449,13 +356,10 @@ jobs:
         with:
           key: e2e-identity-app
       - name: start NATS JetStream broker
-        # Same docker-run pattern as e2e-nats: GHA services can't pass `-js`,
-        # so we start NATS by hand. Postgres is health-waited by the services
-        # block above; NATS is health-waited here before the tests fire.
         run: |
           docker run -d --name nats-jetstream \
             -p 4222:4222 -p 8222:8222 \
-            nats:2-alpine -js -m 8222
+            nats:2.14.1-alpine -js -m 8222
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
               echo "NATS ready after ${i}s"
@@ -467,9 +371,6 @@ jobs:
           docker logs nats-jetstream >&2
           exit 1
       - name: cargo test (live pipeline tests)
-        # --test-threads=1: the suite bootstraps a non-superuser app role and a
-        # per-test database against the shared PG, and shares a single
-        # JetStream namespace per the e2e-postgres / e2e-nats reasoning.
         run: cargo test -p br-identity-app --locked -- --ignored --test-threads=1
       - name: stop NATS
         if: always()
@@ -507,7 +408,7 @@ jobs:
         run: |
           docker run -d --name nats-jetstream \
             -p 4222:4222 -p 8222:8222 \
-            nats:2-alpine -js -m 8222
+            nats:2.14.1-alpine -js -m 8222
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
               echo "NATS ready after ${i}s"
@@ -557,7 +458,7 @@ jobs:
         run: |
           docker run -d --name nats-jetstream \
             -p 4222:4222 -p 8222:8222 \
-            nats:2-alpine -js -m 8222
+            nats:2.14.1-alpine -js -m 8222
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
               echo "NATS ready after ${i}s"
@@ -581,9 +482,6 @@ jobs:
   coverage:
     name: coverage (per-crate, UT vs UT+E2E)
     runs-on: ubuntu-latest
-    # Per-crate × {UT only, UT+E2E} so the Δ column shows exactly how much
-    # of each crate is protected *only* by the e2e jobs — that is the
-    # surface that would silently regress if those jobs were skipped.
     services:
       postgres:
         image: postgres:16-alpine
@@ -603,8 +501,6 @@ jobs:
       NATS_URL: nats://localhost:4222
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      # SHA-pinned: @stable doubles as the toolchain selector, so name it
-      # explicitly via `toolchain:` now that the ref is a SHA.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: stable
@@ -616,14 +512,10 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: start NATS JetStream broker
-        # Same docker-run pattern as e2e-nats: GHA services can't pass
-        # `-js`, so we start NATS by hand. Without this the broker is
-        # absent and the br-core-integration live tests early-return,
-        # leaving NatsIntegrationPublisher uncovered in the E2E column.
         run: |
           docker run -d --name nats-jetstream \
             -p 4222:4222 -p 8222:8222 \
-            nats:2-alpine -js -m 8222
+            nats:2.14.1-alpine -js -m 8222
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then
               echo "NATS ready after ${i}s"
@@ -634,17 +526,6 @@ jobs:
           echo "NATS failed to become healthy within 30s" >&2
           docker logs nats-jetstream >&2
           exit 1
-      # Flow rationale (cargo-llvm-cov 0.8.x):
-      #   - clean → start from a known empty profile state.
-      #   - --no-report run #1 builds + runs UT without emitting a report,
-      #     keeping the profile data around for the snapshot.
-      #   - `report --json` snapshots UT-only into coverage-ut.json.
-      #   - --no-clean run #2 runs the #[ignore]'d e2e tests on top of the
-      #     existing profile data; it does auto-emit a report to console
-      #     (that we ignore — the snapshot below is what we keep). The
-      #     `--no-report --no-clean` combo is explicitly rejected by
-      #     cargo-llvm-cov, so we accept the spurious console report.
-      #   - `report --json` after the e2e run captures UT+E2E.
       - name: clean coverage profile
         run: cargo llvm-cov clean --workspace
       - name: instrument + run unit tests (no report)
@@ -652,7 +533,6 @@ jobs:
       - name: snapshot UT-only report
         run: cargo llvm-cov report --json --output-path coverage-ut.json
       - name: instrument + run e2e tests (accumulating)
-        # See e2e-postgres job comment for why --test-threads=1.
         run: cargo llvm-cov --workspace --locked --no-clean -- --ignored --test-threads=1 --skip full_handshake_succeeds
       - name: snapshot UT+E2E report
         run: cargo llvm-cov report --json --output-path coverage-ut-e2e.json

@@ -99,8 +99,8 @@ trait DirectorySource {
   before (or without) one of its members still converges: the membership is
   correct as soon as the group projects, and `resolve_user` returns the user once
   it arrives. A member with no `known_users` row is legitimate under a scoped
-  roster, not an orphan (see #69 — group deletion CASCADEs the junction via the
-  `group_id` FK).
+  roster, not an orphan: group deletion still CASCADEs the junction via the
+  `group_id` FK.
 - **Typed readers carry the id** over `DirectorySnapshot`: `resolve_user`,
   `user_extensions`, `is_member`, `group_name`, `resolve_service_account`.
   `DirectorySnapshot` / `KnownUser` are an **in-memory** projection the
@@ -281,7 +281,7 @@ re-reconcile: `watch()` still returns on the first stream error. The two signals
 exist so a supervisor above the crate can decide when to restart it and when to
 report readiness.
 
-### Missing manifest is DEGRADED, never a purge (#69)
+### Missing manifest is DEGRADED, never a purge
 
 A missing `identity/_meta` no longer means "empty roster → delete every local
 row". `reconcile()` / `watch()` treat an absent manifest as **fail-closed**
@@ -289,7 +289,7 @@ row". `reconcile()` / `watch()` treat an absent manifest as **fail-closed**
 caller surfaces a degraded/unready signal. A consumer that boots ahead of
 identity's first reconcile therefore **does not** flush its projection.
 
-### Consumer-owned roster control (#59)
+### Consumer-owned roster control
 
 Two **seams** on `DirectoryConsumerConfig` (defaults preserve the prior
 name-only / keep-all behavior), wired into the fabric consumer's projection sink
@@ -305,7 +305,7 @@ and copy-filter:
   on the next reconcile and on the watch update carrying the failing value (the
   fabric's copy-filter mechanism).
 
-### Consumer-declared consumption scope (#63)
+### Consumer-declared consumption scope
 
 `DirectoryConsumerConfig::scope(ConsumptionScope)` — **independent of the
 producer manifest**:
