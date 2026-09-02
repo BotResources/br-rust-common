@@ -4,7 +4,7 @@ mod reads;
 mod roster;
 mod stager;
 
-pub use reads::{members, service_account_name, staged_keys, user_row, wait_for};
+pub use reads::{members, service_account_name, staged_in, staged_keys, user_row, wait_for};
 pub use roster::{
     drop_published_group, drop_published_service_account, drop_published_user, group, manifest,
     manifest_with_service_accounts, publish_until, publish_until_projected, service_account, user,
@@ -40,10 +40,10 @@ impl ExclusiveProjection {
 }
 
 pub fn infra() -> (String, String) {
-    let nats = std::env::var("NATS_URL")
-        .expect("NATS_URL and TEST_DATABASE_URL are required for this ignored suite");
-    let database = br_test_support::require_test_db_url();
-    (nats, database)
+    (
+        br_test_support::require_nats_url(),
+        br_test_support::require_test_db_url(),
+    )
 }
 
 pub async fn exclusive_projection(database_url: &str) -> ExclusiveProjection {

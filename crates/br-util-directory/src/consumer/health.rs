@@ -29,13 +29,16 @@ impl ProjectorHealth {
         self.sender.subscribe()
     }
 
-    pub(crate) fn activate(&self, active: &[DirectoryStream]) {
+    pub(crate) fn activate(&self, active: &[DirectoryStream]) -> ActiveStreams {
         self.mutate(|streams| {
             *streams = active
                 .iter()
                 .map(|stream| (*stream, WatchHealth::Degraded))
                 .collect();
         });
+        ActiveStreams {
+            health: self.clone(),
+        }
     }
 
     pub(crate) fn set(&self, stream: DirectoryStream, health: WatchHealth) {
@@ -46,7 +49,7 @@ impl ProjectorHealth {
         });
     }
 
-    pub(crate) fn deactivate(&self) {
+    fn deactivate(&self) {
         self.mutate(|streams| streams.clear());
     }
 
@@ -64,6 +67,16 @@ impl ProjectorHealth {
                 true
             }
         });
+    }
+}
+
+pub(crate) struct ActiveStreams {
+    health: ProjectorHealth,
+}
+
+impl Drop for ActiveStreams {
+    fn drop(&mut self) {
+        self.health.deactivate();
     }
 }
 
@@ -89,7 +102,7 @@ mod tests {
     fn health_turns_healthy_only_once_every_active_stream_is_healthy() {
         let health = ProjectorHealth::new();
         let receiver = health.receiver();
-        health.activate(&[DirectoryStream::Users, DirectoryStream::Groups]);
+        let _active = health.activate(&[DirectoryStream::Users, DirectoryStream::Groups]);
 
         health.set(DirectoryStream::Users, WatchHealth::Healthy);
         assert_eq!(*receiver.borrow(), WatchHealth::Degraded);
@@ -101,7 +114,7 @@ mod tests {
     #[test]
     fn one_degraded_stream_degrades_the_composition() {
         let health = ProjectorHealth::new();
-        health.activate(&[DirectoryStream::Users, DirectoryStream::ServiceAccounts]);
+        let _active = health.activate(&[DirectoryStream::Users, DirectoryStream::ServiceAccounts]);
         health.set(DirectoryStream::Users, WatchHealth::Healthy);
         health.set(DirectoryStream::ServiceAccounts, WatchHealth::Healthy);
         health.set(DirectoryStream::ServiceAccounts, WatchHealth::Degraded);
@@ -111,18 +124,31 @@ mod tests {
     #[test]
     fn an_inactive_stream_never_holds_the_composition_back() {
         let health = ProjectorHealth::new();
-        health.activate(&[DirectoryStream::Users]);
+        let _active = health.activate(&[DirectoryStream::Users]);
         health.set(DirectoryStream::Groups, WatchHealth::Degraded);
         health.set(DirectoryStream::Users, WatchHealth::Healthy);
         assert_eq!(*health.receiver().borrow(), WatchHealth::Healthy);
     }
 
     #[test]
-    fn deactivation_returns_the_composition_to_degraded() {
+    fn dropping_the_activation_guard_returns_the_composition_to_degraded() {
         let health = ProjectorHealth::new();
-        health.activate(&[DirectoryStream::Users]);
+        let active = health.activate(&[DirectoryStream::Users]);
         health.set(DirectoryStream::Users, WatchHealth::Healthy);
-        health.deactivate();
+        drop(active);
+        assert_eq!(*health.receiver().borrow(), WatchHealth::Degraded);
+    }
+
+    #[test]
+    fn a_guard_dropped_while_unwinding_still_returns_the_composition_to_degraded() {
+        let health = ProjectorHealth::new();
+        let panicking = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _active = health.activate(&[DirectoryStream::Users]);
+            health.set(DirectoryStream::Users, WatchHealth::Healthy);
+            assert_eq!(*health.receiver().borrow(), WatchHealth::Healthy);
+            panic!("the watch is torn down");
+        }));
+        assert!(panicking.is_err());
         assert_eq!(*health.receiver().borrow(), WatchHealth::Degraded);
     }
 }

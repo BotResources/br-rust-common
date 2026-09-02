@@ -32,10 +32,13 @@ below.
 
 ### Added
 
-- **`br-test-support` — `require_test_db_url` / `require_test_tls_db_url`.**
-  Panicking counterparts to the existing `Option`-returning readers, for an
+- **`br-test-support` — `require_test_db_url` / `require_test_tls_db_url` /
+  `nats_url` / `require_nats_url`.** Panicking counterparts to the existing
+  `Option`-returning readers, plus the same pair for `NATS_URL`, for an
   `#[ignore]`-gated suite that must fail loud rather than skip when its
-  environment is absent. The `Option` variants are unchanged.
+  environment is absent — and that names the variable that is actually missing
+  rather than every variable it might have wanted. The `Option` variants are
+  unchanged.
 - **`br-util-axum-auth` — `passport_header_graphql_middleware`, an opt-in
   sibling whose 401 refusal body is GraphQL-shaped** (#109). The existing
   `passport_header_middleware` refuses with the plain-text body `unauthorized`,
@@ -223,7 +226,18 @@ below.
   entity `Uuid`. `Impact` is `#[non_exhaustive]` and carries only the variant a
   mirror can produce. A stager reports its own failure as the new
   `DirectoryError::Stager(source)` variant, which the sink surfaces unchanged
-  after rolling the transaction back.
+  after rolling the transaction back. **A write stages every fact it makes
+  unnameable**, in one batch inside its own transaction: a group upsert that
+  drops members stages the group *plus one impact per removed member* (nothing
+  in the mirror names them once their junction rows are gone), a group delete
+  stages the group plus every member its cascade unlinks, and a user retraction
+  stages the user plus every group it still belonged to. An *added* member gets
+  no impact of its own — it is in the current membership of the group the impact
+  already names, so it is recoverable. **Adopting the stager against an
+  already-converged mirror stages nothing**: impacts are gated on a real row
+  change, the projector never replays, so an adopter that registers a stager in
+  a later release backfills its derived state once, itself, at adoption and
+  relies on the stager from then on.
 - **`br-util-directory` — two supervision signals.** `progress()` yields a
   `watch::Receiver<ProjectorProgress>` whose `changes` counter is bumped once per
   **committed** change, on exactly the predicate that decides whether to stage an
@@ -232,8 +246,12 @@ below.
   service accounts per producer manifest): a stream counts as `Healthy` from the
   moment its consumer is bound to the bucket until its `watch()` call returns, so
   the composition is `Degraded` before `watch()` starts, after it returns, and
-  whenever any active stream is down. No loop, no backoff and no re-reconcile
-  were added — supervision stays the caller's.
+  whenever any active stream is down. The activation is a **scope guard**, so a
+  `watch()` future that is *dropped* rather than returned — an aborted task, a
+  cancelled `select!` branch — also returns the composition to `Degraded`
+  instead of leaving a pod that gates readiness on `health()` reporting `READY`
+  with no projector running. No loop, no backoff and no re-reconcile were
+  added — supervision stays the caller's.
 
 ### Changed
 
@@ -287,16 +305,25 @@ below.
   retained for signature stability and call-site readability.
 
 
-- **`br-util-directory` — the user and service-account sinks now write inside a
-  transaction** (the group sink already did), and all three upsert with
+- **`br-util-directory` — every sink upserts with
   `ON CONFLICT (…) DO UPDATE SET … WHERE (t.cols…) IS DISTINCT FROM
-  (EXCLUDED.cols…)`. An already-identical row is left untouched
-  (`rows_affected() == 0`), so a re-scan no longer rewrites every row. A group
-  counts as changed when its name changed **or** its recomposed member set
-  differs from the set read under `FOR UPDATE`; memberships are rewritten only
-  then, and in one set-based statement instead of one insert per member. A
-  `retract` counts only when a row was really deleted. Without a registered
-  stager the observable behaviour is that of `1.2.0` minus the no-op writes.
+  (EXCLUDED.cols…)`** (rendered from a single column list per table, so the
+  insert list, the assignments and both sides of the comparison cannot drift
+  apart). An already-identical row is left untouched (`rows_affected() == 0`),
+  so a re-scan no longer rewrites every row. A group counts as changed when its
+  name changed **or** its recomposed member set differs from the set read under
+  `FOR UPDATE`; the membership rewrite is then the **set difference** — delete
+  the members that left, insert the ones that joined, leave the rest alone. A
+  `retract` counts only when a row was really deleted.
+- **`br-util-directory` — a projection opens an explicit transaction only when
+  a stager is registered.** With no stager, a single-statement projection (user,
+  service account, group delete) runs on a pooled connection exactly as in
+  `1.2.0`, minus the no-op writes. With a stager, every projection becomes
+  `BEGIN` / write / `stage_in` / `COMMIT`: three extra round trips per key and
+  one transaction per key on a bootstrap scan of N keys. That cost buys the
+  atomicity of the impact with its write; it is not a free wrapper. The group
+  upsert is transactional either way — its member-set read under `FOR UPDATE`
+  and the rewrite that follows require it.
 - **Deployment note — grants.** A stager writes the adopter's own tables on the
   sink's connection, so those tables need a grant on the runtime app role in the
   service's own least-privilege grant migration. Without it the

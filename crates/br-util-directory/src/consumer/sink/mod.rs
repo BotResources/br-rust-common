@@ -1,6 +1,7 @@
 mod context;
 mod group;
 mod service_account;
+mod upsert;
 mod user;
 
 pub(crate) use context::SinkContext;

@@ -63,6 +63,12 @@ pub enum Impact {
     ForeignChanged { foreign: ForeignRef },
 }
 
+impl Impact {
+    pub(crate) fn changed(foreign: ForeignRef) -> Self {
+        Self::ForeignChanged { foreign }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait ImpactStager: Send + Sync {
     async fn stage_in(
