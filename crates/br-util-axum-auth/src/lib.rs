@@ -7,26 +7,21 @@ use axum::response::Response;
 
 use br_core_auth::{Passport, PassportHeader};
 
-pub async fn passport_header_middleware(mut request: Request<Body>, next: Next) -> Response {
-    match decode_passport(&request) {
-        Some(passport) => {
-            request.extensions_mut().insert(passport);
-            next.run(request).await
-        }
-        None => refusal::text_unauthorized(),
-    }
+pub async fn passport_header_middleware(request: Request<Body>, next: Next) -> Response {
+    admit(request, next, refusal::text_unauthorized).await
 }
 
-pub async fn passport_header_graphql_middleware(
-    mut request: Request<Body>,
-    next: Next,
-) -> Response {
+pub async fn passport_header_graphql_middleware(request: Request<Body>, next: Next) -> Response {
+    admit(request, next, refusal::graphql_unauthorized).await
+}
+
+async fn admit(mut request: Request<Body>, next: Next, refuse: fn() -> Response) -> Response {
     match decode_passport(&request) {
         Some(passport) => {
             request.extensions_mut().insert(passport);
             next.run(request).await
         }
-        None => refusal::graphql_unauthorized(),
+        None => refuse(),
     }
 }
 
@@ -164,8 +159,9 @@ mod tests {
 
     #[tokio::test]
     async fn valid_passport_header_passes_through() {
-        let (status, _, _) = run(text_router(), authenticated_request()).await;
+        let (status, _, body) = run(text_router(), authenticated_request()).await;
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, Uuid::nil().to_string().as_bytes());
     }
 
     #[tokio::test]

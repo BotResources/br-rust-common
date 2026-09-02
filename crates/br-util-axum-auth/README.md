@@ -44,9 +44,9 @@ here, and a unit test deserializes the refusal body and asserts its
 `extensions.code` still equals `ErrorCode::Unauthenticated.as_str()` — drift
 between the two crates fails the build, it does not ship.
 
-Every rejection returns the **same** opaque 401 — byte-identical body,
-whichever middleware is mounted — so the response is not a validation
-oracle. The precise cause (which check failed) goes to
+Every rejection returns the **same** opaque 401: for whichever middleware is
+mounted, all four rejection causes render a byte-identical body, so the
+response is not a validation oracle. The precise cause (which check failed) goes to
 `tracing::warn!` server-side; the header value is never logged (it may carry a
 forged passport payload).
 

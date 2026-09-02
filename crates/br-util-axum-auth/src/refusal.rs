@@ -25,6 +25,14 @@ mod tests {
     use br_util_graphql::ErrorCode;
 
     #[test]
+    fn graphql_body_is_exactly_these_bytes() {
+        assert_eq!(
+            UNAUTHORIZED_GRAPHQL_BODY,
+            r#"{"errors":[{"message":"unauthorized","extensions":{"code":"UNAUTHENTICATED"}}]}"#
+        );
+    }
+
+    #[test]
     fn graphql_body_carries_the_canonical_unauthenticated_code() {
         let parsed: serde_json::Value = serde_json::from_str(UNAUTHORIZED_GRAPHQL_BODY).unwrap();
 
