@@ -59,6 +59,19 @@ release; they remain reachable through the historical per-crate tags
   primitives and their error mapping now live in one place
   (`kv/revision.rs`) shared by both buckets, so the two surfaces cannot drift.
   Purely additive; no consumer re-pin is forced.
+- **`br-util-nats-fabric` — `ensure_command_durable_with` /
+  `ensure_event_durable_with`: `ConsumerTuning` on the bare
+  durable-provisioning path** (#93). The `_with` tuning seam existed only on the
+  consume-*opening* entry points (`ensure_*_consumer_with`, `run_*_with`), so a
+  caller that wanted a durable provisioned with a non-default `ack_wait` /
+  `max_ack_pending` but no work loop had to drop to raw `async-nats`. The two new
+  entry points take `&ConsumerTuning` exactly as their consume-path siblings do;
+  `ensure_command_durable` / `ensure_event_durable` now delegate with
+  `ConsumerTuning::default()` and are behaviour-identical. Only `ack_wait` and
+  `max_ack_pending` are tunable — `ack_policy = Explicit`,
+  `deliver_policy = All`, `replay_policy = Instant`, `max_deliver = -1` and the
+  rendered `filter_subject(s)` stay frozen as contract and Fabric-owned. No raw
+  `pull::Config` is exposed; the escape hatch stays closed.
 
 ## [1.2.0] — 2026-07-22
 

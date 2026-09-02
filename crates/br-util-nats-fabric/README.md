@@ -184,7 +184,8 @@ of the config is **not** tunable: `max_deliver = -1`, `ack_policy = Explicit`,
 the raw `async_nats` `pull::Config` is never exposed — the escape hatch stays
 closed. Each consumer entry point has a `_with` variant taking `&ConsumerTuning`
 (`ensure_command_consumer_with`, `ensure_event_consumer_with`,
-`ensure_event_consumer_many_with`, `run_commands_with`, `run_events_with`); the
+`ensure_event_consumer_many_with`, `run_commands_with`, `run_events_with`,
+`ensure_command_durable_with`, `ensure_event_durable_with`); the
 no-suffix forms delegate with `ConsumerTuning::default()`, so existing callers are
 unaffected.
 
