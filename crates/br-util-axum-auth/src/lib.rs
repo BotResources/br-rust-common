@@ -1,46 +1,56 @@
+mod refusal;
+
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::StatusCode;
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 
 use br_core_auth::{Passport, PassportHeader};
 
-const UNAUTHORIZED_BODY: &str = "unauthorized";
+pub async fn passport_header_middleware(request: Request<Body>, next: Next) -> Response {
+    admit(request, next, refusal::text_unauthorized).await
+}
 
-pub async fn passport_header_middleware(mut request: Request<Body>, next: Next) -> Response {
+pub async fn passport_header_graphql_middleware(request: Request<Body>, next: Next) -> Response {
+    admit(request, next, refusal::graphql_unauthorized).await
+}
+
+async fn admit(mut request: Request<Body>, next: Next, refuse: fn() -> Response) -> Response {
+    match decode_passport(&request) {
+        Some(passport) => {
+            request.extensions_mut().insert(passport);
+            next.run(request).await
+        }
+        None => refuse(),
+    }
+}
+
+fn decode_passport(request: &Request<Body>) -> Option<Passport> {
     let header_val = match request.headers().get("X-Passport") {
         Some(v) => match v.to_str() {
-            Ok(s) if !s.is_empty() => s.to_string(),
+            Ok(s) if !s.is_empty() => s,
             Ok(_) => {
                 tracing::warn!("X-Passport rejected: header present but empty");
-                return unauthorized();
+                return None;
             }
             Err(_) => {
                 tracing::warn!("X-Passport rejected: header value is not valid UTF-8");
-                return unauthorized();
+                return None;
             }
         },
         None => {
             tracing::warn!("X-Passport rejected: header missing");
-            return unauthorized();
+            return None;
         }
     };
 
-    let passport = match Passport::from_header(&header_val) {
-        Ok(p) => p,
+    match Passport::from_header(header_val) {
+        Ok(p) => Some(p),
         Err(_) => {
             tracing::warn!("X-Passport rejected: header could not be decoded");
-            return unauthorized();
+            None
         }
-    };
-
-    request.extensions_mut().insert(passport);
-    next.run(request).await
-}
-
-fn unauthorized() -> Response {
-    (StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY).into_response()
+    }
 }
 
 #[cfg(test)]
@@ -48,24 +58,33 @@ mod tests {
     use super::*;
     use axum::Router;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::{HeaderValue, Request, StatusCode, header};
     use axum::routing::get;
     use br_core_auth::{AuthMethod, PassportClaims};
+    use refusal::{UNAUTHORIZED_BODY, UNAUTHORIZED_GRAPHQL_BODY};
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    fn test_router() -> Router {
-        Router::new()
-            .route(
-                "/test",
-                get(|passport: Option<axum::Extension<Passport>>| async move {
-                    match passport {
-                        Some(axum::Extension(p)) => format!("{}", p.actor_id()),
-                        None => "no passport".to_string(),
-                    }
-                }),
-            )
-            .layer(axum::middleware::from_fn(passport_header_middleware))
+    fn echo_actor_route() -> Router {
+        Router::new().route(
+            "/test",
+            get(|passport: Option<axum::Extension<Passport>>| async move {
+                match passport {
+                    Some(axum::Extension(p)) => format!("{}", p.actor_id()),
+                    None => "no passport".to_string(),
+                }
+            }),
+        )
+    }
+
+    fn text_router() -> Router {
+        echo_actor_route().layer(axum::middleware::from_fn(passport_header_middleware))
+    }
+
+    fn graphql_router() -> Router {
+        echo_actor_route().layer(axum::middleware::from_fn(
+            passport_header_graphql_middleware,
+        ))
     }
 
     fn make_passport_header() -> String {
@@ -80,99 +99,103 @@ mod tests {
         p.to_header()
     }
 
-    #[tokio::test]
-    async fn valid_passport_header_passes_through() {
-        let app = test_router();
-        let req = Request::builder()
+    fn authenticated_request() -> Request<Body> {
+        Request::builder()
             .uri("/test")
             .header("X-Passport", make_passport_header())
             .body(Body::empty())
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+            .unwrap()
     }
 
-    #[tokio::test]
-    async fn missing_header_returns_401() {
-        let app = test_router();
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    fn every_rejection_cause() -> Vec<(&'static str, Request<Body>)> {
+        vec![
+            (
+                "missing",
+                Request::builder().uri("/test").body(Body::empty()).unwrap(),
+            ),
+            (
+                "empty",
+                Request::builder()
+                    .uri("/test")
+                    .header("X-Passport", "")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+            (
+                "non-utf8",
+                Request::builder()
+                    .uri("/test")
+                    .header(
+                        "X-Passport",
+                        HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+            (
+                "undecodable",
+                Request::builder()
+                    .uri("/test")
+                    .header("X-Passport", "not-valid-base64!!!")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        ]
     }
 
-    #[tokio::test]
-    async fn empty_header_returns_401() {
-        let app = test_router();
-        let req = Request::builder()
-            .uri("/test")
-            .header("X-Passport", "")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn malformed_header_returns_401() {
-        let app = test_router();
-        let req = Request::builder()
-            .uri("/test")
-            .header("X-Passport", "not-valid-base64!!!")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    async fn run(req: Request<Body>) -> (StatusCode, Vec<u8>) {
-        let resp = test_router().oneshot(req).await.unwrap();
+    async fn run(router: Router, req: Request<Body>) -> (StatusCode, Option<String>, Vec<u8>) {
+        let resp = router.oneshot(req).await.unwrap();
         let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|v| v.to_str().unwrap().to_string());
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap()
             .to_vec();
-        (status, bytes)
+        (status, content_type, bytes)
     }
 
     #[tokio::test]
-    async fn all_rejection_causes_return_identical_opaque_body() {
-        let missing = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let empty = Request::builder()
-            .uri("/test")
-            .header("X-Passport", "")
-            .body(Body::empty())
-            .unwrap();
-        let non_utf8 = Request::builder()
-            .uri("/test")
-            .header(
-                "X-Passport",
-                axum::http::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
-            )
-            .body(Body::empty())
-            .unwrap();
-        let malformed = Request::builder()
-            .uri("/test")
-            .header("X-Passport", "not-valid-base64!!!")
-            .body(Body::empty())
-            .unwrap();
+    async fn valid_passport_header_passes_through() {
+        let (status, _, body) = run(text_router(), authenticated_request()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, Uuid::nil().to_string().as_bytes());
+    }
 
-        let (s_missing, b_missing) = run(missing).await;
-        let (s_empty, b_empty) = run(empty).await;
-        let (s_non_utf8, b_non_utf8) = run(non_utf8).await;
-        let (s_malformed, b_malformed) = run(malformed).await;
+    #[tokio::test]
+    async fn valid_passport_header_passes_through_the_graphql_middleware() {
+        let (status, _, body) = run(graphql_router(), authenticated_request()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, Uuid::nil().to_string().as_bytes());
+    }
 
-        assert_eq!(s_missing, StatusCode::UNAUTHORIZED);
-        assert_eq!(s_empty, StatusCode::UNAUTHORIZED);
-        assert_eq!(s_non_utf8, StatusCode::UNAUTHORIZED);
-        assert_eq!(s_malformed, StatusCode::UNAUTHORIZED);
+    #[tokio::test]
+    async fn all_rejection_causes_return_identical_opaque_text_body() {
+        for (cause, req) in every_rejection_cause() {
+            let (status, content_type, body) = run(text_router(), req).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "cause: {cause}");
+            assert_eq!(
+                content_type.as_deref(),
+                Some("text/plain; charset=utf-8"),
+                "cause: {cause}"
+            );
+            assert_eq!(body, UNAUTHORIZED_BODY.as_bytes(), "cause: {cause}");
+        }
+    }
 
-        assert_eq!(b_missing, b_empty);
-        assert_eq!(b_missing, b_non_utf8);
-        assert_eq!(b_missing, b_malformed);
-        assert_eq!(b_missing, UNAUTHORIZED_BODY.as_bytes());
+    #[tokio::test]
+    async fn all_rejection_causes_return_identical_opaque_graphql_body() {
+        for (cause, req) in every_rejection_cause() {
+            let (status, content_type, body) = run(graphql_router(), req).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "cause: {cause}");
+            assert_eq!(
+                content_type.as_deref(),
+                Some("application/json"),
+                "cause: {cause}"
+            );
+            assert_eq!(body, UNAUTHORIZED_GRAPHQL_BODY.as_bytes(), "cause: {cause}");
+        }
     }
 }

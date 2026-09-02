@@ -441,6 +441,7 @@ version = "1.2.0"
 dependencies = [
  "axum",
  "br-core-auth",
+ "br-util-graphql",
  "serde_json",
  "tokio",
  "tower",
