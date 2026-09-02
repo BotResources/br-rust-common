@@ -39,6 +39,11 @@ pub fn user(email: &str) -> PublishedUser {
     .expect("a published user")
 }
 
+pub fn nameless_user(email: &str) -> PublishedUser {
+    PublishedUser::new(email.to_string(), None, None, BTreeMap::new())
+        .expect("a published user with no name")
+}
+
 pub fn group(name: &str, members: &[Uuid]) -> PublishedGroup {
     PublishedGroup::new(name.to_string(), members.to_vec(), BTreeMap::new())
         .expect("a published group")

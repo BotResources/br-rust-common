@@ -41,7 +41,7 @@ impl ProjectionSink<PublishedUser> for UserSink {
         let extensions = self.config.extract_for(value).into_value();
 
         self.context
-            .apply(async |conn| {
+            .apply_single_statement(async |conn| {
                 let changed = sqlx::query(UPSERT.as_str())
                     .bind(user_id)
                     .bind(&value.email)
@@ -66,7 +66,7 @@ impl ProjectionSink<PublishedUser> for UserSink {
         };
 
         self.context
-            .apply(async |conn| {
+            .apply_single_statement(async |conn| {
                 let deleted = sqlx::query("DELETE FROM known_users WHERE user_id = $1")
                     .bind(user_id)
                     .execute(&mut *conn)

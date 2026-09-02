@@ -7,7 +7,8 @@ mod stager;
 pub use reads::{members, service_account_name, staged_in, staged_keys, user_row, wait_for};
 pub use roster::{
     drop_published_group, drop_published_service_account, drop_published_user, group, manifest,
-    manifest_with_service_accounts, publish_until, publish_until_projected, service_account, user,
+    manifest_with_service_accounts, nameless_user, publish_until, publish_until_projected,
+    service_account, user,
 };
 pub use stager::{RecordingStager, foreign_ref, impacts_for};
 

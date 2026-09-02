@@ -39,7 +39,7 @@ impl ProjectionSink<PublishedServiceAccount> for ServiceAccountSink {
         };
 
         self.context
-            .apply(async |conn| {
+            .apply_single_statement(async |conn| {
                 let changed = sqlx::query(UPSERT.as_str())
                     .bind(service_account_id)
                     .bind(&value.name)
@@ -63,7 +63,7 @@ impl ProjectionSink<PublishedServiceAccount> for ServiceAccountSink {
         };
 
         self.context
-            .apply(async |conn| {
+            .apply_single_statement(async |conn| {
                 let deleted =
                     sqlx::query("DELETE FROM known_service_accounts WHERE service_account_id = $1")
                         .bind(service_account_id)

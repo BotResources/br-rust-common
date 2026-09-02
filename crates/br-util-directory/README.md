@@ -113,7 +113,8 @@ trait DirectorySource {
 
 ### Change detection, impacts and the stager seam (1.3.0)
 
-Every sink write is now **change-detecting** and **transactional**:
+Every sink write is now **change-detecting**; a write that carries an impact
+is also **transactional** (see *Cost, honestly* below):
 
 - `known_users` / `known_service_accounts` / `known_groups` upsert with
   `ON CONFLICT (…) DO UPDATE SET … WHERE (t.cols…) IS DISTINCT FROM (EXCLUDED.cols…)`;
@@ -166,27 +167,36 @@ namespace and its `Uuid` rendered as the key. The mirror produces no other
 variant: it can only say *this foreign fact changed*; noun/resource addressing
 belongs to whatever consumes the impacts. `Impact` is `#[non_exhaustive]`.
 
-**A change can name more than one fact — the rule is: whatever the write makes
-unnameable afterwards gets its own impact.** A single `stage_in` call carries
-every impact of that write, in one batch, in the one transaction:
+**Impacts name what changed, not what has to be recomputed.** A staged impact
+is a fact-level statement — *this user / group / service account changed* — and
+the adopter's own dependency graph decides which of its views recompute. A view
+that renders a member's identity declares a dependency on `identity.user/…` for
+every member it renders; a view that depends on a group declares
+`identity.group/G` and resolves it against the **current** membership at
+recompute time. So a user rename stages `identity.user/U` and nothing else: the
+views that render that user already name it, and no group's membership moved.
+
+**A write stages an extra impact only for what it makes unnameable afterwards.**
+Once the write commits, a removed member, a retracted user's former groups and a
+retracted group's former members are named by nothing left in the mirror — the
+link itself is gone — so an adopter resolving `identity.group/G` against current
+membership would never reach them. Those get their own impact. A single
+`stage_in` call carries every impact of that write, in one batch, in the one
+transaction:
 
 | Roster write | Staged impacts |
 |---|---|
-| user / service-account upsert or delete | that entity |
+| user upsert | that user |
+| service-account upsert or delete | that service account |
 | group upsert, name only | that group |
 | group upsert that **drops** members | that group **+ one impact per removed member** |
 | group upsert that **adds** members | that group only |
 | group delete | that group **+ one impact per member the cascade unlinks** |
 | user delete | that user **+ one impact per group it still belonged to** |
 
-A **removed** member is unrecoverable from the mirror once the write commits:
-its `known_user_group` row is gone and nothing left in the tables names it, so
-an adopter that derives per-user state from group membership would never
-recompute it. An **added** member is recoverable — it is in the current
-membership of the group the impact already names — so the group impact suffices
-and no per-user impact is staged for it. The same asymmetry explains the group
-delete (the cascade unlinks its members) and the user delete: memberships are
-group-derived and a user retraction deliberately **leaves the
+An **added** member is recoverable — it is in the current membership of the
+group the impact already names — so the group impact suffices and no per-user
+impact is staged for it. A user retraction deliberately **leaves the
 `known_user_group` rows in place** (`user_id` carries no FK — see the *Why*
 table), so the groups stay correct but their derived state changed, and each is
 named.
@@ -194,8 +204,9 @@ named.
 A downstream reactor that names the same value differently (`ForeignKey` is the
 common alternative) maps it by rename and nothing else: the shape is exactly
 `(namespace, key)`, no field is added, dropped or reinterpreted. Accepted
-charset, so a validator on the consuming side can be made to match: **namespace** = 1–64 bytes of `[a-z0-9._]`, no leading or trailing `.`
-and no `..`; **key** = 1–256 bytes with no control character and no whitespace.
+charset, so a validator on the consuming side can be made to match:
+**namespace** = 1–64 bytes of `[a-z0-9._]`, no leading or trailing `.` and no
+`..`; **key** = 1–256 bytes with no control character and no whitespace.
 The three sink namespaces above satisfy it, and the key the sinks emit is always
 a hyphenated lowercase `Uuid`.
 
@@ -218,7 +229,9 @@ a stager turns every projection into `BEGIN` / write / `stage_in` / `COMMIT`:
 three extra round trips per key, and one transaction per key on a bootstrap
 scan of N keys. That is the price of the atomicity below, not a free wrapper.
 The group upsert is always transactional — its member-set read under
-`FOR UPDATE` and the rewrite that follows have to be.
+`FOR UPDATE` and the rewrite that follows have to be — and a group delete joins
+it as soon as a stager is registered, because it then has to read the members it
+is about to unlink.
 
 **Adopting the stager on a converged mirror stages nothing.** An impact is
 staged **only when a row actually changed**, so a service that adds
@@ -257,7 +270,8 @@ pub struct ProjectorProgress { pub changes: u64 }
   from the moment an in-flight `watch()` future is **dropped** — a cancelled
   `select!` branch or an aborted task. The activation is a scope guard, so a
   torn-down watch cannot leave the composition pinned on `Healthy` with nothing
-  running behind it. That is
+  running behind it, and the guard is generation-stamped, so a superseded
+  activation dropped late never deactivates the one that replaced it. That is
   exactly what the crate can observe: `PublishedLanguageConsumer::watch()`
   reports no "watcher established" edge, so `Healthy` means *bound and not yet
   failed*, never *has received an event*.
@@ -319,19 +333,27 @@ Unit tests cover the **pure logic**, no I/O: `member_rows` (recompose),
 extract / filter), `DirectorySnapshot` (resolve / extensions / membership /
 service accounts, **auto-degrade**, and **order-independent convergence**: a
 group's membership is correct even when set before the member user is projected),
-key rendering, `ForeignRef` validation, the rendered change-detecting upsert,
-the membership set difference, the progress channel and the worst-of health
-composition **including its scope guard** (dropped normally and dropped while
-unwinding). The `tests/projector*_e2e.rs` suites cover the projector against
-**real NATS + real Postgres** (`#[ignore]`, gated on `NATS_URL` and
+key rendering, `ForeignRef` validation, the rendered change-detecting upsert
+(every column reaching all four sites that must agree, and a column-less render
+refused rather than emitted), the membership set difference **compared as a set,
+not as the published sequence**, the progress channel and the worst-of health
+composition **including its scope guard** (dropped normally, dropped while
+unwinding, and a superseded guard dropped after the activation that replaced
+it). The `tests/projector*_e2e.rs` suites cover the projector against **real
+NATS + real Postgres** (`#[ignore]`, gated on `NATS_URL` and
 `TEST_DATABASE_URL`, each test in its own Postgres schema): the no-op upsert
-(proven by an unchanged `xmin`), the single staged impact on a real change, the
-stager-failure rollback, the group name/member-set predicate, the stager-less
-path, the per-removed-member / per-group impacts of a membership change, a user
-retraction and a group retraction, and the health composition returning to
-`Degraded` when the watch task is **aborted**. The rest of the KV/PG round-trip — orphan-delete, extension
-survival, pass→fail orphan, the users-only scope, the absent-manifest
-fail-closed — is the **conformance-directory** battery in `br-e2e-harness`.
+(proven by an unchanged `xmin`), a `NULL` name driven through the
+`IS DISTINCT FROM` guard in both directions, the single staged impact on a real
+change, the stager-failure rollback, the group name/member-set predicate, the
+stager-less path, the per-removed-member / per-group impacts of a membership
+change, a user retraction and a group retraction, and the health composition
+returning to `Degraded` when the watch task is **aborted**. A `#[ignore]` unit
+test in the sink context pins the two application forms against a real Postgres:
+a two-statement closure whose second statement fails leaves the first committed
+on the single-statement form and rolls both back on the transactional one. The
+rest of the KV/PG round-trip — orphan-delete, extension survival, pass→fail
+orphan, the users-only scope, the absent-manifest fail-closed — is the
+**conformance-directory** battery in `br-e2e-harness`.
 
 ## Install
 
@@ -353,7 +375,9 @@ br-util-directory = { git = "https://github.com/BotResources/br-rust-common", pa
 | `DirectorySource` is the only publisher seam | The project owns its domain→`Published*` mapping; the kit owns the reconcile mechanism. |
 | The sinks upsert with an `IS DISTINCT FROM` guard instead of blind `DO UPDATE` | The projector re-projects the whole prefix on every reconcile, so a blind upsert rewrote every row on every boot — dead tuples, and no way to tell a real roster change from a re-scan. The guard makes `rows_affected()` the single, NULL-correct definition of "changed", which is what both the impact and the progress signal key off. |
 | Group upsert applies its junction diff in one transaction | A membership change is atomic and idempotent under redelivery, and deleting only the members that left keeps the untouched rows free of dead tuples — the same argument as the `IS DISTINCT FROM` guard on entity rows. |
-| The group row lock, not the membership `FOR UPDATE`, is what serialises two replicas | The `SELECT … FROM known_user_group … FOR UPDATE` locks nothing when the group has no membership rows yet, so it cannot be the serialisation point. The `known_groups` upsert is: `ON CONFLICT … DO UPDATE` takes the row lock on the conflicting row before evaluating its `WHERE`, so even a no-op (`WHERE` false) upsert holds it, and it is taken first in the transaction. The membership `FOR UPDATE` then only pins the rows the sink is about to rewrite. |
+| The group row lock, not the membership `FOR UPDATE`, is what serialises two replicas | The `SELECT … FROM known_user_group … FOR UPDATE` locks nothing when the group has no membership rows yet, so it cannot be the serialisation point. The `known_groups` upsert is: `ON CONFLICT … DO UPDATE` takes the row lock on the conflicting row before evaluating its `WHERE`, so even a no-op (`WHERE` false) upsert holds it. The membership `FOR UPDATE` then only pins the rows the sink is about to rewrite. |
+| Every group path takes the `known_groups` row lock **before** any `known_user_group` lock | Two replicas that take the same two locks in opposite orders deadlock (`40P01`), which surfaces as a `watch()` error and a projector that stops. The upsert path gets the group-row lock from its `ON CONFLICT`; the delete path therefore opens with `SELECT group_id FROM known_groups WHERE group_id = $1 FOR UPDATE` (absent row → nothing to do) before reading the members it is about to unlink. One order crate-wide, so a put and a delete of the same group can only queue, never deadlock. |
+| `apply_single_statement` vs `apply_in_transaction` | With no stager registered the former opens **no** transaction: the closure runs autocommit on a pooled connection, so a second statement that fails would leave the first one committed. Its closure must therefore be a single statement on that path — every extra statement is gated on `stages_impacts()`, which is exactly the case that routes the call through a transaction instead. `apply_in_transaction` is the unconditional form, used wherever a write needs more than one statement regardless of the stager. |
 | The group sink reads its member set back before rewriting it | Delete-then-insert makes `rows_affected()` meaningless for memberships (it reports rows touched, not a difference). Reading the current set under `FOR UPDATE` and comparing it with the recomposed one is the only honest "changed" for a group, and it also skips the rewrite when nothing moved. |
 | A removed member gets its own impact, an added one does not | After the write commits, a removed member is named by nothing left in the mirror, so an adopter deriving per-user state from membership could never recompute it. An added member is in the current membership of the group the impact already names, so it is recoverable and a second impact would be noise. |
 | A user retraction does not delete its membership rows | Memberships are group-derived and the group is still publishing that member; deleting the rows would make `is_member` wrong until the group happens to be republished. The retraction stages an impact per group instead, so the derived state is recomputed without corrupting the mirror. |

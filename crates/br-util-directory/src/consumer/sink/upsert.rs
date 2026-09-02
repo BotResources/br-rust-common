@@ -1,4 +1,8 @@
 pub(crate) fn change_detecting_upsert(table: &str, key: &str, columns: &[&str]) -> String {
+    assert!(
+        !columns.is_empty(),
+        "a change-detecting upsert needs at least one non-key column to compare"
+    );
     let names = columns.join(", ");
     let placeholders = (2..=columns.len() + 1)
         .map(|position| format!("${position}"))
@@ -30,30 +34,74 @@ fn joined(columns: &[&str], qualifier: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn one_column_renders_a_guarded_upsert() {
+    fn between<'a>(sql: &'a str, open: &str, close: &str) -> &'a str {
+        let start = sql.find(open).expect("the opening marker") + open.len();
+        let rest = &sql[start..];
+        let end = rest.find(close).expect("the closing marker");
+        &rest[..end]
+    }
+
+    fn items(segment: &str) -> Vec<&str> {
+        segment.split(", ").collect()
+    }
+
+    fn qualified(columns: &[&str], prefix: &str) -> Vec<String> {
+        columns
+            .iter()
+            .map(|column| format!("{prefix}{column}"))
+            .collect()
+    }
+
+    fn assert_every_column_reaches_every_site(columns: &[&str]) {
+        let sql = change_detecting_upsert("known_users", "user_id", columns);
+
+        let inserted = items(between(&sql, "AS t (", ") VALUES ("));
+        assert_eq!(inserted[0], "user_id");
+        assert_eq!(inserted[1..], columns[..]);
+
         assert_eq!(
-            change_detecting_upsert("known_groups", "group_id", &["name"]),
-            "INSERT INTO known_groups AS t (group_id, name) VALUES ($1, $2) \
-             ON CONFLICT (group_id) DO UPDATE SET name = EXCLUDED.name \
-             WHERE (t.name) IS DISTINCT FROM (EXCLUDED.name)"
+            items(between(&sql, ") VALUES (", ") ON CONFLICT ")).len(),
+            columns.len() + 1
+        );
+        assert_eq!(
+            items(between(&sql, "DO UPDATE SET ", " WHERE (")),
+            columns
+                .iter()
+                .map(|column| format!("{column} = EXCLUDED.{column}"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            items(between(&sql, " WHERE (", ") IS DISTINCT FROM (")),
+            qualified(columns, "t.")
+        );
+        assert_eq!(
+            items(between(&sql, ") IS DISTINCT FROM (", ")")),
+            qualified(columns, "EXCLUDED.")
         );
     }
 
     #[test]
     fn every_column_reaches_the_four_sites_that_must_agree() {
-        assert_eq!(
-            change_detecting_upsert("known_users", "user_id", &["email", "extensions"]),
-            "INSERT INTO known_users AS t (user_id, email, extensions) VALUES ($1, $2, $3) \
-             ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, \
-             extensions = EXCLUDED.extensions \
-             WHERE (t.email, t.extensions) IS DISTINCT FROM (EXCLUDED.email, EXCLUDED.extensions)"
-        );
+        assert_every_column_reaches_every_site(&["email", "first_name", "extensions"]);
+    }
+
+    #[test]
+    fn a_single_column_reaches_the_same_four_sites() {
+        assert_every_column_reaches_every_site(&["name"]);
     }
 
     #[test]
     fn the_placeholder_count_follows_the_column_count() {
         let sql = change_detecting_upsert("t", "k", &["a", "b", "c"]);
-        assert!(sql.contains("VALUES ($1, $2, $3, $4)"));
+        assert_eq!(
+            items(between(&sql, ") VALUES (", ") ON CONFLICT ")),
+            vec!["$1", "$2", "$3", "$4"]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one non-key column")]
+    fn a_column_less_upsert_is_refused_rather_than_rendered() {
+        change_detecting_upsert("known_users", "user_id", &[]);
     }
 }

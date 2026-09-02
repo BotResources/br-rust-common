@@ -15,6 +15,8 @@ use crate::impact::{ForeignRef, Impact};
 static UPSERT: LazyLock<String> =
     LazyLock::new(|| change_detecting_upsert("known_groups", "group_id", &["name"]));
 
+const LOCKED_GROUP: &str = "SELECT group_id FROM known_groups WHERE group_id = $1 FOR UPDATE";
+
 const LOCKED_MEMBERS: &str =
     "SELECT user_id FROM known_user_group WHERE group_id = $1 ORDER BY user_id FOR UPDATE";
 
@@ -74,21 +76,25 @@ impl ProjectionSink<PublishedGroup> for GroupSink {
             return Ok(());
         };
 
+        if !self.context.stages_impacts() {
+            return self
+                .context
+                .apply_single_statement(async |conn| {
+                    Ok(match delete_group(conn, group_id).await? {
+                        true => vec![Impact::changed(ForeignRef::group(group_id))],
+                        false => Vec::new(),
+                    })
+                })
+                .await;
+        }
+
         self.context
-            .apply(async |conn| {
-                let members = match self.context.stages_impacts() {
-                    true => locked_members(conn, group_id).await?,
-                    false => BTreeSet::new(),
-                };
-                let deleted = sqlx::query("DELETE FROM known_groups WHERE group_id = $1")
-                    .bind(group_id)
-                    .execute(&mut *conn)
-                    .await?
-                    .rows_affected()
-                    > 0;
-                if !deleted {
+            .apply_in_transaction(async |conn| {
+                if !locked_group(conn, group_id).await? {
                     return Ok(Vec::new());
                 }
+                let members = locked_members(conn, group_id).await?;
+                delete_group(conn, group_id).await?;
                 let mut impacts = vec![Impact::changed(ForeignRef::group(group_id))];
                 for user_id in members {
                     impacts.push(Impact::changed(ForeignRef::user(user_id)));
@@ -150,6 +156,23 @@ impl MembershipDiff {
     }
 }
 
+async fn locked_group(conn: &mut PgConnection, group_id: Uuid) -> Result<bool, DirectoryError> {
+    let row: Option<(Uuid,)> = sqlx::query_as(LOCKED_GROUP)
+        .bind(group_id)
+        .fetch_optional(conn)
+        .await?;
+    Ok(row.is_some())
+}
+
+async fn delete_group(conn: &mut PgConnection, group_id: Uuid) -> Result<bool, DirectoryError> {
+    let deleted = sqlx::query("DELETE FROM known_groups WHERE group_id = $1")
+        .bind(group_id)
+        .execute(conn)
+        .await?
+        .rows_affected();
+    Ok(deleted > 0)
+}
+
 async fn locked_members(
     conn: &mut PgConnection,
     group_id: Uuid,
@@ -173,9 +196,29 @@ mod tests {
         ns.iter().map(|n| id(*n)).collect()
     }
 
+    fn published(member_ns: &[u128]) -> PublishedGroup {
+        PublishedGroup::new(
+            "crew".to_string(),
+            member_ns.iter().map(|n| id(*n)).collect(),
+            std::collections::BTreeMap::new(),
+        )
+        .expect("a published group")
+    }
+
+    fn projected(member_ns: &[u128]) -> BTreeSet<Uuid> {
+        member_rows(id(100), &published(member_ns))
+            .into_iter()
+            .map(|row| row.user_id)
+            .collect()
+    }
+
     #[test]
-    fn an_identical_member_set_moved_nothing() {
-        let diff = MembershipDiff::between(set(&[1, 2]), set(&[2, 1]));
+    fn a_member_set_is_compared_as_a_set_not_as_a_published_sequence() {
+        let canonical = projected(&[1, 2]);
+        let permuted_with_duplicates = projected(&[2, 1, 2]);
+        assert_eq!(canonical, permuted_with_duplicates);
+
+        let diff = MembershipDiff::between(canonical, permuted_with_duplicates);
         assert!(!diff.moved());
         assert!(diff.removed.is_empty());
         assert!(diff.added.is_empty());

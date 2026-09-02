@@ -1,11 +1,12 @@
 # br-test-support
 
-Dev-only shared **Postgres e2e test helpers** for the `br-rust-common` crates.
-Role/pool/name primitives that several crates' integration tests need to stand
-up an ephemeral, least-privilege Postgres world (create a `CREATEROLE` caller,
-open a pool as a given role, generate collision-free role/table names, tear a
-role down). Tier `util` — functions only, no aggregate, no policy, no error type
-of its own (the helpers surface `sqlx::Error` directly).
+Dev-only shared **e2e test helpers** for the `br-rust-common` crates: the
+environment readers that gate an `#[ignore]` suite (Postgres and NATS) plus the
+Postgres role/pool/name primitives that several crates' integration tests need
+to stand up an ephemeral, least-privilege Postgres world (create a `CREATEROLE`
+caller, open a pool as a given role, generate collision-free role/table names,
+tear a role down). Tier `util` — functions only, no aggregate, no policy, no
+error type of its own (the helpers surface `sqlx::Error` directly).
 
 These helpers used to be copy-pasted across three sites
 (`br-util-postgres/src/test_support.rs`, `br-util-postgres/tests/common`,
@@ -31,6 +32,10 @@ publish` refuses it outright.
 |---|---|
 | `test_db_url() -> Option<String>` | Reads `TEST_DATABASE_URL` (a PG 16+ superuser/admin URL). `None` → the calling `#[ignore]` test self-skips. |
 | `test_tls_db_url() -> Option<String>` | Reads `TEST_TLS_DATABASE_URL` (a TLS-required PG URL) for the remote-TLS path. |
+| `nats_url() -> Option<String>` | Reads `NATS_URL` (a real JetStream-enabled broker). `None` → the calling `#[ignore]` test self-skips. |
+| `require_test_db_url() -> String` | Same read, but **panics** naming `TEST_DATABASE_URL` when it is absent — for a suite that must fail loud rather than pass vacuously. |
+| `require_test_tls_db_url() -> String` | Panicking counterpart of `test_tls_db_url`. |
+| `require_nats_url() -> String` | Panicking counterpart of `nats_url`. |
 | `unique_suffix() -> String` | A 24-char collision-free suffix (truncated UUIDv7 simple form) for building per-test object names. |
 | `unique_role_name() -> String` | `br_test_{suffix}` — a fresh role name for one test. |
 | `unique_table_name() -> String` | `br_test_tbl_{suffix}` — a fresh table name for one test. |
@@ -48,6 +53,7 @@ small so a leaked pool surfaces fast.
 | Dev-dependency only | Test scaffolding must not enter any crate's dependency closure or public API; dev-deps are not transitive, so consumers stay unaffected (issue #47). |
 | `cleanup_role` swallows errors | It is post-assertion teardown of an already-ephemeral role; failing it would mask the real test outcome, and `DROP … IF EXISTS` is idempotent. |
 | Passwords are inline literals | These roles live only for the duration of one e2e test against a disposable database; they are never real credentials. |
+| Both an `Option` and a `require_*` reader per variable | A suite whose environment is genuinely optional self-skips on the `Option`; a suite that would otherwise pass while testing nothing takes the panicking reader, and the panic names the one variable that is missing rather than every variable the test might have wanted. |
 | `expect(...)` on setup, `Result` on `open_pool_as` | Setup failures are environment faults that should abort the test loudly; `open_pool_as` is also used to *assert* that a connection is refused, so it must return the error rather than panic. |
 
 ## Usage
