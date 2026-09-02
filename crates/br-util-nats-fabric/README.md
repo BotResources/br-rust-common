@@ -439,6 +439,25 @@ returned by `update_if`, on the `PUBLISHED_LANGUAGE` bucket:
 one, every revision originates from a `get_with_revision` or a successful
 `update_if`.
 
+The read-compare-CAS loop, keyed on an aggregate version carried in the
+published DTO:
+
+```rust,ignore
+loop {
+    let Some((current, revision)) = publisher.get_with_revision(&key).await? else {
+        break;
+    };
+    if current.version >= desired.version {
+        break;
+    }
+    match publisher.update_if(&key, &desired, revision).await {
+        Ok(_) => break,
+        Err(FabricError::RevisionConflict { .. }) => continue,
+        Err(err) => return Err(err),
+    }
+}
+```
+
 ### Consumer mechanics (the generic enablers of the directory's filter/extension/selection)
 
 `PublishedLanguageConsumer` is generic over the value `V` and parameterised by
@@ -582,7 +601,9 @@ bucket's TTL (`max_age`) is declared at provisioning and the opener only binds,
 never provisions. As with the Published-Language facades, the raw `async_nats`
 KV `Store` is never handed to a caller — there is no untyped escape hatch, and
 the compare-and-swap contract below is the **only** sanctioned revision-aware
-path.
+path on the `EPHEMERAL_AUTH` bucket. The `PUBLISHED_LANGUAGE` bucket has its own
+revision-aware path — see *Compare-and-swap on Published Language* under
+*Surface 2*.
 
 This surface exists for credential state that needs **optimistic concurrency**
 — the canonical consumer is svc-auth refresh-token rotation, whose
@@ -688,7 +709,7 @@ blind reuse-detection).
 `Revision` is an opaque newtype over the NATS KV sequence — the caller reads it
 from `get_with_revision` and passes it back to `update_if` or `delete_if`. A
 caller never mints a `Revision` by hand; every revision originates from
-`get_with_revision`.
+`get_with_revision` or a successful `update_if`.
 
 ## Generic mechanics vs caller seams (summary)
 
