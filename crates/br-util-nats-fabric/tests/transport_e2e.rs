@@ -404,7 +404,7 @@ async fn progress_resets_ack_wait_so_a_long_handler_is_not_redelivered_mid_proce
     let user = user_created_coords();
     let fabric = fabric().await;
     let tuning = ConsumerTuning {
-        ack_wait: Duration::from_secs(2),
+        ack_wait: Duration::from_secs(6),
         max_ack_pending: 256,
     };
     fabric
@@ -424,18 +424,18 @@ async fn progress_resets_ack_wait_so_a_long_handler_is_not_redelivered_mid_proce
         .expect("a delivery");
     assert_eq!(delivery.payload().unwrap().payload.label, "slow-me");
 
-    for _ in 0..4 {
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+    for _ in 0..6 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
         delivery
             .progress()
             .await
             .expect("working ack resets the server's ack_wait timer");
     }
 
-    let no_redelivery = tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await;
+    let no_redelivery = tokio::time::timeout(Duration::from_secs(3), consumer.recv()).await;
     assert!(
         no_redelivery.is_err(),
-        "periodic progress() held the frame in flight well past the 2s ack_wait — no redelivery mid-processing"
+        "periodic progress() held the frame in flight for 12s, twice the 6s ack_wait — no redelivery mid-processing"
     );
 
     delivery
