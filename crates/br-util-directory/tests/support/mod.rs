@@ -1,24 +1,62 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use br_core_directory::{
-    DIRECTORY_META_VERSION, DirectoryMeta, PublishedEntity, PublishedGroup, PublishedUser,
+    DIRECTORY_META_VERSION, DirectoryMeta, PublishedEntity, PublishedGroup,
+    PublishedServiceAccount, PublishedUser,
 };
 use br_util_directory::{DirectoryPublisher, ForeignRef, Impact, ImpactStager};
 use br_util_nats_fabric::{Fabric, KV_PUBLISHED_LANGUAGE};
-use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{Connection, PgConnection, PgPool};
 use uuid::Uuid;
 
-pub static PROJECTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const PROJECTION_ADVISORY_LOCK: i64 = 0x62_72_77_70_34_00_01;
 
-pub fn nats_url() -> Option<String> {
-    std::env::var("NATS_URL").ok()
+pub struct ExclusiveProjection {
+    connection: Option<PgConnection>,
 }
 
-pub fn infra() -> Option<(String, String)> {
-    Some((nats_url()?, br_test_support::test_db_url()?))
+impl ExclusiveProjection {
+    pub async fn release(mut self) {
+        if let Some(mut connection) = self.connection.take() {
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(PROJECTION_ADVISORY_LOCK)
+                .execute(&mut connection)
+                .await
+                .expect("release the projection advisory lock");
+            connection
+                .close()
+                .await
+                .expect("close the advisory lock connection");
+        }
+    }
+}
+
+pub fn infra() -> (String, String) {
+    let nats = std::env::var("NATS_URL")
+        .expect("NATS_URL and TEST_DATABASE_URL are required for this ignored suite");
+    let database = br_test_support::test_db_url()
+        .expect("NATS_URL and TEST_DATABASE_URL are required for this ignored suite");
+    (nats, database)
+}
+
+pub async fn exclusive_projection(database_url: &str) -> ExclusiveProjection {
+    let mut connection = PgConnection::connect(database_url)
+        .await
+        .expect("connect to TEST_DATABASE_URL");
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(PROJECTION_ADVISORY_LOCK)
+        .execute(&mut connection)
+        .await
+        .expect("take the projection advisory lock");
+    ExclusiveProjection {
+        connection: Some(connection),
+    }
 }
 
 pub async fn fabric(url: &str) -> Fabric {
@@ -147,6 +185,17 @@ pub fn manifest() -> DirectoryMeta {
     }
 }
 
+pub fn manifest_with_service_accounts() -> DirectoryMeta {
+    DirectoryMeta {
+        version: DIRECTORY_META_VERSION,
+        entities: vec![
+            PublishedEntity::Users,
+            PublishedEntity::Groups,
+            PublishedEntity::ServiceAccounts,
+        ],
+    }
+}
+
 pub fn user(email: &str) -> PublishedUser {
     PublishedUser::new(
         email.to_string(),
@@ -160,6 +209,11 @@ pub fn user(email: &str) -> PublishedUser {
 pub fn group(name: &str, members: &[Uuid]) -> PublishedGroup {
     PublishedGroup::new(name.to_string(), members.to_vec(), BTreeMap::new())
         .expect("a published group")
+}
+
+pub fn service_account(name: &str) -> PublishedServiceAccount {
+    PublishedServiceAccount::new(name.to_string(), BTreeMap::new())
+        .expect("a published service account")
 }
 
 pub async fn staged_keys(pool: &PgPool, key: Uuid) -> i64 {
@@ -179,6 +233,16 @@ pub async fn user_row(pool: &PgPool, user_id: Uuid) -> Option<(String, String)> 
         .expect("read the known_users row")
 }
 
+pub async fn service_account_name(pool: &PgPool, service_account_id: Uuid) -> Option<String> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT name FROM known_service_accounts WHERE service_account_id = $1")
+            .bind(service_account_id)
+            .fetch_optional(pool)
+            .await
+            .expect("read the known_service_accounts row");
+    row.map(|(name,)| name)
+}
+
 pub async fn members(pool: &PgPool, group_id: Uuid) -> Vec<Uuid> {
     let rows: Vec<(Uuid,)> =
         sqlx::query_as("SELECT user_id FROM known_user_group WHERE group_id = $1 ORDER BY user_id")
@@ -189,12 +253,37 @@ pub async fn members(pool: &PgPool, group_id: Uuid) -> Vec<Uuid> {
     rows.into_iter().map(|(id,)| id).collect()
 }
 
+pub async fn wait_for(label: &str, mut ready: impl AsyncFnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if ready().await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("timed out waiting for {label}");
+}
+
 pub async fn drop_published_user(fabric: &Fabric, user_id: Uuid) {
     let publisher = DirectoryPublisher::open(fabric).await.expect("publisher");
-    let _ = publisher.retract_user(user_id).await;
+    publisher
+        .retract_user(user_id)
+        .await
+        .expect("retract the published user");
 }
 
 pub async fn drop_published_group(fabric: &Fabric, group_id: Uuid) {
     let publisher = DirectoryPublisher::open(fabric).await.expect("publisher");
-    let _ = publisher.retract_group(group_id).await;
+    publisher
+        .retract_group(group_id)
+        .await
+        .expect("retract the published group");
+}
+
+pub async fn drop_published_service_account(fabric: &Fabric, service_account_id: Uuid) {
+    let publisher = DirectoryPublisher::open(fabric).await.expect("publisher");
+    publisher
+        .retract_service_account(service_account_id)
+        .await
+        .expect("retract the published service account");
 }

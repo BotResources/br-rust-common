@@ -6,7 +6,7 @@ use br_util_nats_fabric::{KvKey, ProjectionSink};
 use crate::consumer::config::DirectoryConsumerConfig;
 use crate::consumer::sink::context::SinkContext;
 use crate::error::DirectoryError;
-use crate::impact::USER_NAMESPACE;
+use crate::impact::ForeignRef;
 
 const UPSERT: &str = "INSERT INTO known_users AS t \
      (user_id, email, first_name, last_name, extensions) \
@@ -54,7 +54,7 @@ impl ProjectionSink<PublishedUser> for UserSink {
             > 0;
         if changed {
             self.context
-                .stage_change(&mut tx, USER_NAMESPACE, user_id)
+                .stage_change(&mut tx, || ForeignRef::user(user_id))
                 .await?;
         }
         tx.commit().await?;
@@ -79,7 +79,7 @@ impl ProjectionSink<PublishedUser> for UserSink {
             > 0;
         if deleted {
             self.context
-                .stage_change(&mut tx, USER_NAMESPACE, user_id)
+                .stage_change(&mut tx, || ForeignRef::user(user_id))
                 .await?;
         }
         tx.commit().await?;

@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 use crate::error::DirectoryError;
 
 pub const USER_NAMESPACE: &str = "identity.user";
@@ -25,6 +27,25 @@ impl ForeignRef {
             namespace: namespace.to_string(),
             key: key.to_string(),
         })
+    }
+
+    pub fn user(user_id: Uuid) -> Self {
+        Self::entity(USER_NAMESPACE, user_id)
+    }
+
+    pub fn group(group_id: Uuid) -> Self {
+        Self::entity(GROUP_NAMESPACE, group_id)
+    }
+
+    pub fn service_account(service_account_id: Uuid) -> Self {
+        Self::entity(SERVICE_ACCOUNT_NAMESPACE, service_account_id)
+    }
+
+    fn entity(namespace: &'static str, id: Uuid) -> Self {
+        Self {
+            namespace: namespace.to_string(),
+            key: id.to_string(),
+        }
     }
 
     pub fn namespace(&self) -> &str {
@@ -85,6 +106,23 @@ mod tests {
         for namespace in [USER_NAMESPACE, GROUP_NAMESPACE, SERVICE_ACCOUNT_NAMESPACE] {
             assert!(ForeignRef::new(namespace, "k").is_ok(), "{namespace}");
         }
+    }
+
+    #[test]
+    fn the_entity_constructors_agree_with_the_validating_constructor() {
+        let id = Uuid::from_u128(42);
+        assert_eq!(
+            ForeignRef::user(id),
+            ForeignRef::new(USER_NAMESPACE, &id.to_string()).expect("valid")
+        );
+        assert_eq!(
+            ForeignRef::group(id),
+            ForeignRef::new(GROUP_NAMESPACE, &id.to_string()).expect("valid")
+        );
+        assert_eq!(
+            ForeignRef::service_account(id),
+            ForeignRef::new(SERVICE_ACCOUNT_NAMESPACE, &id.to_string()).expect("valid")
+        );
     }
 
     #[test]

@@ -130,10 +130,11 @@ release; they remain reachable through the historical per-crate tags
   **committed** change, on exactly the predicate that decides whether to stage an
   impact. `health()` yields a `WatchHealthReceiver` composed **worst-of** over the
   streams active for the projector (users always, groups per consumption scope,
-  service accounts per producer manifest): `Healthy` only while every active KV
-  watch is running, `Degraded` before `watch()` starts and after it returns. No
-  loop, no backoff and no re-reconcile were added — supervision stays the
-  caller's.
+  service accounts per producer manifest): a stream counts as `Healthy` from the
+  moment its consumer is bound to the bucket until its `watch()` call returns, so
+  the composition is `Degraded` before `watch()` starts, after it returns, and
+  whenever any active stream is down. No loop, no backoff and no re-reconcile
+  were added — supervision stays the caller's.
 
 ### Changed
 

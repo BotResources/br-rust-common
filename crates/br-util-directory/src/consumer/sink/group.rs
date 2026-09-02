@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::consumer::recompose::member_rows;
 use crate::consumer::sink::context::SinkContext;
 use crate::error::DirectoryError;
-use crate::impact::GROUP_NAMESPACE;
+use crate::impact::ForeignRef;
 
 const UPSERT: &str = "INSERT INTO known_groups AS t (group_id, name) VALUES ($1, $2) \
      ON CONFLICT (group_id) DO UPDATE SET name = EXCLUDED.name \
@@ -58,7 +58,7 @@ impl ProjectionSink<PublishedGroup> for GroupSink {
         let changed = name_changed || members_changed;
         if changed {
             self.context
-                .stage_change(&mut tx, GROUP_NAMESPACE, group_id)
+                .stage_change(&mut tx, || ForeignRef::group(group_id))
                 .await?;
         }
         tx.commit().await?;
@@ -83,7 +83,7 @@ impl ProjectionSink<PublishedGroup> for GroupSink {
             > 0;
         if deleted {
             self.context
-                .stage_change(&mut tx, GROUP_NAMESPACE, group_id)
+                .stage_change(&mut tx, || ForeignRef::group(group_id))
                 .await?;
         }
         tx.commit().await?;

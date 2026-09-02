@@ -7,7 +7,7 @@ use br_util_nats_fabric::{KvKey, ProjectionSink};
 
 use crate::consumer::sink::context::SinkContext;
 use crate::error::DirectoryError;
-use crate::impact::SERVICE_ACCOUNT_NAMESPACE;
+use crate::impact::ForeignRef;
 
 const UPSERT: &str = "INSERT INTO known_service_accounts AS t (service_account_id, name) \
      VALUES ($1, $2) \
@@ -47,7 +47,7 @@ impl ProjectionSink<PublishedServiceAccount> for ServiceAccountSink {
             > 0;
         if changed {
             self.context
-                .stage_change(&mut tx, SERVICE_ACCOUNT_NAMESPACE, service_account_id)
+                .stage_change(&mut tx, || ForeignRef::service_account(service_account_id))
                 .await?;
         }
         tx.commit().await?;
@@ -73,7 +73,7 @@ impl ProjectionSink<PublishedServiceAccount> for ServiceAccountSink {
                 > 0;
         if deleted {
             self.context
-                .stage_change(&mut tx, SERVICE_ACCOUNT_NAMESPACE, service_account_id)
+                .stage_change(&mut tx, || ForeignRef::service_account(service_account_id))
                 .await?;
         }
         tx.commit().await?;

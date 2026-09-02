@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use sqlx::{PgConnection, PgPool};
-use uuid::Uuid;
 
 use crate::consumer::progress::ProgressChannel;
 use crate::error::DirectoryError;
@@ -34,15 +33,12 @@ impl SinkContext {
     pub(crate) async fn stage_change(
         &self,
         conn: &mut PgConnection,
-        namespace: &str,
-        id: Uuid,
+        foreign: impl FnOnce() -> ForeignRef + Send,
     ) -> Result<(), DirectoryError> {
         let Some(stager) = self.stager.as_ref() else {
             return Ok(());
         };
-        let impacts = [Impact::ForeignChanged {
-            foreign: ForeignRef::new(namespace, &id.to_string())?,
-        }];
+        let impacts = [Impact::ForeignChanged { foreign: foreign() }];
         stager.stage_in(conn, &impacts).await
     }
 

@@ -194,10 +194,14 @@ pub struct ProjectorProgress { pub changes: u64 }
   Both `reconcile()` and `watch()` feed it.
 - `health()` — the **worst-of** composition over the streams that are active for
   this projector (users always; groups when the consumption scope includes them;
-  service accounts when the producer manifest declares them). It is `Healthy`
-  only while every active stream's KV watch is running, and `Degraded`
-  otherwise — **including before `watch()` starts and after it returns**, which
-  is the truthful state rather than an optimistic one.
+  service accounts when the producer manifest declares them). A stream is
+  `Healthy` from the moment its consumer is **bound to the bucket** (the fabric
+  fails loud if it is absent) until its `watch()` call **returns**, i.e. while
+  the call is in flight; it is `Degraded` before `watch()` starts, after it
+  returns, and for the whole life of a projector that never watches. That is
+  exactly what the crate can observe: `PublishedLanguageConsumer::watch()`
+  reports no "watcher established" edge, so `Healthy` means *bound and not yet
+  failed*, never *has received an event*.
 
 **Supervision is the caller's.** This crate has no loop, no backoff and no
 re-reconcile: `watch()` still returns on the first stream error. The two signals
@@ -274,6 +278,7 @@ fail-closed — is the **conformance-directory** battery in `br-e2e-harness`.
 | `DirectorySource` is the only publisher seam | The project owns its domain→`Published*` mapping; the kit owns the reconcile mechanism. |
 | The sinks upsert with an `IS DISTINCT FROM` guard instead of blind `DO UPDATE` | The projector re-projects the whole prefix on every reconcile, so a blind upsert rewrote every row on every boot — dead tuples, and no way to tell a real roster change from a re-scan. The guard makes `rows_affected()` the single, NULL-correct definition of "changed", which is what both the impact and the progress signal key off. |
 | Group upsert replaces its junction rows in one transaction | A membership change is atomic and idempotent under redelivery. |
+| The group row lock, not the membership `FOR UPDATE`, is what serialises two replicas | The `SELECT … FROM known_user_group … FOR UPDATE` locks nothing when the group has no membership rows yet, so it cannot be the serialisation point. The `known_groups` upsert is: `ON CONFLICT … DO UPDATE` takes the row lock on the conflicting row before evaluating its `WHERE`, so even a no-op (`WHERE` false) upsert holds it, and it is taken first in the transaction. The membership `FOR UPDATE` then only pins the rows the sink is about to rewrite. |
 | The group sink reads its member set back before rewriting it | Delete-then-insert makes `rows_affected()` meaningless for memberships (it reports rows touched, not a difference). Reading the current set under `FOR UPDATE` and comparing it with the recomposed one is the only honest "changed" for a group, and it also skips the rewrite when nothing moved. |
 | A stager failure rolls the roster write back | An impact that outlives its write is a lie to whoever reacts to it, and a write with no impact is a silently-missed reaction. Sharing one transaction is what makes the pair atomic; the cost is the grant note above. |
 | Memberships are group-derived, `user_id` has no FK | A membership is recomposed straight from the group's `member_ids`, independent of whether that user has a `known_users` row. The user, group and service-account watches are independent streams with no inter-entity re-trigger, so a group can project before one of its members' user entry (or a member may be filtered out / never published under a scoped roster). A FK + member-existence guard silently dropped such a row and never re-projected the group when the user later arrived (`is_member` stayed wrong). So `known_user_group.user_id` carries no FK; the group reconcile/watch replaces a group's rows from its `member_ids` (delete-then-insert) — order-independent convergence. A member with no `known_users` row is legitimate, not an orphan; `is_member` is correct regardless, while `resolve_user` returns `None` for a filtered/not-yet-projected user (the expected scoped behavior). |
