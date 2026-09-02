@@ -124,7 +124,9 @@ release; they remain reachable through the historical per-crate tags
   `USER_NAMESPACE` / `GROUP_NAMESPACE` / `SERVICE_ACCOUNT_NAMESPACE`
   (`identity.user`, `identity.group`, `identity.service_account`); the key is the
   entity `Uuid`. `Impact` is `#[non_exhaustive]` and carries only the variant a
-  mirror can produce.
+  mirror can produce. A stager reports its own failure as the new
+  `DirectoryError::Stager(source)` variant, which the sink surfaces unchanged
+  after rolling the transaction back.
 - **`br-util-directory` — two supervision signals.** `progress()` yields a
   `watch::Receiver<ProjectorProgress>` whose `changes` counter is bumped once per
   **committed** change, on exactly the predicate that decides whether to stage an
@@ -149,8 +151,8 @@ release; they remain reachable through the historical per-crate tags
   `retract` counts only when a row was really deleted. Without a registered
   stager the observable behaviour is that of `1.2.0` minus the no-op writes.
 - **Deployment note — grants.** A stager writes the adopter's own tables on the
-  sink's connection, so those tables need a grant on the runtime app role
-  (precedent: svc-charter `0006_least_privilege_grants.sql`). Without it the
+  sink's connection, so those tables need a grant on the runtime app role in the
+  service's own least-privilege grant migration. Without it the
   stager fails and, sharing the transaction, **rolls the roster upsert back with
   it** — the mirror stops converging. Grant before registering a stager.
 

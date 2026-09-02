@@ -29,15 +29,15 @@ impl ForeignRef {
         })
     }
 
-    pub fn user(user_id: Uuid) -> Self {
+    pub(crate) fn user(user_id: Uuid) -> Self {
         Self::entity(USER_NAMESPACE, user_id)
     }
 
-    pub fn group(group_id: Uuid) -> Self {
+    pub(crate) fn group(group_id: Uuid) -> Self {
         Self::entity(GROUP_NAMESPACE, group_id)
     }
 
-    pub fn service_account(service_account_id: Uuid) -> Self {
+    pub(crate) fn service_account(service_account_id: Uuid) -> Self {
         Self::entity(SERVICE_ACCOUNT_NAMESPACE, service_account_id)
     }
 

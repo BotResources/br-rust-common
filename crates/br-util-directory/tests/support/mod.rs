@@ -1,19 +1,21 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
-use std::collections::BTreeMap;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+mod reads;
+mod roster;
+mod stager;
 
-use br_core_directory::{
-    DIRECTORY_META_VERSION, DirectoryMeta, PublishedEntity, PublishedGroup,
-    PublishedServiceAccount, PublishedUser,
+pub use reads::{members, service_account_name, staged_keys, user_row, wait_for};
+pub use roster::{
+    drop_published_group, drop_published_service_account, drop_published_user, group, manifest,
+    manifest_with_service_accounts, publish_until, publish_until_projected, service_account, user,
 };
-use br_util_directory::{DirectoryPublisher, ForeignRef, Impact, ImpactStager};
+pub use stager::{RecordingStager, foreign_ref, impacts_for};
+
+use std::str::FromStr;
+
 use br_util_nats_fabric::{Fabric, KV_PUBLISHED_LANGUAGE};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Connection, PgConnection, PgPool};
-use uuid::Uuid;
 
 const PROJECTION_ADVISORY_LOCK: i64 = 0x62_72_77_70_34_00_01;
 
@@ -108,182 +110,4 @@ pub async fn isolated_pool(database_url: &str) -> PgPool {
         .await
         .expect("create the adopter impact table");
     pool
-}
-
-pub struct RecordingStager {
-    seen: Arc<Mutex<Vec<Impact>>>,
-    fail: bool,
-}
-
-impl RecordingStager {
-    pub fn accepting() -> Self {
-        Self {
-            seen: Arc::new(Mutex::new(Vec::new())),
-            fail: false,
-        }
-    }
-
-    pub fn failing() -> Self {
-        Self {
-            seen: Arc::new(Mutex::new(Vec::new())),
-            fail: true,
-        }
-    }
-
-    pub fn seen(&self) -> Arc<Mutex<Vec<Impact>>> {
-        Arc::clone(&self.seen)
-    }
-}
-
-#[async_trait::async_trait]
-impl ImpactStager for RecordingStager {
-    async fn stage_in(
-        &self,
-        conn: &mut sqlx::PgConnection,
-        impacts: &[Impact],
-    ) -> Result<(), br_util_directory::DirectoryError> {
-        for impact in impacts {
-            let foreign = foreign_ref(impact);
-            sqlx::query("INSERT INTO staged_impact (namespace, key) VALUES ($1, $2)")
-                .bind(foreign.namespace())
-                .bind(foreign.key())
-                .execute(&mut *conn)
-                .await?;
-        }
-        self.seen
-            .lock()
-            .expect("stager record lock")
-            .extend_from_slice(impacts);
-        if self.fail {
-            return Err(br_util_directory::DirectoryError::Persistence(
-                sqlx::Error::RowNotFound,
-            ));
-        }
-        Ok(())
-    }
-}
-
-pub fn impacts_for(seen: &Arc<Mutex<Vec<Impact>>>, id: Uuid) -> usize {
-    seen.lock()
-        .expect("record lock")
-        .iter()
-        .filter(|impact| foreign_ref(impact).key() == id.to_string())
-        .count()
-}
-
-pub fn foreign_ref(impact: &Impact) -> &ForeignRef {
-    match impact {
-        Impact::ForeignChanged { foreign } => foreign,
-        other => panic!("unexpected impact variant: {other:?}"),
-    }
-}
-
-pub fn manifest() -> DirectoryMeta {
-    DirectoryMeta {
-        version: DIRECTORY_META_VERSION,
-        entities: vec![PublishedEntity::Users, PublishedEntity::Groups],
-    }
-}
-
-pub fn manifest_with_service_accounts() -> DirectoryMeta {
-    DirectoryMeta {
-        version: DIRECTORY_META_VERSION,
-        entities: vec![
-            PublishedEntity::Users,
-            PublishedEntity::Groups,
-            PublishedEntity::ServiceAccounts,
-        ],
-    }
-}
-
-pub fn user(email: &str) -> PublishedUser {
-    PublishedUser::new(
-        email.to_string(),
-        Some("Ada".to_string()),
-        Some("Lovelace".to_string()),
-        BTreeMap::new(),
-    )
-    .expect("a published user")
-}
-
-pub fn group(name: &str, members: &[Uuid]) -> PublishedGroup {
-    PublishedGroup::new(name.to_string(), members.to_vec(), BTreeMap::new())
-        .expect("a published group")
-}
-
-pub fn service_account(name: &str) -> PublishedServiceAccount {
-    PublishedServiceAccount::new(name.to_string(), BTreeMap::new())
-        .expect("a published service account")
-}
-
-pub async fn staged_keys(pool: &PgPool, key: Uuid) -> i64 {
-    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM staged_impact WHERE key = $1")
-        .bind(key.to_string())
-        .fetch_one(pool)
-        .await
-        .expect("count staged impacts");
-    count
-}
-
-pub async fn user_row(pool: &PgPool, user_id: Uuid) -> Option<(String, String)> {
-    sqlx::query_as("SELECT email, xmin::text FROM known_users WHERE user_id = $1")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .expect("read the known_users row")
-}
-
-pub async fn service_account_name(pool: &PgPool, service_account_id: Uuid) -> Option<String> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT name FROM known_service_accounts WHERE service_account_id = $1")
-            .bind(service_account_id)
-            .fetch_optional(pool)
-            .await
-            .expect("read the known_service_accounts row");
-    row.map(|(name,)| name)
-}
-
-pub async fn members(pool: &PgPool, group_id: Uuid) -> Vec<Uuid> {
-    let rows: Vec<(Uuid,)> =
-        sqlx::query_as("SELECT user_id FROM known_user_group WHERE group_id = $1 ORDER BY user_id")
-            .bind(group_id)
-            .fetch_all(pool)
-            .await
-            .expect("read the memberships");
-    rows.into_iter().map(|(id,)| id).collect()
-}
-
-pub async fn wait_for(label: &str, mut ready: impl AsyncFnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if ready().await {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    panic!("timed out waiting for {label}");
-}
-
-pub async fn drop_published_user(fabric: &Fabric, user_id: Uuid) {
-    let publisher = DirectoryPublisher::open(fabric).await.expect("publisher");
-    publisher
-        .retract_user(user_id)
-        .await
-        .expect("retract the published user");
-}
-
-pub async fn drop_published_group(fabric: &Fabric, group_id: Uuid) {
-    let publisher = DirectoryPublisher::open(fabric).await.expect("publisher");
-    publisher
-        .retract_group(group_id)
-        .await
-        .expect("retract the published group");
-}
-
-pub async fn drop_published_service_account(fabric: &Fabric, service_account_id: Uuid) {
-    let publisher = DirectoryPublisher::open(fabric).await.expect("publisher");
-    publisher
-        .retract_service_account(service_account_id)
-        .await
-        .expect("retract the published service account");
 }

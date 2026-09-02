@@ -111,7 +111,7 @@ trait DirectorySource {
   that does not declare an entity returns `None` / `false` / empty from that
   entity's readers.
 
-### Change detection, impacts and the stager seam (#114)
+### Change detection, impacts and the stager seam (1.3.0)
 
 Every sink write is now **change-detecting** and **transactional**:
 
@@ -121,7 +121,7 @@ Every sink write is now **change-detecting** and **transactional**:
   version is written** (no dead tuple, no bloat) and nothing downstream is
   notified.
 - A **group** is changed when its name changed **or** its recomposed member set
-  differs from the set read at the top of the transaction
+  differs from the set read under `FOR UPDATE` **after the group-row upsert**
   (`SELECT user_id FROM known_user_group WHERE group_id = $1 … FOR UPDATE`,
   compared as a set). Memberships are rewritten only when the sets differ.
 - A `retract` counts as a change only when a row was actually deleted.
@@ -164,9 +164,22 @@ same transaction** as the roster write, with one
 say *this foreign fact changed*; noun/resource addressing belongs to whatever
 consumes the impacts. `Impact` is `#[non_exhaustive]`.
 
+The service-engine brief names the same value `ForeignKey`; this crate ships it
+as `ForeignRef` with the identical `(namespace, key)` shape, so the mapping
+downstream is a rename and nothing else — no field is added, dropped or
+reinterpreted. Accepted charset, so an engine-side validator can be made to
+match: **namespace** = 1–64 bytes of `[a-z0-9._]`, no leading or trailing `.`
+and no `..`; **key** = 1–256 bytes with no control character and no whitespace.
+The three sink namespaces above satisfy it, and the key the sinks emit is always
+a hyphenated lowercase `Uuid`.
+
+`stage_in` returns `DirectoryError::Stager(source)` — the adopter boxes its own
+error as the source. The sink does not interpret it: it rolls the transaction
+back and surfaces the error unchanged to `reconcile()` / `watch()`.
+
 **Adopter note — grants.** A stager writes to the **adopter's own** tables in
 the sink's transaction, so those tables need a grant on the runtime app role
-(precedent: svc-charter `0006_least_privilege_grants.sql`). Without it the
+(the least-privilege grant migration each service owns). Without it the
 stager fails and, because it runs inside the transaction, **the roster upsert
 rolls back with it** — the projection stops converging. That coupling is the
 point (an impact is never staged for a write that did not commit), but it is a
@@ -175,7 +188,7 @@ new way for a missing grant to break the mirror.
 Without a stager the behaviour is identical to `1.2.0` apart from the
 transaction wrapper and the suppressed no-op writes.
 
-### Two supervision signals (#114)
+### Two supervision signals (1.3.0)
 
 ```text
 impl DirectoryProjector {
