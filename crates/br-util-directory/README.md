@@ -230,8 +230,8 @@ three extra round trips per key, and one transaction per key on a bootstrap
 scan of N keys. That is the price of the atomicity below, not a free wrapper.
 The group upsert is always transactional — its member-set read under
 `FOR UPDATE` and the rewrite that follows have to be — and a group delete joins
-it as soon as a stager is registered, because it then has to read the members it
-is about to unlink.
+it as soon as a stager is registered, because it then has to lock the group row
+and read the members it is about to unlink — a fourth round trip on that path.
 
 **Adopting the stager on a converged mirror stages nothing.** An impact is
 staged **only when a row actually changed**, so a service that adds

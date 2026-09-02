@@ -55,6 +55,8 @@ mod tests {
     fn assert_every_column_reaches_every_site(columns: &[&str]) {
         let sql = change_detecting_upsert("known_users", "user_id", columns);
 
+        assert!(sql.contains(" ON CONFLICT (user_id) DO UPDATE SET "));
+
         let inserted = items(between(&sql, "AS t (", ") VALUES ("));
         assert_eq!(inserted[0], "user_id");
         assert_eq!(inserted[1..], columns[..]);
