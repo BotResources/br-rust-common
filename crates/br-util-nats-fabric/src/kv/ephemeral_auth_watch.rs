@@ -21,6 +21,21 @@ pub enum EphemeralAuthChange<V> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipReason {
+    InvalidKey,
+    UndecodableValue,
+}
+
+impl SkipReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidKey => "invalid key",
+            Self::UndecodableValue => "undecodable value",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChangeKind {
     Set,
     Removed,
@@ -99,17 +114,19 @@ where
             };
             self.health.set(WatchHealth::Healthy);
             let key = entry.key.clone();
+            let value_len = entry.value.len();
             match Self::change_from(entry) {
                 Ok(change) => {
-                    self.progress.record_change();
                     on_change(change);
+                    self.progress.record_change();
                 }
-                Err(e) => {
+                Err(reason) => {
                     self.progress.record_skip();
                     tracing::warn!(
                         surface = "ephemeral-auth",
                         key = %key,
-                        error = %e,
+                        reason = reason.as_str(),
+                        value_len,
                         "skipping an ephemeral-auth entry this consumer cannot read"
                     );
                 }
@@ -121,12 +138,13 @@ where
 
     fn change_from(
         entry: async_nats::jetstream::kv::Entry,
-    ) -> Result<EphemeralAuthChange<V>, FabricError> {
-        let key = KvKey::new(entry.key.clone())?;
+    ) -> Result<EphemeralAuthChange<V>, SkipReason> {
+        let key = KvKey::new(entry.key.clone()).map_err(|_| SkipReason::InvalidKey)?;
         Ok(match classify(entry.operation) {
             ChangeKind::Removed => EphemeralAuthChange::Removed { key },
             ChangeKind::Set => EphemeralAuthChange::Set {
-                value: decode(&entry.key, &entry.value)?,
+                value: decode::<V>(&entry.key, &entry.value)
+                    .map_err(|_| SkipReason::UndecodableValue)?,
                 key,
             },
         })
@@ -150,5 +168,11 @@ mod tests {
     #[test]
     fn purge_classifies_as_removed() {
         assert_eq!(classify(Operation::Purge), ChangeKind::Removed);
+    }
+
+    #[test]
+    fn skip_reasons_render_as_static_discriminants() {
+        assert_eq!(SkipReason::InvalidKey.as_str(), "invalid key");
+        assert_eq!(SkipReason::UndecodableValue.as_str(), "undecodable value");
     }
 }

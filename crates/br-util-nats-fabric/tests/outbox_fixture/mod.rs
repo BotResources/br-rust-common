@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use br_core_integration::{EventMetadata, IntegrationEvent};
 use br_core_kernel::{Actor, UserId};
-use br_test_support::require_nats_url;
+use br_test_support::{require_nats_url, require_test_db_url};
 use br_util_nats_fabric::{Aggregate, Bc, EventCoords, INTEGRATION_EVT, PastFact};
 use chrono::Utc;
 use futures_util::StreamExt;
@@ -15,11 +15,6 @@ pub const DUPLICATE_WINDOW: Duration = Duration::from_secs(2);
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct UserCreatedV1 {
     user_id: Uuid,
-}
-
-pub fn require_database_url() -> String {
-    std::env::var("TEST_DATABASE_URL")
-        .expect("TEST_DATABASE_URL is required for this ignored suite")
 }
 
 pub async fn jetstream() -> async_nats::jetstream::Context {
@@ -42,7 +37,7 @@ pub async fn recreate_event_stream(js: &async_nats::jetstream::Context) {
 }
 
 pub async fn outbox_pool() -> PgPool {
-    let pool = PgPool::connect(&require_database_url())
+    let pool = PgPool::connect(&require_test_db_url())
         .await
         .expect("connect to Postgres");
     sqlx::query(

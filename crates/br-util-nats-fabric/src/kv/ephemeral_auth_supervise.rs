@@ -16,9 +16,7 @@ pub(crate) trait ChangeSource {
         on_change: &mut (dyn FnMut(EphemeralAuthChange<Self::Value>) + Send),
     ) -> Result<(), FabricError>;
 
-    fn observed(&self) -> u64 {
-        0
-    }
+    fn observed(&self) -> u64;
 }
 
 #[async_trait::async_trait]

@@ -572,8 +572,11 @@ entries to copy, what to persist — is a set of **caller-owned seams**.
 ### Keys
 
 `KvKey` / `KvPrefix` accept `[A-Za-z0-9_./-]`, reject empty and wildcard-like
-input (`*`, `>`). Encode/decode is **fail-closed**: a decode failure is an
-explicit `FabricError::Decode` naming the key, never a silent skip.
+input (`*`, `>`). On the **single-key read, enumeration and publisher** paths
+encode/decode is **fail-closed**: a decode failure is an explicit
+`FabricError::Decode` naming the key, never a silent skip. The one documented
+exception is `EphemeralAuthWatcher::watch`, which skips an entry it cannot read
+rather than failing the loop — see *Surface 3 — Ephemeral Auth over KV*.
 
 ### Publisher mechanics
 
@@ -888,9 +891,14 @@ blind reuse-detection).
   `async_nats` `Entry` is never handed to the caller — only the typed change.
   **An entry this consumer cannot read is skipped, not fatal.** A value that
   fails to decode into `V`, or a key `KvKey` rejects, is dropped with one
-  `tracing::warn!` naming the key and the error — never the value bytes, which
-  are credential state — counted on `progress()`, and the watch **keeps
-  running**; health stays `Healthy`, because the stream is alive. This is the
+  `tracing::warn!` carrying exactly four fields — `surface = "ephemeral-auth"`,
+  `key` (the raw KV key), `reason` (the static discriminant `"undecodable
+  value"` or `"invalid key"`) and `value_len` (the value's byte length) — then
+  counted on `progress()`, and the watch **keeps running**; health stays
+  `Healthy`, because the stream is alive. **The underlying `FabricError` is
+  deliberately never logged:** a `serde_json` message embeds the offending value
+  fragment on an `invalid type` / `invalid value` / `unknown variant` failure,
+  and on this bucket that fragment is credential state. This is the
   deliberate opposite of `PublishedLanguageConsumer`, which wedges loudly on an
   undecodable value: that loop owns a local mirror whose convergence a poison
   entry would silently falsify, while this one only forwards notifications and a
@@ -977,8 +985,12 @@ is no catch-up scan and no replay. That is sufficient for the canonical consumer
 because a rotation/reuse decision re-reads the key under CAS at decision time
 (`get_with_revision` → `update_if`), so a missed notification delays a reaction
 without corrupting a decision. A consumer that keeps **derived** state off this
-watch must re-read the bucket after a `Degraded` → `Healthy` transition; it must
-not treat the change stream as gap-free.
+watch must re-read the bucket after a `Degraded` → `Healthy` transition **and on
+any increase of `WatchProgress::skipped`**; it must not treat the change stream
+as gap-free. The two triggers cover two different loss classes: the outage gap
+shows on `health()`, while a skipped `Set` — a revocation or a rotation this
+consumer could not read — never moves health, so `progress()` is its only
+signal.
 
 **Health.** Under `run()` the channel is born `Degraded`, is published `Healthy`
 only once the presence check has passed, and returns to `Degraded` for the whole
@@ -986,7 +998,9 @@ fault + backoff window. The raw `watch()` primitive keeps driving the same
 channel for the standalone caller, and its transitions coincide with the loop's,
 so the two never contradict each other. A key/decode error is **not** one of
 those transitions: it is skipped, not returned, so it never moves health — an
-alive watch reads `Healthy` however many entries it had to skip. **`health()`
+alive watch reads `Healthy` however many entries it had to skip, which is
+precisely why `WatchProgress::skipped`, not `health()`, is the recovery trigger
+for a dropped entry. **`health()`
 reflects the loop's
 state, not the task's liveness** — the two documented stop modes leave the
 channel frozen on its last published value: an aborted or dropped task keeps
@@ -1031,6 +1045,9 @@ from a fresh copy on recovery.
 | `RelayPass` exists beside `RelayReport` instead of `RelayReport` gaining two fields | `RelayReport` is a plain (non-`#[non_exhaustive]`) struct in the published API, so adding a field to it is a breaking change for every consumer that constructs or exhaustively destructures one. |
 | `EphemeralAuthStore` has both `update_if` (returns `()`) and `update_if_returning_revision` | `update_if` shipped in `1.2.0` returning `()`; changing its return type is a breaking change, so the chainable form is an additive sibling rather than a corrected signature. |
 | `EphemeralAuthWatcher` skips an entry it cannot read while `PublishedLanguageConsumer` wedges on one | The consumer owns a local mirror a poison entry would silently falsify, so it must stop; the watcher only forwards notifications, and stopping cost it every other change on the bucket plus a backoff walk to the cap on each retry. |
+| A skipped entry is signalled on `progress()` and never on `health()` | Health tracks whether the subscription is alive, and it is: degrading on a value one consumer cannot read would make a schema-skewed writer look like a broker outage and would flap every readiness gate on the bucket. The loss is real but it is a per-entry loss, so it gets a per-entry counter, and `WatchProgress::skipped` is what a consumer holding derived state must watch. |
+| A skipped entry can never leave a stale key in a consumer's cache | `change_from` rejects an unusable key for both `Set` and `Removed`, and `KvKey::new` is deterministic — so a `Removed` is skipped only for a key whose `Set` was skipped too, and no handler ever saw it. The only asymmetric case is an undecodable value, which fails on `Set` alone: its `Removed` still arrives. Skipping therefore drops notifications, never leaves a consumer holding a key it can no longer be told about. |
+| The warn on a skipped entry logs a static `reason` plus `value_len`, never the `FabricError` | `FabricError::Decode` carries the raw `serde_json` message, which quotes the offending value fragment on an `invalid type` / `invalid value` / `unknown variant` failure; on `EPHEMERAL_AUTH` that fragment is credential state, so the error string cannot reach a log sink. |
 | The outbox dedup id prefers the envelope `event_id` over the outbox row id | It is the same key hand-rolled relays elsewhere already use, so the platform keeps **one** dedup keyspace; carrying it in a dedicated column would mean a breaking migration on a table whose DDL is consumer-owned. |
 
 ## Dependency

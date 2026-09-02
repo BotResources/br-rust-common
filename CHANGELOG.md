@@ -70,7 +70,7 @@ below.
   (The canonical consumer of the store itself is refresh-token rotation.) `run(on_change)` wraps the same supervision loop: reconcile, follow,
   and on any watch error or clean stream end publish `WatchHealth::Degraded`,
   back off (200 ms doubling to a 30 s cap, floor reset only by a watch that
-  actually delivered a change) and re-arm — forever, with `std::convert::
+  observed an entry — delivered or skipped) and re-arm — forever, with `std::convert::
   Infallible` in the signature, stopped by aborting or dropping the task.
   **Recovery here is resubscribe-only, not a rebuild.** The Published-Language
   loop re-runs a full bootstrap because it owns a local mirror that would drift;
@@ -82,7 +82,9 @@ below.
   went away — so a deleted bucket keeps the loop `Degraded` and loud rather than
   looking healthy. **Honest limit:** a change that lands during the outage window
   is not replayed, so a consumer holding state derived from this watch must
-  re-read the bucket after a `Degraded` → `Healthy` transition. The caller's
+  re-read the bucket after a `Degraded` → `Healthy` transition **and on any
+  increase of `WatchProgress::skipped`** — a skipped entry never moves health,
+  so `progress()` is the only signal for that second loss class. The caller's
   handler is reused across re-arms (held behind a mutex, never cloned), so a
   stateful handler keeps its state. `watch()` is unchanged and stays public for
   tests and one-shot callers; `health()` is now truthfully driven by the loop.
@@ -304,12 +306,16 @@ below.
   30 s cap — and, because recovery here is resubscribe-only, every `Set`/
   `Removed` landing in each widening gap was lost. A schema-skewed writer during
   a rolling deploy could therefore flap every consumer of the bucket. Such an
-  entry is now dropped with one `tracing::warn!` naming the key and the error —
-  never the value bytes — counted on the new `progress()` channel, and the watch
-  continues; health stays `Healthy` (the stream is alive) and the attempt counts
+  entry is now dropped with one `tracing::warn!` carrying exactly `surface`,
+  `key`, a static `reason` (`"undecodable value"` or `"invalid key"`) and
+  `value_len` — never the `FabricError`, whose `serde_json` detail would quote
+  the offending value fragment, which on this bucket is credential state —
+  counted on the new `progress()` channel, and the watch continues; health stays `Healthy` (the stream is alive) and the attempt counts
   as **progress**, so the backoff floor is not escalated by entries the watch
   demonstrably read. **The poison entry is no longer surfaced as an error to the
-  caller** — a consumer that must react to one watches `WatchProgress::skipped`.
+  caller** — a consumer that must react to one watches `WatchProgress::skipped`,
+  which is also the trigger, beside a `Degraded` → `Healthy` transition, for
+  re-reading the bucket when it holds derived state.
   `EphemeralAuthStore::get_with_revision` and `entries` are unchanged and stay
   fail-closed. This is deliberately the opposite of
   `PublishedLanguageConsumer`, which still wedges loudly on an undecodable
