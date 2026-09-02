@@ -108,15 +108,23 @@ release; they remain reachable through the historical per-crate tags
   produced a genuine second delivery. The relay now sets `Nats-Msg-Id` to the
   envelope's `event_id` — the field `OutboxRecord::stage_event` writes for every
   `IntegrationEvent<T>` — so those replays resolve to the same key and the
-  stream's duplicate window collapses them to a single stored frame. A payload
-  staged through the raw `OutboxRecord::stage(id, coords, value)` carries no
-  envelope, so the id falls back to the **outbox row id**: unique and stable per
-  row, so the crash-replay case stays covered; only dedup across different
-  producers of the same fact is unavailable for such a payload. Choosing the
-  envelope id rather than the row id keeps a **single dedup keyspace** with
-  relays that already dedup on `event_id`. **Delivery remains at-least-once** —
-  the dedup id is a window, not a guarantee, and a replay after the window
-  elapses is delivered again by design; consumers stay idempotent.
+  stream's duplicate window collapses them to a single stored frame. The id
+  falls back to the **outbox row id** when the stored payload carries no
+  top-level `event_id` **or** one that is not a UUID string — the shape a raw
+  `OutboxRecord::stage(id, coords, value)` produces. The row id is unique and
+  stable per row, so the crash-replay case stays covered; only dedup across
+  different producers of the same fact is unavailable for such a payload.
+  Choosing the envelope id rather than the row id keeps a **single dedup
+  keyspace** with relays that already dedup on `event_id`. **Delivery remains
+  at-least-once** — the dedup id is a window, not a guarantee, and a replay after
+  the window elapses is delivered again by design; consumers stay idempotent.
+  **JetStream dedup is scoped to the stream, not to the subject**, and the event
+  stream binds every producer's coordinates: the rule is one `event_id` = one
+  frame per stream per window. Staging the same `IntegrationEvent` to two
+  different `EventCoords` inside the window publishes the first and makes the
+  second silently vanish while its row still goes `PUBLISHED` — visible only as a
+  duplicate. Fanning one fact out to N coordinates needs **N distinct
+  `event_id`s**, which "one fact per event" already implies.
 - **`br-util-nats-fabric` — `PublishOutcome` and the `_outcome` publish
   variants.** JetStream answers a publish with a `duplicate` flag and a stream
   sequence; the crate dropped both. `#[non_exhaustive] enum PublishOutcome {
@@ -134,15 +142,18 @@ release; they remain reachable through the historical per-crate tags
   returns the `#[non_exhaustive] RelayPass`, which carries the existing counters
   plus `duplicates` (frames the broker answered with a duplicate ack — a
   **strict subset** of `published`, since the broker accepted the row) and
-  `row_id_fallbacks` (rows whose payload carried no envelope `event_id`; a
+  `row_id_fallbacks` (rows whose payload carried no usable envelope `event_id`; a
   routine outcome for raw-staged payloads, hence a counter and not log noise).
-  `run_once` delegates and projects. The supervised `run()` loop uses
+  Both are counted **per pick, not per row**: a row retried across N passes
+  counts N times. `run_once` delegates and projects. The supervised `run()` loop uses
   `run_once_detailed` internally, so the signals below also fire on the managed
   loop. Each duplicate ack emits one `tracing::warn!` (`"duplicate publish ack"`
   with the outbox id, message id, id source, sequence and subject) and
   increments the unlabeled counter `outbox_relay_duplicates_total`, exported as
   `OUTBOX_RELAY_DUPLICATES_TOTAL`. An outbox-id label would be unbounded
-  cardinality, so there is none. This is a new **optional** `metrics` dependency
+  cardinality, so there is none. The counter is described and initialised to zero
+  when an `OutboxRelay` is constructed, so the series exists from boot and an
+  alert on a relay that has never deduplicated reads `0` rather than no-data. This is a new **optional** `metrics` dependency
   scoped to the `outbox` feature (`outbox = ["dep:sqlx", "dep:metrics"]`); a
   consumer not using the outbox gains nothing, and the `metrics` facade is a
   no-op until the process installs a recorder.
@@ -248,10 +259,12 @@ release; they remain reachable through the historical per-crate tags
   cannot set the window: the NATS default of **2 minutes** applies wherever the
   stream declaration is silent. If the dedup guarantee above is relied on — for
   instance to absorb a relay outage longer than that — make `duplicate_window`
-  **explicit** in the stream declaration. Two consequences are now visible
+  **explicit** in the stream declaration. Three consequences are now visible
   rather than silent: re-staging a row by hand inside the window returns a
-  duplicate ack and no delivery, and a rolling deploy that briefly runs two
-  relays no longer double-delivers inside the window. Both show up as
+  duplicate ack and no delivery; a rolling deploy that briefly runs two relays no
+  longer double-delivers inside the window; and — because the window is
+  **stream-wide**, not per subject — a producer reusing one `event_id` across
+  several coordinates loses every frame after the first. All three show up as
   `RelayPass.duplicates`, the `"duplicate publish ack"` warn line and the
   counter.
 - **Durable consumers created by pre-`1.3.0` `verify_*_durable` probes are no

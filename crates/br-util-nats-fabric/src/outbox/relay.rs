@@ -4,7 +4,7 @@ use br_core_integration::{OutboxStatus, Transition, next_after_attempt};
 
 use crate::coords::IntegrationSubject;
 use crate::fabric::Fabric;
-use crate::outbox::duplicate_counter::record_duplicate;
+use crate::outbox::duplicate_counter::{record_duplicate, register};
 use crate::outbox::health::{RelayHealthChannel, RelayHealthReceiver};
 use crate::outbox::msg_id::{MessageIdSource, message_id_for};
 use crate::outbox::report::{
@@ -26,6 +26,7 @@ impl OutboxRelay {
     }
 
     pub fn with(pool: sqlx::PgPool, fabric: Fabric, policy: RelayPolicy) -> Self {
+        register();
         Self {
             pool,
             store: OutboxStore::new(),

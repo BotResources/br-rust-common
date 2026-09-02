@@ -139,8 +139,9 @@ the broker to a single stored message, so a retry after an ambiguous ack does no
 double-write. These variants are for callers managing their **own** idempotency;
 the **sanctioned reliable / exactly-once-ish path is the `outbox` feature** — its
 relay owns the staging, retry and at-least-once delivery, and a dedup id on the
-published frame collapses the at-least-once into effectively-once on the
-consumer's stream. The caller owns the id; the fabric never mints one.
+published frame collapses the at-least-once into effectively-once **within the
+stream's duplicate window**, and only within it. The caller owns the id; the
+fabric never mints one.
 
 `publish_command_with_id_outcome` / `publish_event_with_id_outcome` are the same
 publishes, returning the broker's verdict instead of `()`:
@@ -439,11 +440,24 @@ envelope's `event_id` lifted from the stored payload — the field
 `OutboxRecord::stage_event` writes for every `IntegrationEvent<T>` — so a relay
 retry, a crash between the publish and the status write, and a rolling deploy
 that briefly runs two relays all resolve to the same key and the broker collapses
-them to one stored frame. A payload staged through the raw
-`OutboxRecord::stage(id, coords, value)` carries no envelope, so the id falls back
-to the **outbox row id**: still unique and stable per row, so the crash-replay
-case the relay actually needs stays covered; only dedup **across** producers of
-the same fact is unavailable for such a payload.
+them to one stored frame.
+
+**JetStream dedup is scoped to the stream, not to the subject.** `INTEGRATION_EVT`
+binds `integration.evt.>` for every producer, so the rule is: **one `event_id` =
+one frame per stream per window**, whatever the coordinates. Staging the same
+`IntegrationEvent` — same `event_id` — to two different `EventCoords` inside the
+window publishes the first and makes the second **silently vanish** while its
+outbox row still goes `PUBLISHED`; only `RelayPass.duplicates` and the warn line
+reveal it. Fanning one fact out to N coordinates therefore needs **N distinct
+`event_id`s** — which the "one fact per event" rule already implies: two
+coordinates are two facts.
+
+The id falls back to the **outbox row id** when the stored payload has no
+top-level `event_id` **or** carries one that is not a UUID string — the shape a
+raw `OutboxRecord::stage(id, coords, value)` produces. The row id is still unique
+and stable per row, so the crash-replay case the relay actually needs stays
+covered; only dedup **across** producers of the same fact is unavailable for such
+a payload.
 
 **Delivery stays at-least-once.** The dedup id is a window, not a guarantee: a
 replay after the stream's duplicate window has elapsed is delivered again, by
@@ -472,18 +486,23 @@ pub struct RelayPass {
 `RelayPass`, dropping the two counters `RelayReport` has no field for.
 `duplicates` is a **strict subset of `published`** — the broker accepted the row,
 so the relay marks it published — and counts the frames answered with a duplicate
-ack. `row_id_fallbacks` counts the rows whose payload carried no envelope
+ack. `row_id_fallbacks` counts the rows whose payload carried no usable envelope
 `event_id`; that is a routine, expected outcome for raw-staged payloads, so it is
-a counter and not a log line. The supervised `run()` loop uses
-`run_once_detailed` internally, so the signals below fire on the managed loop too.
+a counter and not a log line. Both counters are **per pick, not per row**: a row
+retried across N passes is counted N times, once per pass that picked it. The
+supervised `run()` loop uses `run_once_detailed` internally, so the signals below
+fire on the managed loop too.
 
 Each duplicate ack emits one `tracing::warn!` — `"duplicate publish ack"` with
 the outbox id, the message id, its source, the stream sequence and the subject —
 and increments the counter `outbox_relay_duplicates_total` (`OUTBOX_RELAY_DUPLICATES_TOTAL`)
 on the `metrics` facade. The counter is unlabeled: an outbox id would be
-unbounded cardinality. The facade is a no-op until the process installs a
-recorder, and the `metrics` dependency is scoped to the `outbox` feature, so a
-consumer that does not use the outbox gains nothing.
+unbounded cardinality. It is described **and initialised to zero when an
+`OutboxRelay` is constructed**, so the series exists from boot and an alert on a
+relay that has never deduplicated reads `0` rather than no-data. The facade is a
+no-op until the process installs a recorder, and the `metrics` dependency is
+scoped to the `outbox` feature, so a consumer that does not use the outbox gains
+nothing.
 
 #### Deployment notes
 
@@ -497,6 +516,10 @@ consumer that does not use the outbox gains nothing.
   warn line and the counter.
 - **A rolling deploy that briefly runs two relays** no longer double-delivers
   inside the window.
+- **The window is stream-wide.** Because dedup is per stream and the event stream
+  binds every producer's coordinates, a producer that reuses one `event_id` for
+  several coordinates loses every frame after the first, inside the window. Mint
+  one `event_id` per fact.
 
 ## Surface 2 — Published Language over KV
 

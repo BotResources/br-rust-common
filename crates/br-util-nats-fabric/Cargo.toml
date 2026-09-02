@@ -29,7 +29,6 @@ uuid = { workspace = true }
 br-core-kernel = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-sqlx = { workspace = true, features = ["uuid", "json"] }
 
 [[test]]
 name = "outbox_relay_e2e"
