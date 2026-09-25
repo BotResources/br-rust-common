@@ -1,0 +1,45 @@
+# Per-environment values, as a deploying repository sets them (prod). The
+# in-namespace names — the Postgres Service `pg-rw`, the NATS Service `nats`,
+# the two DSN Secrets — are the deploying repository's own names for charter,
+# so that ../diff-against-chart.sh compares like with like: short in-namespace
+# names, no hostname, no credential. The pull secret and the zone are neutral
+# stand-ins.
+env: prod
+
+image:
+  tag: 0.5.3
+
+imagePullSecrets:
+  - name: registry-pull
+
+replicaCount: 1
+
+nats:
+  url: nats://nats:4222
+
+postgres:
+  host: pg-rw
+  port: 5432
+  # The in-namespace Postgres Service speaks plaintext: trust exactly that host.
+  trustedNetwork: true
+  appSecretName: pg-charter-app-credentials
+  ownerSecretName: pg-charter-owner-credentials
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+# Prefer the zone where the database primary runs; never required.
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: topology.kubernetes.io/zone
+              operator: In
+              values: ["example-zone-a"]

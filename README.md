@@ -43,6 +43,17 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | [README](crates/br-identity-app/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-test-support` | dev | Dev-only shared Postgres e2e test helpers (role/pool/name primitives); a path dev-dependency, never a normal dependency | [README](crates/br-test-support/README.md) | [CHANGELOG](CHANGELOG.md) |
 
+## Helm chart
+
+| Chart | Type | Description | Docs | Changelog |
+|---|---|---|---|---|
+| `br-common-service` | library | Deployment topology and ops contract of a BotResources Rust service built on these crates: Deployment, Service, ServiceAccount, PDB, NetworkPolicy, and the render guards for what the crates read at boot (probe paths, `PORT`, the two-role Postgres DSNs, `TRUSTED_NETWORK_HOSTS`, `NATS_URL`) | [README](charts/br-common-service/README.md) | [CHANGELOG](charts/br-common-service/CHANGELOG.md) |
+
+The chart has its own version line, independent of the crates' version, and is
+published to `oci://ghcr.io/botresources/charts/br-common-service` by the
+`chart-release` workflow when its `Chart.yaml` version changes on `main` or a
+`release/**` branch.
+
 ## Architecture
 
 - `core` — cross-cutting constraints, **no dependency on `util`**.

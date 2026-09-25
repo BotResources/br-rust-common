@@ -166,6 +166,29 @@ jobs:
       - name: check README tag pins are fresh
         run: bash .github/scripts/check-readme-pins.sh
 
+  chart:
+    name: helm library chart (br-common-service)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0 # the version gate diffs against the base branch
+      # helm and yq (mikefarah v4) ship in the runner image; the repository's
+      # action allowlist has no helm installer. The gate passes on Helm 3 and 4.
+      - name: tool versions
+        run: helm version --short && yq --version && shellcheck --version | head -2
+      - name: shellcheck the chart scripts
+        run: >-
+          shellcheck -x
+          .github/scripts/check-chart.sh
+          .github/scripts/chart-release-lib.sh
+          .github/scripts/test-chart-release.sh
+          charts/br-common-service/ci/diff-against-chart.sh
+      - name: lint, render, contract assertions, guards, version gate
+        run: bash .github/scripts/check-chart.sh
+      - name: release decisions (version gate, tag and registry lookups, publish table)
+        run: bash .github/scripts/test-chart-release.sh
+
   trufflehog:
     name: trufflehog (secret scan)
     runs-on: ubuntu-latest

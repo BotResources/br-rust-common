@@ -1,0 +1,22 @@
+apiVersion: v2
+name: example-service
+description: >-
+  CI fixture for the br-common-service library chart — a service chart as a
+  service repository would write it: one dependency, one include, and the
+  values the service binary defines. Its values mirror the pre-library chart
+  of a real BotResources service (charter), so that
+  ../diff-against-chart.sh can compare both renders.
+type: application
+version: 0.1.0
+appVersion: "0.5.3"
+kubeVersion: ">=1.28.0-0"
+annotations:
+  # The service versions this chart can run (br-common-service.imageTag).
+  botresources.ai/supported-app-versions: ">=0.5.0 <0.6.0"
+dependencies:
+  # Any version of the library in this checkout (pre-releases included), so a
+  # library version bump never needs this fixture edited. A real service chart
+  # pins a range of published versions (README.md, "Use").
+  - name: br-common-service
+    version: ">=0.0.0-0"
+    repository: "file://../.."

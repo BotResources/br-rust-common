@@ -9,6 +9,11 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
+The Helm library chart `br-common-service` is not versioned with the crates: it
+has its own version line and changelog,
+[`charts/br-common-service/CHANGELOG.md`](charts/br-common-service/CHANGELOG.md),
+and its own tags (`chart/br-common-service/vX.Y.Z`).
+
 ## [1.3.0] — 2026-09-02
 
 **Behaviour migration — `verify_command_durable` / `verify_event_durable`.**

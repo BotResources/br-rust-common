@@ -1,0 +1,39 @@
+apiVersion: v2
+# Published to oci://ghcr.io/botresources/charts/br-common-service by
+# .github/workflows/chart-release.yml. A LIBRARY chart: it renders nothing on
+# its own. A service's application chart, in the repository that builds the
+# service binary, depends on it and includes its named templates.
+name: br-common-service
+description: >-
+  Shared deployment topology of a BotResources Rust service built on the
+  br-rust-common crates (not on br-service-engine): the Deployment, Service,
+  ServiceAccount, PodDisruptionBudget and NetworkPolicy, and the render guards
+  that encode the ops contract those crates and services read at boot — probe
+  paths, PORT, the two-role Postgres DSNs, TRUSTED_NETWORK_HOSTS, NATS_URL.
+type: library
+
+# THE CHART'S OWN VERSION LINE, independent of the br-rust-common crates'
+# workspace version. Bump it for every change under charts/br-common-service/
+# outside ci/; .github/scripts/check-chart.sh refuses a change without a bump
+# and a matching `## [<version>]` heading in CHANGELOG.md.
+#
+# A service chart pins this version and embeds the packaged library, so a
+# change here reaches a cluster only through a release of each service chart
+# that moves its pin — never by itself.
+version: 1.0.0
+
+kubeVersion: ">=1.28.0-0"
+
+home: https://github.com/BotResources/br-rust-common
+sources:
+  - https://github.com/BotResources/br-rust-common
+
+maintainers:
+  - name: BotResources
+    url: https://botresources.ai
+
+keywords:
+  - br-rust-common
+  - deployment
+  - topology
+  - library

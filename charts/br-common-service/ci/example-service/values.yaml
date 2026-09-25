@@ -1,0 +1,32 @@
+# What the service binary defines — the same in every environment. A service
+# chart ships these in its own values.yaml; the deploying repository sets the
+# per-environment values, its own objects' names included (values-dev.yaml and
+# siblings stand in for them).
+#
+# These mirror the pre-library chart of charter, a BotResources Rust service
+# built on the br-rust-common crates.
+
+serviceName: charter
+
+image:
+  repository: ghcr.io/botresources/br-svc-charter
+
+# The port the Projects registry assigns to the service; the binary reads PORT.
+port: 8004
+
+probes:
+  # charter serves liveness on /health, not on br-util-observability's /livez.
+  livenessPath: /health
+
+postgres:
+  database: charter
+
+# The BotResources GraphQL gateway discovers its subgraphs by this label.
+commonLabels:
+  graphql-federation/component: subgraph
+
+extraEnv:
+  # Read by svc-charter itself: /readyz clears only after the service has
+  # declared its scopes to Identity. true is the production behaviour.
+  - name: SCOPE_DECLARATION_ENABLED
+    value: "true"
