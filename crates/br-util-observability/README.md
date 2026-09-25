@@ -30,9 +30,13 @@ the convention this crate exists to enforce.
 | Item | Kind | Behavior |
 |---|---|---|
 | `init_logging` | `fn(component: &str)` | Installs a global `tracing` subscriber that emits **one JSON object per line** on stdout. Canonical keys: `ts` (RFC 3339, UTC), `level`, `component`, `msg`; every event field is carried alongside. Level is env-driven (`RUST_LOG`, default `info`). Idempotent — a second call is a no-op (logs a notice, never panics). Call once, first thing in `main`. |
+| `LIVENESS_PATH` | `&str` = `"/livez"` | The path liveness is served on — ops contract: the `br-common-service` chart probes it by default and is gated against this constant. |
+| `liveness_router::<S>` | `fn() -> Router<S>` | A router serving `liveness_route` on `LIVENESS_PATH`, to `merge` into the service's router. **Prefer it**: the path comes from the constant, so a service cannot serve liveness where the probe does not look. |
 | `liveness_route::<S>` | `fn() -> MethodRouter<S>` | Axum `GET` route, **always** `200 OK` (body `"alive"`). Generic over the router state, so it mounts into any `Router<S>`. |
 | `init_metrics` | `fn(component: &str) -> Result<MetricsHandle, MetricsError>` | Installs the **process-global** Prometheus recorder, registers the universal process collectors, and pins the latency buckets **for its own `http_request_duration_seconds` metric only** (the recorder default stays neutral, so the service's own histograms are unaffected). `component` is a constant global label (the service name, never PII), symmetric with `init_logging`. Fallible (the recorder installs once per process); a second call returns `MetricsError::Install` rather than panicking. Call once in `main`, keep the handle. |
 | `MetricsHandle` | `struct` (`Clone`) | Renders the Prometheus text exposition on demand (`render()`); refreshes the process collectors and runs recorder upkeep on each render. `prometheus()` exposes the underlying `PrometheusHandle`. Mechanism only — the service registers and updates **its own** domain metrics through the global `metrics::{counter,gauge,histogram}` macros against the same recorder. |
+| `METRICS_PATH` | `&str` = `"/metrics"` | The path the exposition is served on — ops contract: a scrape configuration points at it. |
+| `metrics_router::<S>` | `fn(MetricsHandle) -> Router<S>` | A router serving `metrics_route` on `METRICS_PATH`, to `merge` into the service's router. **Prefer it**, as `liveness_router`. |
 | `metrics_route::<S>` | `fn(MetricsHandle) -> MethodRouter<S>` | Axum `GET` route that serves the exposition: `200 OK`, content-type `text/plain; version=0.0.4`. Generic over the router state, mirrors `liveness_route`. |
 | `http_metrics_layer` | `fn() -> HttpMetricsLayer` | A tower `Layer` that records `http_requests_total` (counter) and `http_request_duration_seconds` (histogram) labeled by **method + matched-route template + status**, plus `http_requests_in_flight` (gauge) labeled by **method + matched-route template** (status is unknown until the response is produced). |
 | `MetricsError` | `enum` (`thiserror`, `#[non_exhaustive]`) | `Buckets` / `Install`, stable `Display` codes. |
@@ -112,15 +116,16 @@ gauges), never per-request rows. This is proved by a dedicated test.
 | `init_metrics` buckets only its own `http_request_duration_seconds` (`set_buckets_for_metric`), not the recorder default | Mechanism-not-policy: a global `set_buckets` would force the lib's HTTP buckets (5ms–10s) on every domain histogram the service later registers — wrong for a 30s LLM latency or a byte-size distribution. The lib pins buckets for **its own** metric only; the service sets its own per metric via `set_buckets_for_metric`. |
 | Process collectors + recorder upkeep run inside `render()`, on each scrape | Pull-based by design — the scrape *is* the refresh trigger, so there is no background task and nothing polls. Aligns with the platform's "never poll" stance and mono-pod simplicity. |
 | `metrics-exporter-prometheus` is pulled with `default-features = false` | Its default `http-listener` feature spins up a second `hyper` HTTP server on `:9000`. We serve `/metrics` from the service's own Axum router via `PrometheusHandle::render()`, so the listener is dead weight; `install_recorder` and `set_buckets` are not feature-gated. |
+| The probe paths are constants, mounted by `*_router` | A path is part of the ops contract: the Kubernetes probe and the handler must agree on it. A literal in each service drifts silently (a service once served liveness on `/health` while the convention said `/livez`); a constant the chart is gated against cannot. The `*_route` handlers stay public for a service that mounts them itself. |
 | `init_metrics` is `Result`, not infallible like `init_logging` | The Prometheus recorder installs **once** per process; a real double-install is an error worth surfacing (`MetricsError::Install`), not a silently-swallowed no-op. Logging's global subscriber tolerates a second call because a test harness legitimately re-inits; the recorder does not. |
 
 ## Usage
 
 ```rust
 use axum::Router;
-use br_util_axum_readiness::{ReadinessHandle, readiness_route};
+use br_util_axum_readiness::{ReadinessHandle, readiness_router};
 use br_util_observability::{
-    http_metrics_layer, init_logging, init_metrics, liveness_route, metrics_route,
+    http_metrics_layer, init_logging, init_metrics, liveness_router, metrics_router,
 };
 
 // First thing in main: structured JSON logging.
@@ -131,11 +136,17 @@ let metrics = init_metrics("svc-notifier").expect("recorder installs once");
 
 let readiness = ReadinessHandle::not_ready("starting up");
 let app = Router::new()
-    .route("/livez", liveness_route())                       // this crate
-    .route("/readyz", readiness_route(readiness.clone()))    // br-util-axum-readiness
-    .route("/metrics", metrics_route(metrics))               // this crate
-    .layer(http_metrics_layer());                            // method + route template + status
+    .merge(liveness_router())                    // this crate, on LIVENESS_PATH
+    .merge(readiness_router(readiness.clone()))  // br-util-axum-readiness, on READINESS_PATH
+    .merge(metrics_router(metrics))              // this crate, on METRICS_PATH
+    .layer(http_metrics_layer());                // method + route template + status
 ```
+
+Each path is a constant of the crate that serves it, never a literal of the
+service: the `br-common-service` chart probes the same constants, so the two
+cannot drift apart. A service that still mounts `liveness_route()` by hand on
+another path keeps that path set explicitly in its chart until it adopts the
+router.
 
 ## Tier & dependencies
 
@@ -148,7 +159,7 @@ no policy. Unified workspace versioning, distributed by git tag.
 
 ```toml
 [dependencies]
-br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "v1.3.0", version = "1.3.0" }
+br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "v1.4.0", version = "1.4.0" }
 ```
 
 ---

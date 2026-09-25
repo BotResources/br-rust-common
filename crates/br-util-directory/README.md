@@ -359,9 +359,9 @@ orphan, the users-only scope, the absent-manifest fail-closed — is the
 
 ```toml
 [dependencies]
-br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "v1.3.0", version = "1.3.0", features = ["consumer"] }
+br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "v1.4.0", version = "1.4.0", features = ["consumer"] }
 # the identity side, which writes the roster:
-# br-util-directory = { git = "...", package = "br-util-directory", tag = "v1.3.0", version = "1.3.0", features = ["publisher"] }
+# br-util-directory = { git = "...", package = "br-util-directory", tag = "v1.4.0", version = "1.4.0", features = ["publisher"] }
 ```
 
 `default = []`: pick `consumer` (the `known_*` projection + readers),

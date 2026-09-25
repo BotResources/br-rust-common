@@ -2,11 +2,16 @@
 br-common-service.deployment — the service Deployment.
 
 One container, named after the service, running the image's default command
-(or `args`). Boot sequence the binary implements (br-util-postgres,
-br-util-nats-fabric, br-util-scope-declaration): migrate its database through
-the owner DSN (DATABASE_URL_OWNER), open the runtime pool through the app DSN
+(or `args`). Boot sequence the binary implements (br-util-boot,
+br-util-postgres, br-util-nats-fabric, br-util-scope-declaration): read its
+boot environment (br_util_boot::BootEnv), migrate its database through the
+owner DSN (DATABASE_URL_OWNER), open the runtime pool through the app DSN
 (DATABASE_URL), bind NATS (NATS_URL), serve HTTP on PORT — liveness answers as
 soon as the listener is up, readiness only once the service can serve.
+
+Every variable name and both default probe paths are constants of the crates
+(README.md, "Names"); .github/scripts/check-chart.sh fails when this template
+renders one that differs from its constant.
 */ -}}
 {{- define "br-common-service.deployment" -}}
 {{- include "br-common-service.checkEnv" . -}}
@@ -23,6 +28,7 @@ soon as the listener is up, readiness only once the service can serve.
 {{- $wait := .Values.waitForPostgres | default dict -}}
 {{- $probes := .Values.probes | default dict -}}
 {{- $startup := $probes.startup | default dict -}}
+{{- /* The defaults are br_util_observability::LIVENESS_PATH and br_util_axum_readiness::READINESS_PATH. */ -}}
 {{- $livenessPath := include "br-common-service.probePath" (dict "value" $probes.livenessPath "default" "/livez" "field" "probes.livenessPath") -}}
 {{- $readinessPath := include "br-common-service.probePath" (dict "value" $probes.readinessPath "default" "/readyz" "field" "probes.readinessPath") -}}
 apiVersion: apps/v1
@@ -124,9 +130,8 @@ spec:
             br-util-postgres refuses a remote DSN without an sslmode of
             require, verify-ca or verify-full unless its host is listed here.
             Both DSNs below point at postgres.host, so exactly that host is
-            trusted — never ALLOW_INSECURE_DATABASE, which would trust every
-            host. Off a trusted network, both DSNs carry the sslmode instead
-            ($dsnQuery).
+            trusted, and nothing else. Off a trusted network, both DSNs carry
+            the sslmode instead ($dsnQuery).
             */}}
             - name: TRUSTED_NETWORK_HOSTS
               value: {{ $pgHost | quote }}

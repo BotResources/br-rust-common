@@ -31,13 +31,14 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | [README](crates/br-core-scope/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | [README](crates/br-core-values/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | [README](crates/br-scope-declaration-contract/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs | [README](crates/br-util-postgres/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-boot` | util | The boot environment of a service: the names it reads at boot (`ENVIRONMENT`, `PORT`, `HOST`, `DATABASE_URL`, `NATS_URL`) and `BootEnv`, one typed, validating reader that reports every problem at once and never logs a credential | [README](crates/br-util-boot/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs; owns the names `DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` | [README](crates/br-util-postgres/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | [README](crates/br-util-axum-auth/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-util-axum-readiness` | util | Readiness gate (`/readyz`) for HTTP services | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-axum-readiness` | util | Readiness gate for HTTP services, served on `READINESS_PATH` (`/readyz`) | [README](crates/br-util-axum-readiness/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | [README](crates/br-util-broadcast/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-graphql` | util | GraphQL/REST edge kit: `ErrorCode` cross-service contract, `Affordance` / `MutationResult` / `Connection` / `SubscriptionPayload`, fallible `br-core-values` wrappers | [README](crates/br-util-graphql/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-nats-fabric` | util | The Project NATS Fabric API: coordinate-only publish/consume/await over the fixed `integration.…` subject grammar, the KV published-language projection, and the Postgres transactional outbox (store + subscribe-driven relay) | [README](crates/br-util-nats-fabric/README.md) | [CHANGELOG](CHANGELOG.md) |
-| `br-util-observability` | util | Boot-time observability: structured JSON logging + an always-200 `/livez` liveness route | [README](crates/br-util-observability/README.md) | [CHANGELOG](CHANGELOG.md) |
+| `br-util-observability` | util | Boot-time observability: structured JSON logging, an always-200 liveness route on `LIVENESS_PATH` (`/livez`), the Prometheus exposition on `METRICS_PATH` (`/metrics`) | [README](crates/br-util-observability/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | [README](crates/br-util-scope-declaration/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-identity-domain` | bc | Identity bounded context, pure domain — scope-registration slice (`ScopeRegistry` aggregate, commands, events) | [README](crates/br-identity-domain/README.md) | [CHANGELOG](CHANGELOG.md) |
 | `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | [README](crates/br-identity-app/README.md) | [CHANGELOG](CHANGELOG.md) |
@@ -47,12 +48,18 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 
 | Chart | Type | Description | Docs | Changelog |
 |---|---|---|---|---|
-| `br-common-service` | library | Deployment topology and ops contract of a BotResources Rust service built on these crates: Deployment, Service, ServiceAccount, PDB, NetworkPolicy, and the render guards for what the crates read at boot (probe paths, `PORT`, the two-role Postgres DSNs, `TRUSTED_NETWORK_HOSTS`, `NATS_URL`) | [README](charts/br-common-service/README.md) | [CHANGELOG](charts/br-common-service/CHANGELOG.md) |
+| `br-common-service` | library | Deployment topology and ops contract of a BotResources Rust service built on these crates: Deployment, Service, ServiceAccount, PDB, NetworkPolicy, and the render guards for what the crates read at boot (probe paths, `PORT`, the two-role Postgres DSNs, `TRUSTED_NETWORK_HOSTS`, `NATS_URL`) — every name a constant of the crates, the chart gated against it | [README](charts/br-common-service/README.md) | [CHANGELOG](charts/br-common-service/CHANGELOG.md) |
 
 The chart has its own version line, independent of the crates' version, and is
 published to `oci://ghcr.io/botresources/charts/br-common-service` by the
 `chart-release` workflow when its `Chart.yaml` version changes on `main` or a
 `release/**` branch.
+
+The chart cannot import a Rust constant, so
+[`tools/br-ops-contract`](tools/br-ops-contract/src/main.rs) (a CI tool, never
+published) prints the names the crates own into
+`charts/br-common-service/ci/ops-contract.json`; its test fails when that file
+is stale, and the chart gate fails when the chart renders anything else.
 
 ## Architecture
 
@@ -68,7 +75,7 @@ under a single git tag (`vX.Y.Z`) consumed by git tag:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.3.0", version = "1.3.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.4.0", version = "1.4.0" }
 ```
 
 ## Release process

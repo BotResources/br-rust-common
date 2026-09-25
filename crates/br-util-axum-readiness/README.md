@@ -25,6 +25,8 @@ crate carries only the state and serves it; it does not decide readiness for you
 |---|---|---|
 | `ReadinessHandle` | cloneable handle | Shared UP/DOWN state with an operator-facing reason. `ready()` / `not_ready(reason)` constructors; `set_ready()` / `set_not_ready(reason)` toggles; `snapshot()` / `is_ready()` reads. Clones share one state. Transitions logged via `tracing`. |
 | `Readiness` | enum | `Ready` \| `NotReady { reason }`. |
+| `READINESS_PATH` | `&str` = `"/readyz"` | The path readiness is served on — ops contract: the `br-common-service` chart probes it by default and is gated against this constant. |
+| `readiness_router::<S>` | `fn(ReadinessHandle) -> Router<S>` | A router serving `readiness_route` on `READINESS_PATH`, to `merge` into the service's router. **Prefer it**: the path comes from the constant, so a service cannot serve readiness where the probe does not look. |
 | `readiness_route::<S>` | `fn(ReadinessHandle) -> MethodRouter<S>` | Axum `GET` route: `200 OK` (body `"ready"`) when ready, `503 Service Unavailable` (body = reason) otherwise. Generic over the router state, so it mounts into any `Router<S>`. |
 
 The `reason` is returned verbatim in the `503` body and emitted in logs, so it
@@ -40,15 +42,16 @@ cannot leave it half-written.
 ## Usage
 
 ```rust
-use axum::{Router, routing::get};
-use br_util_axum_readiness::{ReadinessHandle, readiness_route};
+use axum::Router;
+use br_util_axum_readiness::{ReadinessHandle, readiness_router};
+use br_util_observability::liveness_router;
 
 // Start not-ready; the service serves no traffic until it flips.
 let readiness = ReadinessHandle::not_ready("starting up");
 
 let app = Router::new()
-    .route("/readyz", readiness_route(readiness.clone()))
-    .route("/livez", get(|| async { "ok" })); // liveness is separate, always 200
+    .merge(readiness_router(readiness.clone())) // READINESS_PATH
+    .merge(liveness_router()); // liveness is separate, always 200 (br-util-observability)
 
 // Hand `readiness` to your startup logic:
 //   on success -> readiness.set_ready();
@@ -59,7 +62,7 @@ let app = Router::new()
 
 ```toml
 [dependencies]
-br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "v1.3.0", version = "1.3.0" }
+br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "v1.4.0", version = "1.4.0" }
 ```
 
 ---

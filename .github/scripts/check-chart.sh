@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # check-chart.sh — the gate of the br-common-service library chart.
 #
+#   0. read the names the br-rust-common crates own from
+#      ci/ops-contract.json — what their constants print (tools/br-ops-contract,
+#      whose test fails when the file is stale); every name this gate expects
+#      comes from there, never from a literal;
 #   1. helm lint the library, and check the package leaves ci/ out;
 #   2. build the example service chart (file:// dependency) and lint it with
 #      the values of each environment;
-#   3. render it per environment and assert the ops contract, field by field;
-#   4. render it with every optional field set;
-#   5. prove each render guard: a missing per-environment value, an unsafe
+#   3. every name is the code's: the chart renders each constant it places,
+#      its defaults are the constants, it renders no variable beyond them but
+#      the few it declares its own, it leaves no constant unplaced, and
+#      README.md documents each name with its owner;
+#   4. render it per environment and assert the ops contract, field by field;
+#   5. render it with every optional field set;
+#   6. prove each render guard: a missing per-environment value, an unsafe
 #      combination or a forbidden override fails the render with a message
 #      that names it;
-#   6. version gate (chart_version_gate in chart-release-lib.sh): a change
+#   7. version gate (chart_version_gate in chart-release-lib.sh): a change
 #      under charts/br-common-service/ (ci/ excepted) needs a Chart.yaml
 #      version greater than the base's and not yet tagged; every version needs
 #      a `## [<version>]` heading in the chart's CHANGELOG.md.
@@ -36,6 +44,42 @@ fail() {
   failures=$((failures + 1))
 }
 ok() { echo "  ✓ $*"; }
+
+# ── 0. The names the code owns ──────────────────────────────────────────────
+contract="${chart_dir}/ci/ops-contract.json"
+echo "── the names the code owns (${contract})"
+# owned <crate::CONSTANT> — the value of that constant. The gate stops when the
+# file does not define it: every constant below is one the chart relies on.
+owned() {
+  local value
+  if ! value="$(yq -e -p json -o yaml ".[\"$1\"]" "$contract" 2>/dev/null)"; then
+    echo "::error file=${contract}::$1 is not in the ops contract" >&2
+    return 1
+  fi
+  printf '%s' "$value"
+}
+# Rendered by the chart, each from its constant.
+environment_var="$(owned br_util_boot::env::ENVIRONMENT)"
+port_var="$(owned br_util_boot::env::PORT)"
+database_url_var="$(owned br_util_boot::env::DATABASE_URL)"
+nats_url_var="$(owned br_util_boot::env::NATS_URL)"
+owner_url_var="$(owned br_util_postgres::env::DATABASE_URL_OWNER)"
+trusted_hosts_var="$(owned br_util_postgres::env::TRUSTED_NETWORK_HOSTS)"
+liveness_path="$(owned br_util_observability::LIVENESS_PATH)"
+readiness_path="$(owned br_util_axum_readiness::READINESS_PATH)"
+placed="br_util_boot::env::ENVIRONMENT br_util_boot::env::PORT br_util_boot::env::DATABASE_URL
+br_util_boot::env::NATS_URL br_util_postgres::env::DATABASE_URL_OWNER
+br_util_postgres::env::TRUSTED_NETWORK_HOSTS br_util_observability::LIVENESS_PATH
+br_util_axum_readiness::READINESS_PATH"
+# Not rendered, on purpose (README.md, "Names", says why): HOST — the binary's
+# default, every interface, is what a pod needs; METRICS_PATH — the library
+# configures no scrape.
+not_rendered="br_util_boot::env::HOST br_util_observability::METRICS_PATH"
+# The only names the chart owns: the DSN parts the kubelet interpolates into
+# the two DSNs, and the variables of its own wait-for-postgres container.
+chart_owned="PGUSER PGPASSWORD PGUSER_OWNER PGPASSWORD_OWNER"
+wait_owned="POSTGRES_HOST POSTGRES_PORT"
+ok "${contract} defines every constant the chart renders"
 
 # ── 1. The library ──────────────────────────────────────────────────────────
 echo "── helm lint ${chart_dir}"
@@ -95,7 +139,58 @@ expect() {
   fi
 }
 
-# ── 3. The ops contract, per environment ────────────────────────────────────
+# ── 3. Every name is the code's ─────────────────────────────────────────────
+# words <list> — one word per line, sorted: a set, comparable with `expect`.
+words() { tr -s ' ' '\n' <<<"$1" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//'; }
+
+echo "── every constant is placed: rendered, or not rendered on purpose"
+for constant in $(yq -p json -o yaml 'keys | .[]' "$contract"); do
+  if grep -qwF -- "$constant" <<<"${placed} ${not_rendered}"; then
+    ok "${constant} is placed"
+  else
+    fail "${constant} is a name the code owns that the chart neither renders nor declares not rendered: render it, or add it to not_rendered with its reason in README.md"
+  fi
+done
+
+echo "── the library renders the code's names and its own, nothing else"
+# The fullest library environment: migrating, on a trusted network, no extraEnv.
+out="$(render -f "${example}/values-dev.yaml" --set extraEnv=null)"
+c='.spec.template.spec.containers[0]'
+library_env="$(q "$out" Deployment "${c}.env[].name")"
+expect "the library's variables" \
+  "$(words "${environment_var} ${port_var} ${database_url_var} ${nats_url_var} ${owner_url_var} ${trusted_hosts_var} ${chart_owned}")" \
+  "$(words "$library_env")"
+expect "the wait container's variables" "$(words "$wait_owned")" \
+  "$(words "$(q "$out" Deployment '.spec.template.spec.initContainers[0].env[].name')")"
+
+echo "── the default probe paths are the code's"
+out="$(render -f "${example}/values-dev.yaml" --set probes.livenessPath=null --set probes.startup.enabled=true)"
+expect "default liveness path" "$liveness_path" "$(q "$out" Deployment "${c}.livenessProbe.httpGet.path")"
+expect "default startup path" "$liveness_path" "$(q "$out" Deployment "${c}.startupProbe.httpGet.path")"
+expect "default readiness path" "$readiness_path" "$(q "$out" Deployment "${c}.readinessProbe.httpGet.path")"
+
+echo "── README.md documents each name with its owner"
+# The section "Names" of README.md, and the row of its table for a name:
+# | `<name>` | <kind> | `<crate::CONSTANT>` or chart | <rendered from> |
+names_section="$(awk '/^## Names$/ { in_names = 1; next } /^## / { in_names = 0 } in_names' "${chart_dir}/README.md")"
+names_row() { grep -F -- "| \`$1\` |" <<<"$names_section" || true; }
+for constant in $(yq -p json -o yaml 'keys | .[]' "$contract"); do
+  name="$(owned "$constant")"
+  if names_row "$name" | grep -qF -- "| \`${constant}\` |"; then
+    ok "README.md: ${name} is owned by ${constant}"
+  else
+    fail "README.md has no row \"| \`${name}\` | … | \`${constant}\` |\" in its table \"Names\""
+  fi
+done
+for name in $chart_owned $wait_owned; do
+  if names_row "$name" | grep -qF -- "| chart |"; then
+    ok "README.md: ${name} is owned by the chart"
+  else
+    fail "README.md has no row \"| \`${name}\` | … | chart |\" in its table \"Names\""
+  fi
+done
+
+# ── 4. The ops contract, per environment ────────────────────────────────────
 # The expected DSNs. $(PGUSER) and the others are Kubernetes variable
 # references the kubelet expands at container start — no credential here, hence
 # the secret scanner's ignore marker on each line.
@@ -121,25 +216,25 @@ for env in $envs; do
   expect "Service port name" "http" "$(q "$out" Service '.spec.ports[0].name')"
   expect "Service port" "8004" "$(q "$out" Service '.spec.ports[0].port')"
   expect "container port" "8004" "$(q "$out" Deployment "${c}.ports[0].containerPort")"
-  expect "PORT" "8004" "$(q "$out" Deployment "${c}.env[] | select(.name == \"PORT\") | .value")"
-  expect "ENVIRONMENT" "$env" "$(q "$out" Deployment "${c}.env[] | select(.name == \"ENVIRONMENT\") | .value")"
+  expect "$port_var" "8004" "$(q "$out" Deployment "${c}.env[] | select(.name == \"${port_var}\") | .value")"
+  expect "$environment_var" "$env" "$(q "$out" Deployment "${c}.env[] | select(.name == \"${environment_var}\") | .value")"
   expect "image" "ghcr.io/botresources/br-svc-charter:0.5.3" "$(q "$out" Deployment "${c}.image")"
-  expect "readiness path" "/readyz" "$(q "$out" Deployment "${c}.readinessProbe.httpGet.path")"
+  expect "readiness path" "$readiness_path" "$(q "$out" Deployment "${c}.readinessProbe.httpGet.path")"
   expect "liveness path (service override)" "/health" "$(q "$out" Deployment "${c}.livenessProbe.httpGet.path")"
   expect "no startup probe by default" "null" "$(q "$out" Deployment "${c}.startupProbe")"
   # Exact values: on a trusted network, neither DSN carries an sslmode.
-  expect "DATABASE_URL" "$app_dsn" \
-    "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL\") | .value")"
-  expect "DATABASE_URL_OWNER" "$owner_dsn" \
-    "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL_OWNER\") | .value")"
+  expect "$database_url_var" "$app_dsn" \
+    "$(q "$out" Deployment "${c}.env[] | select(.name == \"${database_url_var}\") | .value")"
+  expect "$owner_url_var" "$owner_dsn" \
+    "$(q "$out" Deployment "${c}.env[] | select(.name == \"${owner_url_var}\") | .value")"
   expect "app DSN reads the app Secret" "pg-charter-app-credentials" \
     "$(q "$out" Deployment "${c}.env[] | select(.name == \"PGPASSWORD\") | .valueFrom.secretKeyRef.name")"
   expect "owner DSN reads the owner Secret" "pg-charter-owner-credentials" \
     "$(q "$out" Deployment "${c}.env[] | select(.name == \"PGPASSWORD_OWNER\") | .valueFrom.secretKeyRef.name")"
-  expect "credentials precede the DSNs" "PGUSER PGPASSWORD DATABASE_URL PGUSER_OWNER PGPASSWORD_OWNER DATABASE_URL_OWNER" \
-    "$(q "$out" Deployment "[${c}.env[].name | select(test(\"^(PG|DATABASE)\"))] | join(\" \")")"
-  expect "TRUSTED_NETWORK_HOSTS" "pg-rw" "$(q "$out" Deployment "${c}.env[] | select(.name == \"TRUSTED_NETWORK_HOSTS\") | .value")"
-  expect "NATS_URL" "nats://nats:4222" "$(q "$out" Deployment "${c}.env[] | select(.name == \"NATS_URL\") | .value")"
+  expect "credentials precede the DSNs" "PGUSER PGPASSWORD ${database_url_var} PGUSER_OWNER PGPASSWORD_OWNER ${owner_url_var}" \
+    "$(q "$out" Deployment "[${c}.env[].name | select(test(\"^(PGUSER|PGPASSWORD|${database_url_var}|PGUSER_OWNER|PGPASSWORD_OWNER|${owner_url_var})$\"))] | join(\" \")")"
+  expect "$trusted_hosts_var" "pg-rw" "$(q "$out" Deployment "${c}.env[] | select(.name == \"${trusted_hosts_var}\") | .value")"
+  expect "$nats_url_var" "nats://nats:4222" "$(q "$out" Deployment "${c}.env[] | select(.name == \"${nats_url_var}\") | .value")"
   expect "extra env last" "SCOPE_DECLARATION_ENABLED" "$(q "$out" Deployment "${c}.env[-1].name")"
   expect "reload annotation" "pg-charter-owner-credentials,pg-charter-app-credentials,registry-pull" \
     "$(q "$out" Deployment '.metadata.annotations["secret.reloader.stakater.com/reload"]')"
@@ -153,7 +248,7 @@ for env in $envs; do
   expect "no strategy by default" "null" "$(q "$out" Deployment '.spec.strategy')"
 done
 
-# ── 4. Every optional field ─────────────────────────────────────────────────
+# ── 5. Every optional field ─────────────────────────────────────────────────
 echo "── every optional field"
 out="$(render -f "${example}/values-prod.yaml" -f "${example}/values-all-fields.yaml")"
 c='.spec.template.spec.containers[0]'
@@ -165,15 +260,15 @@ expect "readiness path override" "/ready" "$(q "$out" Deployment "${c}.readiness
 expect "readiness period" "7" "$(q "$out" Deployment "${c}.readinessProbe.periodSeconds")"
 expect "readiness delay kept" "5" "$(q "$out" Deployment "${c}.readinessProbe.initialDelaySeconds")"
 expect "liveness timeout" "3" "$(q "$out" Deployment "${c}.livenessProbe.timeoutSeconds")"
-expect "startup path" "/livez" "$(q "$out" Deployment "${c}.startupProbe.httpGet.path")"
+expect "startup path" "$liveness_path" "$(q "$out" Deployment "${c}.startupProbe.httpGet.path")"
 expect "startup failureThreshold" "60" "$(q "$out" Deployment "${c}.startupProbe.failureThreshold")"
 expect "startup period kept" "5" "$(q "$out" Deployment "${c}.startupProbe.periodSeconds")"
 expect "postgres port" "$app_dsn_port" \
-  "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL\") | .value")"
+  "$(q "$out" Deployment "${c}.env[] | select(.name == \"${database_url_var}\") | .value")"
 expect "app password env" "pg-charter-app-credentials" \
   "$(q "$out" Deployment "${c}.env[] | select(.name == \"EXAMPLE_APP_PASSWORD\") | .valueFrom.secretKeyRef.name")"
-expect "app password before DATABASE_URL" "PGUSER PGPASSWORD EXAMPLE_APP_PASSWORD DATABASE_URL" \
-  "$(q "$out" Deployment "[${c}.env[].name | select(test(\"^(PG|DATABASE|EXAMPLE)\") and (test(\"OWNER\") | not))] | join(\" \")")"
+expect "app password before ${database_url_var}" "PGUSER PGPASSWORD EXAMPLE_APP_PASSWORD ${database_url_var}" \
+  "$(q "$out" Deployment "[${c}.env[].name | select(test(\"^(PGUSER|PGPASSWORD|EXAMPLE_APP_PASSWORD|${database_url_var})$\"))] | join(\" \")")"
 expect "wait image" "registry.example.com/tools/busybox:1.37" "$(q "$out" Deployment '.spec.template.spec.initContainers[0].image')"
 expect "extra init container" "check-owner" "$(q "$out" Deployment '.spec.template.spec.initContainers[1].name')"
 expect "extra init container hardened" "ALL" "$(q "$out" Deployment '.spec.template.spec.initContainers[1].securityContext.capabilities.drop[0]')"
@@ -196,19 +291,20 @@ expect "NetworkPolicy has no ingress key" "false" "$(q "$out" NetworkPolicy '.sp
 echo "── a service that never migrates, on a TLS Postgres"
 out="$(render -f "${example}/values-dev.yaml" --set postgres.migrate=false --set postgres.ownerSecretName=null \
   --set postgres.trustedNetwork=false --set postgres.sslMode=require)"
-expect "DATABASE_URL carries the TLS mode" "$app_dsn_tls" \
-  "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL\") | .value")"
-expect "no DATABASE_URL_OWNER" "0" "$(q "$out" Deployment "[${c}.env[] | select(.name | test(\"OWNER\"))] | length")"
-expect "no TRUSTED_NETWORK_HOSTS" "0" "$(q "$out" Deployment "[${c}.env[] | select(.name == \"TRUSTED_NETWORK_HOSTS\")] | length")"
+expect "${database_url_var} carries the TLS mode" "$app_dsn_tls" \
+  "$(q "$out" Deployment "${c}.env[] | select(.name == \"${database_url_var}\") | .value")"
+expect "no owner variable" "0" \
+  "$(q "$out" Deployment "[${c}.env[] | select(.name | test(\"^(PGUSER_OWNER|PGPASSWORD_OWNER|${owner_url_var})$\"))] | length")"
+expect "no ${trusted_hosts_var}" "0" "$(q "$out" Deployment "[${c}.env[] | select(.name == \"${trusted_hosts_var}\")] | length")"
 expect "reload annotation without owner" "pg-charter-app-credentials,registry-pull" \
   "$(q "$out" Deployment '.metadata.annotations["secret.reloader.stakater.com/reload"]')"
 
 echo "── a migrating service on a TLS Postgres that verifies the server"
 out="$(render -f "${example}/values-dev.yaml" --set postgres.trustedNetwork=false --set postgres.sslMode=verify-full)"
-expect "DATABASE_URL carries the TLS mode" "$app_dsn_verify" \
-  "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL\") | .value")"
-expect "DATABASE_URL_OWNER carries the TLS mode" "$owner_dsn_verify" \
-  "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL_OWNER\") | .value")"
+expect "${database_url_var} carries the TLS mode" "$app_dsn_verify" \
+  "$(q "$out" Deployment "${c}.env[] | select(.name == \"${database_url_var}\") | .value")"
+expect "${owner_url_var} carries the TLS mode" "$owner_dsn_verify" \
+  "$(q "$out" Deployment "${c}.env[] | select(.name == \"${owner_url_var}\") | .value")"
 
 echo "── image references: a digest pin, a local build on explicit request"
 # Any digest: the chart checks its shape, never its value.
@@ -251,7 +347,7 @@ expect "minAvailable kept at replicaCount 0" "1" "$(q "$out" PodDisruptionBudget
 out="$(render -f "${example}/values-dev.yaml" --set replicaCount=0 --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=100%)"
 expect "minAvailable 100% kept at replicaCount 0" '"100%"' "$(q "$out" PodDisruptionBudget '.spec.minAvailable | to_json')"
 
-# ── 5. Render guards ────────────────────────────────────────────────────────
+# ── 6. Render guards ────────────────────────────────────────────────────────
 # must_fail <message fragment> <helm template args…>
 must_fail() {
   local want="$1"
@@ -332,21 +428,21 @@ must_fail "is not an environment variable name" "${dev[@]}" --set postgres.appPa
 
 echo "── extraEnv cannot replace a contract variable"
 # Kubernetes keeps the LAST of two env entries with the same name: each of
-# these would silently replace what the library renders.
-for name in ENVIRONMENT PORT TRUSTED_NETWORK_HOSTS PGUSER PGPASSWORD DATABASE_URL \
-  PGUSER_OWNER PGPASSWORD_OWNER DATABASE_URL_OWNER NATS_URL; do
+# these would silently replace what the library renders. Every variable the
+# library renders (section 3), as rendered, not as listed here.
+for name in $library_env; do
   must_fail "extraEnv must not set ${name}" "${dev[@]}" \
     --set "extraEnv[0].name=${name}" --set "extraEnv[0].value=x"
 done
-must_fail "extraEnv must not set ALLOW_INSECURE_DATABASE" "${dev[@]}" \
-  --set extraEnv[0].name=ALLOW_INSECURE_DATABASE --set-string extraEnv[0].value=true
 must_fail "extraEnv must not set EXAMPLE_APP_PASSWORD: postgres.appPasswordEnv" "${dev[@]}" \
   --set postgres.appPasswordEnv=EXAMPLE_APP_PASSWORD --set extraEnv[0].name=EXAMPLE_APP_PASSWORD --set extraEnv[0].value=x
 must_fail "extraEnv declares SCOPE_DECLARATION_ENABLED twice" "${dev[@]}" \
   --set extraEnv[0].name=SCOPE_DECLARATION_ENABLED --set-string extraEnv[0].value=true \
   --set extraEnv[1].name=SCOPE_DECLARATION_ENABLED --set-string extraEnv[1].value=false
 must_fail "extraEnv[0] has no name" "${dev[@]}" --set extraEnv[0].value=x
-must_fail "postgres.appPasswordEnv must not be DATABASE_URL" "${dev[@]}" --set postgres.appPasswordEnv=DATABASE_URL
+for name in $library_env; do
+  must_fail "postgres.appPasswordEnv must not be ${name}" "${dev[@]}" --set "postgres.appPasswordEnv=${name}"
+done
 
 echo "── a chart without the supported-range annotation"
 bare="$(mktemp -d)"
@@ -361,7 +457,7 @@ else
 fi
 rm -rf "$bare"
 
-# ── 6. Version gate ─────────────────────────────────────────────────────────
+# ── 7. Version gate ─────────────────────────────────────────────────────────
 echo "── version gate"
 version="$(yq '.version' "${chart_dir}/Chart.yaml")"
 if grep -qF -- "## [${version}]" "${chart_dir}/CHANGELOG.md"; then

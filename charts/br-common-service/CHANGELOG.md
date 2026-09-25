@@ -14,6 +14,43 @@ value, a patch changes neither. `.github/scripts/check-chart.sh` requires a
 for every change under `charts/br-common-service/` outside `ci/`, a version
 greater than the base branch's that is not yet released.
 
+## [1.0.1] - 2026-09-25
+
+For services on br-rust-common `1.x`; the names it renders are constants of
+br-rust-common `1.4.0` (the same names every `1.x` release reads). A service
+chart on `1.0.0` renders the same manifests on `1.0.1`, byte for byte.
+
+### Changed
+
+- **Every name the chart renders is the code's, and the gate proves it.** Each
+  variable the binary reads is a constant of the crate that reads it
+  (`br_util_boot::env::{ENVIRONMENT, PORT, DATABASE_URL, NATS_URL}`,
+  `br_util_postgres::env::{DATABASE_URL_OWNER, TRUSTED_NETWORK_HOSTS}`), and
+  each default probe path a constant of the crate that serves it
+  (`br_util_observability::LIVENESS_PATH`,
+  `br_util_axum_readiness::READINESS_PATH`). `.github/scripts/check-chart.sh`
+  reads them from `ci/ops-contract.json` — what the constants print, pinned by
+  a test of `tools/br-ops-contract` — and fails when the chart renders a name
+  or a default that differs, renders a variable that is neither a constant nor
+  one of the chart's own (the DSN parts `PGUSER`, `PGPASSWORD`, `PGUSER_OWNER`,
+  `PGPASSWORD_OWNER`; `POSTGRES_HOST`, `POSTGRES_PORT` of `wait-for-postgres`),
+  or leaves a constant unplaced. No expected name is spelled in the gate any
+  more.
+- **README**: a table *Names* gives every rendered name with the constant that
+  owns it (or `chart`), checked by the gate; the values table gains an
+  *Owned by* column (its *Owner* column is now *Set by*); a section *Adoption*
+  says how and when services move to `br_util_boot::BootEnv` and the probe
+  routers — in their next sealed patch — and that charter keeps
+  `probes.livenessPath: /health` until it adopts `liveness_router()`.
+
+### Removed
+
+- **The `ALLOW_INSECURE_DATABASE` guard.** No br-rust-common `1.x` crate reads
+  that variable (`br-util-postgres` stopped reading it before `1.0.0`), so the
+  chart no longer names it: an `extraEnv` entry or a `postgres.appPasswordEnv`
+  of that name is an ordinary variable of the service. Only a render that
+  failed on `1.0.0` renders now; every render that succeeded is unchanged.
+
 ## [1.0.0] - 2026-09-25
 
 ### Added

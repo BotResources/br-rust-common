@@ -160,11 +160,17 @@ is carried as `sqlx::Error::Migrate`. No new error variant.
 
 ## Environment variables
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | App runtime pool URL. |
-| `DATABASE_URL_OWNER` | Migration pool URL (falls back to `DATABASE_URL`). |
-| `TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass — and the **only** way to reach a remote host without TLS. The legacy `TRUSTED_HOSTS` name is **no longer read** — use this name only. |
+Every name is a constant of the crate that reads it — the ops contract the
+`br-common-service` chart renders and is gated against. This crate owns the two
+it reads on its own; `DATABASE_URL` is the service's (`br-util-boot`, whose
+`BootEnv` reads it and whose constant this crate's migration-pool fallback
+uses).
+
+| Variable | Constant | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `br_util_boot::env::DATABASE_URL` | App runtime pool URL: the service reads it (`BootEnv::database_url`) and passes it to `init_pool`. |
+| `DATABASE_URL_OWNER` | `br_util_postgres::env::DATABASE_URL_OWNER` | Migration pool URL (falls back to `DATABASE_URL`). |
+| `TRUSTED_NETWORK_HOSTS` | `br_util_postgres::env::TRUSTED_NETWORK_HOSTS` | Comma-separated hostnames on a trusted network segment, exempted from the remote-TLS requirement. Use to declare a DB host that the service reaches over plaintext because the segment is trusted — e.g. an intra-namespace CloudNativePG database behind a default-deny `NetworkPolicy`. A deliberate, per-host opt-out, not a blanket bypass — and the **only** way to reach a remote host without TLS. The legacy `TRUSTED_HOSTS` name is **no longer read** — use this name only. |
 
 ## Two-role startup recipe
 
@@ -181,7 +187,8 @@ grant_app_access(&owner, "myservice_app").await?;
 drop(owner);
 
 // 2. App pool — used for the rest of the process lifetime.
-let pool = init_pool(&app_database_url).await?;
+let boot = br_util_boot::BootEnv::from_env()?;
+let pool = init_pool(boot.database_url.as_str()).await?;
 
 // 3. Per-request: open a transaction, inject the service's own RLS context
 //    via set_config(..., true), query, commit.
@@ -205,7 +212,7 @@ only then mark the service ready (with [`br-util-axum-readiness`](../br-util-axu
 use br_util_axum_readiness::ReadinessHandle;
 
 let readiness = ReadinessHandle::not_ready("connecting to database");
-let pool = init_pool(&app_database_url).await?;
+let pool = init_pool(boot.database_url.as_str()).await?; // boot: br_util_boot::BootEnv
 // Force a real connection — this is what `Ok` from `init_pool` did NOT do.
 sqlx::query("SELECT 1").execute(&pool).await?; // error here ⇒ stay not-ready
 readiness.set_ready();
@@ -215,9 +222,9 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.3.0", version = "1.3.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.4.0", version = "1.4.0" }
 # with the migration-status helper:
-# br-util-postgres = { git = "...", package = "br-util-postgres", tag = "v1.3.0", version = "1.3.0", features = ["migrate"] }
+# br-util-postgres = { git = "...", package = "br-util-postgres", tag = "v1.4.0", version = "1.4.0", features = ["migrate"] }
 ```
 
 ## sqlx is part of the public contract

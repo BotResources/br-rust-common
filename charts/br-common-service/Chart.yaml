@@ -8,8 +8,9 @@ description: >-
   Shared deployment topology of a BotResources Rust service built on the
   br-rust-common crates (not on br-service-engine): the Deployment, Service,
   ServiceAccount, PodDisruptionBudget and NetworkPolicy, and the render guards
-  that encode the ops contract those crates and services read at boot — probe
-  paths, PORT, the two-role Postgres DSNs, TRUSTED_NETWORK_HOSTS, NATS_URL.
+  of the ops contract those crates read at boot — probe paths, PORT, the
+  two-role Postgres DSNs, TRUSTED_NETWORK_HOSTS, NATS_URL — every name of
+  which is a constant of the crates, the chart gated against it.
 type: library
 
 # THE CHART'S OWN VERSION LINE, independent of the br-rust-common crates'
@@ -20,7 +21,7 @@ type: library
 # A service chart pins this version and embeds the packaged library, so a
 # change here reaches a cluster only through a release of each service chart
 # that moves its pin — never by itself.
-version: 1.0.0
+version: 1.0.1
 
 kubeVersion: ">=1.28.0-0"
 

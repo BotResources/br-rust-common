@@ -14,6 +14,75 @@ has its own version line and changelog,
 [`charts/br-common-service/CHANGELOG.md`](charts/br-common-service/CHANGELOG.md),
 and its own tags (`chart/br-common-service/vX.Y.Z`).
 
+## [1.4.0] — 2026-09-25
+
+**The code owns the service ops contract.** Every name a service built on these
+crates reads at boot, and every path it serves a probe on, is now a constant
+of the crate that reads or serves it — the variable names `ENVIRONMENT`,
+`PORT`, `HOST`, `DATABASE_URL`, `NATS_URL` (`br-util-boot`, new),
+`DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` (`br-util-postgres`), and the
+paths `/livez`, `/metrics` (`br-util-observability`), `/readyz`
+(`br-util-axum-readiness`). The `br-common-service` library chart
+(`1.0.1`, its own changelog) is gated against them: it cannot render a name or
+a default path the code does not define. Purely additive: the names and paths
+are the ones every `1.x` release already read and served, so no consumer is
+forced to change; services adopt the constants, the routers and `BootEnv` in
+their next sealed patch (chart README, *Adoption*).
+
+### Added
+
+- **`br-util-boot` — new crate: the boot environment of a service.** The module
+  `env` defines the names `ENVIRONMENT`, `PORT`, `HOST`, `DATABASE_URL`,
+  `NATS_URL`, once, for every service and for the chart gate. `BootEnv::from_env()`
+  reads them into types that cannot hold an invalid value — `Environment`
+  (exactly `local`, `dev`, `test`, `uat` or `prod`, the chart's lowercase
+  label, exhaustive on purpose), `NonZeroU16` port, `IpAddr` host (default
+  `0.0.0.0`, `DEFAULT_HOST`), `DatabaseUrl` (`postgres://` / `postgresql://`
+  with a host), `NatsUrl` (`nats://`, `tls://`, `ws://`, `wss://` with a host)
+  — reads **every** variable and reports **every** problem at once
+  (`BootEnvError::problems()`, `VarProblem::{Missing, Empty, NotUnicode,
+  Invalid}`), and never writes the environment. `BootEnv::from_lookup` takes a
+  lookup shaped like `std::env::var`, for tests and for a `.env` map (the crate
+  never loads one: `set_var` is unsound once threads run). `listen_addr()`
+  gives the listener's `SocketAddr`. Both URL types keep the value exactly as
+  set for the pool / the client (`as_str()`), have no `Display`, and redact
+  their credentials in `Debug` / `redacted()` — the DSN's password, the NATS
+  URL's whole user information — so a `BootEnv` may be logged; a refusal never
+  quotes a credential-bearing value. `ENVIRONMENT` and `PORT` are required: the
+  chart always renders them, so a binary default could only hide a chart that
+  forgot one. Dependencies: `url`, `thiserror`. Why a crate of its own: in its
+  README.
+- **`br-util-observability` — `LIVENESS_PATH` (`"/livez"`), `METRICS_PATH`
+  (`"/metrics"`), `liveness_router()`, `metrics_router(handle)`.** Each router
+  mounts its handler on its constant, to `merge` into the service's router, so a
+  service can no longer serve a probe where the chart does not look (one served
+  liveness on `/health`, unnoticed). `liveness_route()` / `metrics_route()` are
+  unchanged and stay public.
+- **`br-util-axum-readiness` — `READINESS_PATH` (`"/readyz"`),
+  `readiness_router(handle)`**, likewise; `readiness_route()` is unchanged.
+- **`br-util-postgres` — module `env`: `DATABASE_URL_OWNER`,
+  `TRUSTED_NETWORK_HOSTS`**, the two names this crate reads on its own; the
+  crate now reads them through the constants.
+- **`tools/br-ops-contract` — CI tool, never published** (outside `crates/`,
+  `publish = false`): prints the ten constants above as JSON into
+  `charts/br-common-service/ci/ops-contract.json`, and its test fails when that
+  committed file is stale. `.github/scripts/check-chart.sh` reads every name it
+  expects from that file — none is spelled in the gate — and fails when the
+  chart renders a name or a default path that differs, renders a variable that
+  is neither a constant nor one of the few the chart declares its own, leaves a
+  constant unplaced, or its README does not name each name's owner. The
+  committed file keeps the chart gate, and the release workflow that re-runs
+  it, free of a Rust toolchain.
+
+### Changed
+
+- **`br-util-postgres` depends on `br-util-boot`**, for the one name the two
+  share: `init_migration_pool`'s fallback reads `br_util_boot::env::DATABASE_URL`
+  when `DATABASE_URL_OWNER` is not set (behaviour unchanged). Three
+  `PostgresError::Config` messages of the TLS validator said `DATABASE_URL`
+  although the validator also checks the owner DSN; they now say "the DSN".
+  The error variants are unchanged.
+
 ## [1.3.0] — 2026-09-02
 
 **Behaviour migration — `verify_command_durable` / `verify_event_durable`.**

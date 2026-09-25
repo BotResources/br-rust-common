@@ -3,6 +3,16 @@ br-common-service — the environment variables of the ops contract: the
 Postgres DSN parts, NATS, and the guard that keeps the contract variables the
 library's. Same rules as _helpers.tpl: the TOP-LEVEL `.Values` of the service
 chart, no default for a per-environment value.
+
+EVERY NAME IS THE CODE'S. A variable the binary reads is named by the
+br-rust-common constant that reads it — ENVIRONMENT, PORT, DATABASE_URL and
+NATS_URL by br_util_boot::env, DATABASE_URL_OWNER and TRUSTED_NETWORK_HOSTS by
+br_util_postgres::env — and .github/scripts/check-chart.sh fails when a
+rendered name differs from its constant (ci/ops-contract.json). The only
+names the chart owns are the ones only the chart uses: the DSN parts PGUSER,
+PGPASSWORD, PGUSER_OWNER, PGPASSWORD_OWNER, which the kubelet interpolates
+into the two DSNs, and POSTGRES_HOST, POSTGRES_PORT of its own
+wait-for-postgres container (README.md, "Names").
 */ -}}
 
 {{- /* ── Postgres ─────────────────────────────────────────────────────────── */ -}}
@@ -38,8 +48,8 @@ chart, no default for a per-environment value.
 {{- end -}}
 
 {{- /*
-TRUSTED_NETWORK_HOSTS (br-util-postgres): the hosts a DSN may reach WITHOUT
-TLS. The library builds both DSNs from `postgres.host`, so the only host the
+TRUSTED_NETWORK_HOSTS (br_util_postgres::env::TRUSTED_NETWORK_HOSTS): the
+hosts a DSN may reach WITHOUT TLS. The library builds both DSNs from `postgres.host`, so the only host the
 pod ever connects to is that one: `postgres.trustedNetwork: true` trusts
 exactly it, and nothing else can be listed; `false` requires TLS, and both
 DSNs then end with `?sslmode=<postgres.sslMode>` (br-common-service.dsnQuery),
@@ -106,9 +116,9 @@ env entries with the same name, so an `extraEnv` entry named like a contract
 variable would silently replace it: `DATABASE_URL: $(DATABASE_URL_OWNER)`
 would run every request as the owner role, which bypasses row-level
 security; an extra `TRUSTED_NETWORK_HOSTS` would lift TLS for other hosts.
-ALLOW_INSECURE_DATABASE is refused as well: where a binary still reads it, it
-lifts TLS for every host. The same holds for `postgres.appPasswordEnv`, and an
-`extraEnv` entry may neither repeat it nor repeat another entry.
+The same holds for `postgres.appPasswordEnv`, and an `extraEnv` entry may
+neither repeat it nor repeat another entry. The list below is every variable
+the library renders; the chart gate proves each is refused.
 
 Init containers are not checked: each has its own environment (a psql wait
 container may legitimately read the owner DSN).
@@ -116,7 +126,7 @@ container may legitimately read the owner DSN).
 {{- define "br-common-service.checkEnv" -}}
 {{- $owned := list "ENVIRONMENT" "PORT" "TRUSTED_NETWORK_HOSTS" "PGUSER" "PGPASSWORD" "DATABASE_URL" "PGUSER_OWNER" "PGPASSWORD_OWNER" "DATABASE_URL_OWNER" "NATS_URL" -}}
 {{- $appPasswordEnv := toString ((.Values.postgres | default dict).appPasswordEnv | default "") -}}
-{{- if has $appPasswordEnv (append $owned "ALLOW_INSECURE_DATABASE") -}}
+{{- if has $appPasswordEnv $owned -}}
 {{- fail (printf "postgres.appPasswordEnv must not be %s: the library sets that variable" $appPasswordEnv) -}}
 {{- end -}}
 {{- $seen := list -}}
@@ -127,8 +137,6 @@ container may legitimately read the owner DSN).
 {{- end -}}
 {{- if not $name -}}
 {{- fail (printf "extraEnv[%d] has no name" $i) -}}
-{{- else if eq $name "ALLOW_INSECURE_DATABASE" -}}
-{{- fail "extraEnv must not set ALLOW_INSECURE_DATABASE: it lifts the TLS requirement for every host. Set postgres.trustedNetwork: true to trust postgres.host only" -}}
 {{- else if has $name $owned -}}
 {{- fail (printf "extraEnv must not set %s: the library renders it from its own values, and a second entry would silently replace it" $name) -}}
 {{- else if eq $name $appPasswordEnv -}}
@@ -149,6 +157,7 @@ container may legitimately read the owner DSN).
 
 {{- /* ── NATS ─────────────────────────────────────────────────────────────── */ -}}
 
+{{- /* NATS_URL (br_util_boot::env::NATS_URL). */ -}}
 {{- define "br-common-service.natsUrl" -}}
 {{- toString (required "nats.url is required: the NATS server of this environment (NATS_URL), set by the deploying repository per environment" (.Values.nats | default dict).url) -}}
 {{- end -}}

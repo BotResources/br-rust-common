@@ -1,0 +1,12 @@
+{
+  "br_util_axum_readiness::READINESS_PATH": "/readyz",
+  "br_util_boot::env::DATABASE_URL": "DATABASE_URL",
+  "br_util_boot::env::ENVIRONMENT": "ENVIRONMENT",
+  "br_util_boot::env::HOST": "HOST",
+  "br_util_boot::env::NATS_URL": "NATS_URL",
+  "br_util_boot::env::PORT": "PORT",
+  "br_util_observability::LIVENESS_PATH": "/livez",
+  "br_util_observability::METRICS_PATH": "/metrics",
+  "br_util_postgres::env::DATABASE_URL_OWNER": "DATABASE_URL_OWNER",
+  "br_util_postgres::env::TRUSTED_NETWORK_HOSTS": "TRUSTED_NETWORK_HOSTS"
+}
