@@ -33,19 +33,25 @@ greater than the base branch's that is not yet released.
   `maxReplicas`, `strategy`, `commonLabels`.
 - **No default for a per-environment value**: `env`, `image.tag`,
   `replicaCount`, `resources`, `postgres.host`, `postgres.port`,
-  `postgres.trustedNetwork`, `nats.url`, and the two DSN Secret names (the
-  deploying repository's objects) fail the render when absent, with a message
-  that names them.
+  `postgres.trustedNetwork` (and `postgres.sslMode` when it is false),
+  `nats.url`, and the two DSN Secret names (the deploying repository's
+  objects) fail the render when absent, with a message that names them.
 - **The two-role Postgres DSNs** (`DATABASE_URL` as the app role,
   `DATABASE_URL_OWNER` as the owner role, for migrations only), built by
   interpolation from Secret keys `username` / `password`; the principle that
   every role password is alphanumeric is documented at the interpolation site.
   `postgres.trustedNetwork: true` sets `TRUSTED_NETWORK_HOSTS` to exactly
-  `postgres.host`; `false` requires TLS.
+  `postgres.host`; `false` requires TLS: both DSNs end with
+  `?sslmode=<postgres.sslMode>` (`require`, `verify-ca` or `verify-full`),
+  the mode `br-util-postgres` requires of a remote host at boot.
 - **Render guards**: the image tag must be a release version inside the
-  service chart's `botresources.ai/supported-app-versions` annotation (unless
-  `image.enforceSupportedVersions: false`); `replicaCount` above
-  `maxReplicas`; a PodDisruptionBudget that leaves no pod evictable; an owner
+  service chart's `botresources.ai/supported-app-versions` annotation
+  (`image.enforceSupportedVersions: false` admits a tag that is not a
+  version, for a local build; a version tag is always checked);
+  `replicaCount` above `maxReplicas`; a PodDisruptionBudget that leaves no
+  pod evictable, whether its bound is an integer, a quoted integer or a
+  percentage; a `postgres.sslMode` missing off a trusted network, set on one,
+  or other than `require` / `verify-ca` / `verify-full`; an owner
   Secret equal to the app Secret; a `commonLabels` entry that replaces a
   library label; a probe override that is not a timing field; an `extraEnv`
   entry (or `postgres.appPasswordEnv`) that would replace a contract variable,

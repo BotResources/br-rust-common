@@ -92,6 +92,9 @@ expect() {
 app_dsn='postgres://$(PGUSER):$(PGPASSWORD)@pg-rw:5432/charter'                   # trufflehog:ignore
 owner_dsn='postgres://$(PGUSER_OWNER):$(PGPASSWORD_OWNER)@pg-rw:5432/charter'     # trufflehog:ignore
 app_dsn_port='postgres://$(PGUSER):$(PGPASSWORD)@pg-rw:6432/charter'              # trufflehog:ignore
+app_dsn_tls='postgres://$(PGUSER):$(PGPASSWORD)@pg-rw:5432/charter?sslmode=require'                    # trufflehog:ignore
+app_dsn_verify='postgres://$(PGUSER):$(PGPASSWORD)@pg-rw:5432/charter?sslmode=verify-full'             # trufflehog:ignore
+owner_dsn_verify='postgres://$(PGUSER_OWNER):$(PGPASSWORD_OWNER)@pg-rw:5432/charter?sslmode=verify-full' # trufflehog:ignore
 for env in $envs; do
   echo "── ops contract (${env})"
   out="$(render -f "${example}/values-${env}.yaml")"
@@ -112,6 +115,7 @@ for env in $envs; do
   expect "readiness path" "/readyz" "$(q "$out" Deployment "${c}.readinessProbe.httpGet.path")"
   expect "liveness path (service override)" "/health" "$(q "$out" Deployment "${c}.livenessProbe.httpGet.path")"
   expect "no startup probe by default" "null" "$(q "$out" Deployment "${c}.startupProbe")"
+  # Exact values: on a trusted network, neither DSN carries an sslmode.
   expect "DATABASE_URL" "$app_dsn" \
     "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL\") | .value")"
   expect "DATABASE_URL_OWNER" "$owner_dsn" \
@@ -177,15 +181,34 @@ expect "NetworkPolicy egress port" "9000" "$(q "$out" NetworkPolicy '.spec.egres
 expect "NetworkPolicy has no ingress key" "false" "$(q "$out" NetworkPolicy '.spec | has("ingress")')"
 
 echo "── a service that never migrates, on a TLS Postgres"
-out="$(render -f "${example}/values-dev.yaml" --set postgres.migrate=false --set postgres.ownerSecretName=null --set postgres.trustedNetwork=false)"
+out="$(render -f "${example}/values-dev.yaml" --set postgres.migrate=false --set postgres.ownerSecretName=null \
+  --set postgres.trustedNetwork=false --set postgres.sslMode=require)"
+expect "DATABASE_URL carries the TLS mode" "$app_dsn_tls" \
+  "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL\") | .value")"
 expect "no DATABASE_URL_OWNER" "0" "$(q "$out" Deployment "[${c}.env[] | select(.name | test(\"OWNER\"))] | length")"
 expect "no TRUSTED_NETWORK_HOSTS" "0" "$(q "$out" Deployment "[${c}.env[] | select(.name == \"TRUSTED_NETWORK_HOSTS\")] | length")"
 expect "reload annotation without owner" "pg-charter-app-credentials,registry-pull" \
   "$(q "$out" Deployment '.metadata.annotations["secret.reloader.stakater.com/reload"]')"
 
-echo "── a local build outside the supported range, on explicit request"
+echo "── a migrating service on a TLS Postgres that verifies the server"
+out="$(render -f "${example}/values-dev.yaml" --set postgres.trustedNetwork=false --set postgres.sslMode=verify-full)"
+expect "DATABASE_URL carries the TLS mode" "$app_dsn_verify" \
+  "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL\") | .value")"
+expect "DATABASE_URL_OWNER carries the TLS mode" "$owner_dsn_verify" \
+  "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL_OWNER\") | .value")"
+
+echo "── a local build, on explicit request"
 out="$(render -f "${example}/values-dev.yaml" --set image.tag=local-build --set image.enforceSupportedVersions=false)"
 expect "local tag" "ghcr.io/botresources/br-svc-charter:local-build" "$(q "$out" Deployment "${c}.image")"
+
+echo "── PodDisruptionBudget bounds: percentages, quoted integers"
+all=(-f "${example}/values-prod.yaml" -f "${example}/values-all-fields.yaml")
+out="$(render "${all[@]}" --set-string podDisruptionBudget.minAvailable=66%)"
+expect "percentage kept as a string" '"66%"' "$(q "$out" PodDisruptionBudget '.spec.minAvailable | to_json')"
+out="$(render "${all[@]}" --set-string podDisruptionBudget.minAvailable=2)"
+expect "quoted integer rendered as an integer" "2" "$(q "$out" PodDisruptionBudget '.spec.minAvailable | to_json')"
+out="$(render "${all[@]}" --set podDisruptionBudget.minAvailable=null --set-string podDisruptionBudget.maxUnavailable=1%)"
+expect "maxUnavailable percentage" '"1%"' "$(q "$out" PodDisruptionBudget '.spec.maxUnavailable | to_json')"
 
 # ── 5. Render guards ────────────────────────────────────────────────────────
 # must_fail <message fragment> <helm template args…>
@@ -208,20 +231,35 @@ for key in env image.tag replicaCount nats.url postgres.host postgres.port postg
   serviceName port image.repository postgres.database postgres.appSecretName postgres.ownerSecretName; do
   must_fail "${key} is required" "${dev[@]}" --set "${key}=null"
 done
+must_fail "postgres.sslMode is required when postgres.trustedNetwork is false" "${dev[@]}" --set postgres.trustedNetwork=false
 must_fail "resources is required" "${dev[@]}" --set resources=null
 
 echo "── guards"
 must_fail "is outside the range" "${dev[@]}" --set image.tag=0.6.0
 must_fail "is not a release version" "${dev[@]}" --set image.tag=latest
+# enforceSupportedVersions=false admits a tag that is not a version, never a version outside the range.
+must_fail "is outside the range" "${dev[@]}" --set image.enforceSupportedVersions=false --set image.tag=0.9.0
 must_fail "exceeds maxReplicas" "${dev[@]}" --set maxReplicas=1 --set replicaCount=2
 must_fail "leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.minAvailable=1
 must_fail "leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=0
+# The same budgets as a percentage or a quoted integer (replicaCount 1 in dev; 67% of 3 rounds up to 3).
+must_fail "minAvailable 100% with replicaCount 1" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=100%
+must_fail "minAvailable 1 with replicaCount 1" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=1
+must_fail "minAvailable 67% with replicaCount 3" "${all[@]}" --set-string podDisruptionBudget.minAvailable=67%
+must_fail "maxUnavailable 0% leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.maxUnavailable=0%
+must_fail "maxUnavailable 0 leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.maxUnavailable=0
+must_fail "must be an integer or a percentage" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=half
+must_fail "must be an integer or a percentage" "${dev[@]}" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=-1
+must_fail "is above 100%" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.maxUnavailable=150%
+must_fail "must be an integer or a percentage" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.maxUnavailable=010%
 must_fail "set exactly one of minAvailable and maxUnavailable" "${dev[@]}" --set podDisruptionBudget.enabled=true
 must_fail "must not set app.kubernetes.io/name" "${dev[@]}" --set 'commonLabels.app\.kubernetes\.io/name=x'
 must_fail "must be a string" "${dev[@]}" --set 'commonLabels.example\.com/flag=true'
 must_fail "is not a probe timing field" "${dev[@]}" --set probes.liveness.httpGet.path=/x
 must_fail "must be an absolute HTTP path" "${dev[@]}" --set probes.readinessPath=readyz
 must_fail "postgres.trustedNetwork must be a YAML boolean" "${dev[@]}" --set-string postgres.trustedNetwork=true
+must_fail "postgres.sslMode must be require, verify-ca or verify-full" "${dev[@]}" --set postgres.trustedNetwork=false --set postgres.sslMode=prefer
+must_fail "postgres.sslMode is set but postgres.trustedNetwork is true" "${dev[@]}" --set postgres.sslMode=require
 must_fail "name the same Secret" "${dev[@]}" --set postgres.ownerSecretName=pg-charter-app-credentials
 must_fail "neither networkPolicy.ingress nor networkPolicy.egress" "${dev[@]}" --set networkPolicy.enabled=true
 must_fail "is not a DNS-1035 label" "${dev[@]}" --set serviceName=Charter_Svc

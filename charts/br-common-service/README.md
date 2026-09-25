@@ -73,9 +73,9 @@ What the library renders the same way for every service, without a value:
 | HTTP | container port `http` = Service port `http` = `PORT` = `port`. The port name is part of the contract: the GraphQL gateway builds subgraph URLs from it. |
 | Probes | readiness `GET <readinessPath>` (5 s delay, every 5 s); liveness `GET <livenessPath>` (30 s delay, every 10 s); optional startup `GET <livenessPath>` (every 5 s, 30 failures). Readiness never backs liveness: a service may stay unready for long (until its scope declaration is accepted) and must not be restarted for it. |
 | `ENVIRONMENT` | `env`. |
-| `DATABASE_URL` | `postgres://$(PGUSER):$(PGPASSWORD)@<host>:<port>/<database>`, with `PGUSER` / `PGPASSWORD` from keys `username` / `password` of `postgres.appSecretName` — the least-privilege runtime role. |
+| `DATABASE_URL` | `postgres://$(PGUSER):$(PGPASSWORD)@<host>:<port>/<database>`, with `PGUSER` / `PGPASSWORD` from keys `username` / `password` of `postgres.appSecretName` — the least-privilege runtime role. Off a trusted network it ends with `?sslmode=<postgres.sslMode>`. |
 | `DATABASE_URL_OWNER` | the same shape as `PGUSER_OWNER` / `PGPASSWORD_OWNER` from `postgres.ownerSecretName` — the owner role, read by `br_util_postgres::init_migration_pool` at boot to migrate, then closed. It bypasses row-level security and never backs a request. Absent when `postgres.migrate` is false. |
-| `TRUSTED_NETWORK_HOSTS` | exactly `postgres.host`, when `postgres.trustedNetwork` is true; absent when it is false, and `br-util-postgres` then refuses a remote DSN without `sslmode=require`. |
+| `TRUSTED_NETWORK_HOSTS` | exactly `postgres.host`, when `postgres.trustedNetwork` is true, and neither DSN carries an `sslmode`. When it is false, the variable is absent and both DSNs end with `?sslmode=<postgres.sslMode>`: `br-util-postgres` refuses, at boot, a remote DSN whose `sslmode` is not `require`, `verify-ca` or `verify-full`. |
 | `NATS_URL` | `nats.url`. |
 | Contract variables | the variables above are the library's. Kubernetes keeps the last of two entries with the same name, so `extraEnv` may not redeclare one, nor `ALLOW_INSECURE_DATABASE`, nor `postgres.appPasswordEnv`, nor one of its own entries: the render fails. An extra `DATABASE_URL: $(DATABASE_URL_OWNER)` would otherwise run every request as the owner role, which bypasses row-level security. |
 | Boot order | init container `wait-for-postgres` waits until `postgres.host:port` accepts TCP; the service then migrates, binds NATS and serves. |
@@ -103,7 +103,7 @@ deploying repository's own objects — set by the deploying repository.
 | `serviceName` | service chart | **required** | DNS-1035 name of every resource and of the selector. |
 | `image.repository` | service chart | **required** | Image without tag. |
 | `image.tag` | environment | **required** | The version to run (Kargo writes it on promotion). Must be a release version inside the service chart's `botresources.ai/supported-app-versions` annotation. |
-| `image.enforceSupportedVersions` | local build only | `true` | `false` skips the range check, for a local image whose tag is not a release version. Never in a promoted environment. |
+| `image.enforceSupportedVersions` | local build only | `true` | `false` admits a tag that is not a version (a local build such as `dev-<sha>`). A version tag is always checked against the range: no values file can pair the chart with a binary outside it. |
 | `image.pullPolicy` | service chart | `IfNotPresent` | |
 | `port` | service chart | **required** | `PORT`, the container port and the Service port. |
 | `args` | service chart | none | Container arguments, when the image needs a subcommand. |
@@ -120,7 +120,8 @@ deploying repository's own objects — set by the deploying repository.
 | `postgres.ownerSecretName` | environment | **required** unless `migrate: false` | Secret of the owner role (`username`, `password`). |
 | `postgres.host` | environment | **required** | The Postgres read-write Service. |
 | `postgres.port` | environment | **required** | The port of `postgres.host` (5432 for a CNPG `<cluster>-rw` Service). |
-| `postgres.trustedNetwork` | environment | **required** | `true` when `postgres.host` speaks plaintext on a trusted network (an in-namespace Service without TLS), `false` to require TLS. No default: either one would be wrong at runtime somewhere while the render succeeds — `false` crash-loops the pod on a plaintext Service, `true` sends passwords in clear to a host that should speak TLS. |
+| `postgres.trustedNetwork` | environment | **required** | `true` when `postgres.host` speaks plaintext on a trusted network (an in-namespace Service without TLS), `false` to require TLS (with `postgres.sslMode`). No default: either one would be wrong at runtime somewhere while the render succeeds — `false` crash-loops the pod on a plaintext Service, `true` sends passwords in clear to a host that should speak TLS. |
+| `postgres.sslMode` | environment | **required** when `trustedNetwork` is false, refused when it is true | `require`, `verify-ca` or `verify-full`, appended to both DSNs as `?sslmode=<mode>`. `require` encrypts without checking the server certificate; `verify-ca` / `verify-full` check it against the public web roots the binary's TLS stack carries (sqlx with webpki roots), so they fit a server whose certificate a public CA signed. |
 | `nats.url` | environment | **required** | `NATS_URL`. |
 | `env` | environment | **required** | `ENVIRONMENT` and the label `botresources.ai/env`. |
 | `replicaCount` | environment | **required** | Pods; bounded by `maxReplicas`. |
@@ -128,7 +129,7 @@ deploying repository's own objects — set by the deploying repository.
 | `imagePullSecrets` | environment | none | Kubernetes shape: `[{name: …}]`. |
 | `nodeSelector`, `tolerations`, `affinity` | environment | none | Scheduling. |
 | `topologySpreadEnabled` | environment | `false` | Spread pods across nodes (`ScheduleAnyway`). |
-| `podDisruptionBudget.enabled` | environment | `false` | With exactly one of `minAvailable` / `maxUnavailable`. A budget that leaves no pod evictable (`minAvailable` ≥ `replicaCount`, `maxUnavailable: 0`) fails: it would hang every node drain. |
+| `podDisruptionBudget.enabled` | environment | `false` | With exactly one of `minAvailable` / `maxUnavailable`, each an integer or a percentage (`"50%"`, 0–100); a quoted integer is read as the integer. A budget that leaves no pod evictable fails: it would hang every node drain — `minAvailable` ≥ `replicaCount`, a percentage counted as Kubernetes counts it (rounded up: `100%`, or `67%` of 3 pods), or `maxUnavailable` `0` / `0%`. |
 | `networkPolicy.enabled` | environment | `false` | With `networkPolicy.ingress` and/or `networkPolicy.egress` (rules, verbatim); each key present adds its direction to `policyTypes`. Named `serviceName`. |
 | `commonLabels` | service chart | none | String labels added to every resource and the pod template, e.g. `graphql-federation/component: subgraph` for gateway discovery. The five library labels cannot be replaced. |
 | `extraEnv` | service chart | none | Variables the binary reads beyond the contract, appended last (so they may reference `$(DATABASE_URL)` and the others). A contract variable, `ALLOW_INSECURE_DATABASE`, the `postgres.appPasswordEnv` name, a repeated name or an entry without a name fails the render. |

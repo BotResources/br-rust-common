@@ -15,6 +15,7 @@ soon as the listener is up, readiness only once the service can serve.
 {{- $pgHost := include "br-common-service.postgresHost" . -}}
 {{- $pgPort := include "br-common-service.postgresPort" . -}}
 {{- $pgDatabase := include "br-common-service.postgresDatabase" . -}}
+{{- $dsnQuery := include "br-common-service.dsnQuery" . -}}
 {{- $appSecret := include "br-common-service.appSecretName" . -}}
 {{- $migrates := eq (include "br-common-service.migrates" .) "true" -}}
 {{- $pg := .Values.postgres | default dict -}}
@@ -118,10 +119,12 @@ spec:
               value: {{ $port | quote }}
             {{- if eq (include "br-common-service.trustedNetwork" .) "true" }}
             {{- /*
-            br-util-postgres refuses a remote DSN without sslmode=require
-            unless its host is listed here. Both DSNs below point at
-            postgres.host, so exactly that host is trusted — never
-            ALLOW_INSECURE_DATABASE, which would trust every host.
+            br-util-postgres refuses a remote DSN without an sslmode of
+            require, verify-ca or verify-full unless its host is listed here.
+            Both DSNs below point at postgres.host, so exactly that host is
+            trusted — never ALLOW_INSECURE_DATABASE, which would trust every
+            host. Off a trusted network, both DSNs carry the sslmode instead
+            ($dsnQuery).
             */}}
             - name: TRUSTED_NETWORK_HOSTS
               value: {{ $pgHost | quote }}
@@ -162,7 +165,7 @@ spec:
                   key: password
             {{- end }}
             - name: DATABASE_URL
-              value: "postgres://$(PGUSER):$(PGPASSWORD)@{{ $pgHost }}:{{ $pgPort }}/{{ $pgDatabase }}"
+              value: "postgres://$(PGUSER):$(PGPASSWORD)@{{ $pgHost }}:{{ $pgPort }}/{{ $pgDatabase }}{{ $dsnQuery }}"
             {{- if $migrates }}
             {{- $ownerSecret := include "br-common-service.ownerSecretName" . }}
             - name: PGUSER_OWNER
@@ -176,7 +179,7 @@ spec:
                   name: {{ $ownerSecret }}
                   key: password
             - name: DATABASE_URL_OWNER
-              value: "postgres://$(PGUSER_OWNER):$(PGPASSWORD_OWNER)@{{ $pgHost }}:{{ $pgPort }}/{{ $pgDatabase }}"
+              value: "postgres://$(PGUSER_OWNER):$(PGPASSWORD_OWNER)@{{ $pgHost }}:{{ $pgPort }}/{{ $pgDatabase }}{{ $dsnQuery }}"
             {{- end }}
             - name: NATS_URL
               value: {{ include "br-common-service.natsUrl" . | quote }}

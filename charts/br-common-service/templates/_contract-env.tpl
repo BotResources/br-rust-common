@@ -41,8 +41,9 @@ chart, no default for a per-environment value.
 TRUSTED_NETWORK_HOSTS (br-util-postgres): the hosts a DSN may reach WITHOUT
 TLS. The library builds both DSNs from `postgres.host`, so the only host the
 pod ever connects to is that one: `postgres.trustedNetwork: true` trusts
-exactly it, and nothing else can be listed; `false` requires TLS
-(sslmode=require), and br-util-postgres refuses a plaintext remote DSN at boot.
+exactly it, and nothing else can be listed; `false` requires TLS, and both
+DSNs then end with `?sslmode=<postgres.sslMode>` (br-common-service.dsnQuery),
+without which br-util-postgres refuses a remote DSN at boot.
 
 REQUIRED, no default: it is a per-environment statement (an in-namespace
 Postgres Service without TLS, such as CNPG's <cluster>-rw, is trusted; any
@@ -60,6 +61,42 @@ second time.
 false
 {{- else -}}
 {{- include "br-common-service.flag" (dict "value" $value "default" false "field" "postgres.trustedNetwork") -}}
+{{- end -}}
+{{- end -}}
+
+{{- /*
+The query both DSNs end with: "" on a trusted network, `?sslmode=<mode>`
+otherwise. br-util-postgres reads the TLS mode from the DSN (sqlx falls back
+to PGSSLMODE, then to `prefer`, which it refuses on a remote host), so a TLS
+Postgres needs the mode IN the URL — without it the render succeeds and every
+pod crash-loops at boot.
+
+`postgres.sslMode` is REQUIRED when `trustedNetwork` is false, with no
+default: the mode is a statement about that environment's server. `require`
+encrypts without checking the server certificate; `verify-ca` / `verify-full`
+check it against the trust roots of the binary's TLS stack (br-util-postgres
+builds sqlx with the public webpki roots), so they fit a server whose
+certificate a public CA signed. On a trusted network the mode is refused: the
+host speaks plaintext, and one statement is enough.
+
+A missing `trustedNetwork` renders nothing here: the helper
+br-common-service.trustedNetwork reports it, once. Under `helm lint` a
+missing mode reaches the enum check as "", which is not reported a second
+time.
+*/ -}}
+{{- define "br-common-service.dsnQuery" -}}
+{{- $pg := .Values.postgres | default dict -}}
+{{- if or (kindIs "invalid" $pg.trustedNetwork) (eq (toString $pg.trustedNetwork) "") -}}
+{{- else if eq (include "br-common-service.trustedNetwork" .) "true" -}}
+{{- if not (kindIs "invalid" $pg.sslMode) -}}
+{{- fail "postgres.sslMode is set but postgres.trustedNetwork is true: a trusted host speaks plaintext. Set postgres.trustedNetwork: false to require TLS, or remove postgres.sslMode" -}}
+{{- end -}}
+{{- else -}}
+{{- $mode := toString (required "postgres.sslMode is required when postgres.trustedNetwork is false: the TLS mode both DSNs carry (require, verify-ca or verify-full), set per environment by the deploying repository" $pg.sslMode) -}}
+{{- if and $mode (not (has $mode (list "require" "verify-ca" "verify-full"))) -}}
+{{- fail (printf "postgres.sslMode must be require, verify-ca or verify-full, got %q: br-util-postgres refuses any other mode on a remote host" $mode) -}}
+{{- end -}}
+{{- with $mode -}}?sslmode={{ . }}{{- end -}}
 {{- end -}}
 {{- end -}}
 

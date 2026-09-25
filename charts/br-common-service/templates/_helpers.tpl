@@ -14,9 +14,10 @@ Two kinds of values, never mixed (README.md, "The ops contract"):
     paths, database name, the environment variables it reads — is set by the
     service chart, once, for every environment;
   - what differs per environment — `env`, `image.tag`, `replicaCount`,
-    `resources`, `postgres.host`, `postgres.port`, `postgres.trustedNetwork`,
-    the DSN Secret names, `nats.url` — has NO default here: a missing value
-    fails the render with a message that names it. (Optional per-environment
+    `resources`, `postgres.host`, `postgres.port`, `postgres.trustedNetwork`
+    (and `postgres.sslMode` when it is false), the DSN Secret names,
+    `nats.url` — has NO default here: a missing value fails the render with
+    a message that names it. (Optional per-environment
     settings — scheduling, a PodDisruptionBudget — are simply absent unless
     set.)
 
@@ -106,10 +107,12 @@ with its own context. Same annotation, same enforcement, as the runner charts
 {{- /*
 The image tag the pod runs. REQUIRED: the deploying repository pins it per
 environment (Kargo writes it on promotion); the chart never picks a binary on
-its own. Unless `image.enforceSupportedVersions` is false, a tag that is not a
-release version, or that is outside the supported range, fails the render —
+its own. A version tag outside the supported range fails the render, ALWAYS —
 so a promotion's `helm template` step cannot pair a chart with a binary it
-cannot run.
+cannot run, and no values file can lift that check. A tag that is not a
+version fails as well, unless `image.enforceSupportedVersions` is false: the
+one exception is a local build (e.g. `local-build`, `dev-<sha>`), which has no
+version to check.
 
 `else if` and a non-empty range on purpose: under `helm lint` a missing tag
 reaches the check as "", and `semverCompare` on "" is a template panic.
@@ -117,10 +120,12 @@ reaches the check as "", and `semverCompare` on "" is a template panic.
 {{- define "br-common-service.imageTag" -}}
 {{- $image := .Values.image | default dict -}}
 {{- $tag := toString (required "image.tag is required: the service version to deploy, set per environment by the deploying repository (Kargo writes it on promotion)" $image.tag) -}}
-{{- if eq (include "br-common-service.flag" (dict "value" $image.enforceSupportedVersions "default" true "field" "image.enforceSupportedVersions")) "true" -}}
+{{- $isVersion := regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$" $tag -}}
+{{- $enforce := eq (include "br-common-service.flag" (dict "value" $image.enforceSupportedVersions "default" true "field" "image.enforceSupportedVersions")) "true" -}}
+{{- if or $enforce $isVersion -}}
 {{- $range := include "br-common-service.supportedRange" . -}}
-{{- if not (regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$" $tag) -}}
-{{- fail (printf "image.tag %q is not a release version. The chart %s supports %s (Chart.yaml annotation botresources.ai/supported-app-versions); image.enforceSupportedVersions=false is reserved for a local build" $tag .Chart.Name $range) -}}
+{{- if not $isVersion -}}
+{{- fail (printf "image.tag %q is not a release version. The chart %s supports %s (Chart.yaml annotation botresources.ai/supported-app-versions); image.enforceSupportedVersions=false admits a tag that is not a version, for a local build only" $tag .Chart.Name $range) -}}
 {{- else if $range -}}
 {{- if not (semverCompare $range $tag) -}}
 {{- fail (printf "image.tag %s is outside the range the chart %s %s supports: %s (Chart.yaml annotation botresources.ai/supported-app-versions). Deploy it with a chart version whose range covers %s" $tag .Chart.Name .Chart.Version $range $tag) -}}
