@@ -3,6 +3,9 @@ use std::time::Duration;
 
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
 
+use br_util_boot::env::DATABASE_URL;
+
+use crate::env::{DATABASE_URL_OWNER, TRUSTED_NETWORK_HOSTS};
 use crate::error::PostgresError;
 use crate::net::{is_loopback, is_on_trusted_network, resolve_trusted_network_hosts};
 
@@ -36,9 +39,7 @@ fn parse_sslmode(url: &str) -> Result<PgSslMode, PostgresError> {
     PgConnectOptions::from_str(url)
         .map(|opts| opts.get_ssl_mode())
         .map_err(|e| {
-            PostgresError::Config(format!(
-                "could not parse DATABASE_URL for TLS validation: {e}"
-            ))
+            PostgresError::Config(format!("could not parse the DSN for TLS validation: {e}"))
         })
 }
 
@@ -49,7 +50,7 @@ pub fn validate_database_tls(url: &str) -> Result<(), PostgresError> {
             .any(|(k, _)| k == "host" || k == "hostaddr")
     {
         return Err(PostgresError::Config(
-            "DATABASE_URL overrides the target host via a host=/hostaddr= query \
+            "the DSN overrides the target host via a host=/hostaddr= query \
              parameter; TLS validation cannot vouch for the real target — put \
              the host in the URL authority"
                 .to_string(),
@@ -74,8 +75,8 @@ pub fn validate_database_tls(url: &str) -> Result<(), PostgresError> {
     if !has_tls {
         return Err(PostgresError::Config(format!(
             "remote database connection to '{host}' requires TLS: \
-             add sslmode=require (or verify-ca/verify-full) to DATABASE_URL, \
-             or declare the host in TRUSTED_NETWORK_HOSTS if it sits on a \
+             add sslmode=require (or verify-ca/verify-full) to the DSN, \
+             or declare the host in {TRUSTED_NETWORK_HOSTS} if it sits on a \
              trusted network segment"
         )));
     }
@@ -96,12 +97,12 @@ pub async fn init_pool(database_url: &str) -> Result<PgPool, PostgresError> {
 }
 
 pub async fn init_migration_pool() -> Result<PgPool, PostgresError> {
-    let url = std::env::var("DATABASE_URL_OWNER")
-        .or_else(|_| std::env::var("DATABASE_URL"))
+    let url = std::env::var(DATABASE_URL_OWNER)
+        .or_else(|_| std::env::var(DATABASE_URL))
         .map_err(|_| {
-            PostgresError::Config(
-                "DATABASE_URL_OWNER or DATABASE_URL must be set for migrations".to_string(),
-            )
+            PostgresError::Config(format!(
+                "{DATABASE_URL_OWNER} or {DATABASE_URL} must be set for migrations"
+            ))
         })?;
     validate_database_tls(&url)?;
 

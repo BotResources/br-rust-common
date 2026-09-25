@@ -1,8 +1,14 @@
 use std::sync::{Arc, RwLock};
 
+use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{MethodRouter, get};
+
+/// The path readiness is served on. Part of the ops contract: the
+/// `br-common-service` chart probes it by default (`probes.readinessPath`) and
+/// is gated against this constant.
+pub const READINESS_PATH: &str = "/readyz";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Readiness {
@@ -75,6 +81,9 @@ impl ReadinessHandle {
     }
 }
 
+/// The readiness handler: `GET`, `200 OK` (body `ready`) when ready, `503`
+/// with the reason otherwise. Prefer [`readiness_router`], which mounts it on
+/// [`READINESS_PATH`].
 pub fn readiness_route<S>(handle: ReadinessHandle) -> MethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -92,10 +101,19 @@ where
     })
 }
 
+/// A router serving [`readiness_route`] on [`READINESS_PATH`], to `merge` into
+/// the service's router: the path comes from the constant, never from a
+/// literal the service could mistype.
+pub fn readiness_router<S>(handle: ReadinessHandle) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new().route(READINESS_PATH, readiness_route(handle))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::Router;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
@@ -142,13 +160,12 @@ mod tests {
     }
 
     async fn get_readyz(app: Router) -> (StatusCode, String) {
+        get_path(app, "/readyz").await
+    }
+
+    async fn get_path(app: Router, path: &str) -> (StatusCode, String) {
         let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/readyz")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
         let status = resp.status();
@@ -215,5 +232,23 @@ mod tests {
         let (status, body) = get_readyz(app).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "ready");
+    }
+
+    #[tokio::test]
+    async fn the_router_serves_readiness_on_the_contract_path() {
+        let handle = ReadinessHandle::not_ready("starting up");
+        let app = readiness_router(handle.clone());
+
+        let (status, body) = get_path(app.clone(), READINESS_PATH).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, "starting up");
+
+        handle.set_ready();
+        let (status, body) = get_path(app.clone(), READINESS_PATH).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "ready");
+
+        let (status, _) = get_path(app, "/ready").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }
