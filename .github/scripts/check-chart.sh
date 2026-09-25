@@ -67,6 +67,16 @@ render() {
   helm template example "$example" "$@"
 }
 
+# copy_example <dir> — a copy of the example service chart in <dir>, its
+# library dependency rebuilt from this checkout, for a Chart.yaml the caller
+# edits (an annotation cannot be set from the command line).
+copy_example() {
+  cp -R "$example" "${1}/example-service"
+  rm -rf "${1}/example-service/charts" "${1}/example-service/Chart.lock"
+  sed -i.bak 's#file://../..#file://'"${repo_root}/${chart_dir}"'#' "${1}/example-service/Chart.yaml"
+  helm dependency build --skip-refresh "${1}/example-service" >/dev/null
+}
+
 # yq over the one document of a kind: q <render> <kind> <expression>.
 # Prints nothing when the render has no document of that kind.
 q() {
@@ -210,10 +220,22 @@ out="$(render -f "${example}/values-dev.yaml" --set-string image.tag=v0.5.4)"
 expect "a leading v" "${repo}:v0.5.4" "$(q "$out" Deployment "${c}.image")"
 out="$(render -f "${example}/values-dev.yaml" --set image.tag=local-build --set image.enforceSupportedVersions=false)"
 expect "local tag" "${repo}:local-build" "$(q "$out" Deployment "${c}.image")"
+for tag in local.4f2a9c1 dev-4f2a9c1; do
+  out="$(render -f "${example}/values-dev.yaml" --set-string "image.tag=${tag}" --set image.enforceSupportedVersions=false)"
+  expect "local tag ${tag}" "${repo}:${tag}" "$(q "$out" Deployment "${c}.image")"
+done
 out="$(render -f "${example}/values-dev.yaml" --set-string "image.tag=dev.4f2a9c1@${digest}" --set image.enforceSupportedVersions=false)"
 expect "local tag pinned by digest" "${repo}:dev.4f2a9c1@${digest}" "$(q "$out" Deployment "${c}.image")"
 out="$(render -f "${example}/values-dev.yaml" --set-string image.tag=0.5.3 --set image.enforceSupportedVersions=false)"
 expect "a version in range, the check lifted" "${repo}:0.5.3" "$(q "$out" Deployment "${c}.image")"
+# A pre-release is inside a range that names a pre-release (Masterminds/Kargo);
+# the guards below prove it is outside the fixture's `>=0.5.0 <0.6.0`.
+pre="$(mktemp -d)"
+copy_example "$pre"
+yq -i '.annotations["botresources.ai/supported-app-versions"] = ">=0.5.0-0 <0.6.0"' "${pre}/example-service/Chart.yaml"
+out="$(helm template example "${pre}/example-service" -f "${example}/values-dev.yaml" --set-string image.tag=0.5.4-rc.1)"
+expect "a pre-release, inside a pre-release range" "${repo}:0.5.4-rc.1" "$(q "$out" Deployment "${c}.image")"
+rm -rf "$pre"
 
 echo "── PodDisruptionBudget bounds: percentages, quoted integers"
 all=(-f "${example}/values-prod.yaml" -f "${example}/values-all-fields.yaml")
@@ -256,6 +278,8 @@ must_fail "resources is required" "${dev[@]}" --set resources=null
 echo "── guards"
 must_fail "is outside the range" "${dev[@]}" --set image.tag=0.6.0
 must_fail "is outside the range" "${dev[@]}" --set-string "image.tag=0.6.0@${digest}"
+# A pre-release is outside a range that names none, even between its bounds.
+must_fail "is outside the range" "${dev[@]}" --set-string image.tag=0.5.4-rc.1
 must_fail "is not a release version" "${dev[@]}" --set image.tag=latest
 must_fail "is not a release version" "${dev[@]}" --set-string image.tag=0.5
 # SemVer build metadata renders, then fails at the kubelet: an OCI tag has no '+'.
@@ -326,11 +350,8 @@ must_fail "postgres.appPasswordEnv must not be DATABASE_URL" "${dev[@]}" --set p
 
 echo "── a chart without the supported-range annotation"
 bare="$(mktemp -d)"
-cp -R "$example" "${bare}/example-service"
-rm -rf "${bare}/example-service/charts" "${bare}/example-service/Chart.lock"
+copy_example "$bare"
 yq -i 'del(.annotations)' "${bare}/example-service/Chart.yaml"
-sed -i.bak 's#file://../..#file://'"${repo_root}/${chart_dir}"'#' "${bare}/example-service/Chart.yaml"
-helm dependency build --skip-refresh "${bare}/example-service" >/dev/null
 if err="$(helm template example "${bare}/example-service" "${dev[@]}" 2>&1 >/dev/null)"; then
   fail "a chart without botresources.ai/supported-app-versions rendered"
 elif grep -qF "botresources.ai/supported-app-versions is required" <<<"$err"; then

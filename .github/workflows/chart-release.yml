@@ -14,8 +14,8 @@
 #
 # Order — the tag marks a shipped artifact, never a promise:
 #   1. resolve the chart name and version (job `resolve`);
-#   2. under a concurrency group per chart + version, log in, package this
-#      commit, and read the tag chart/br-common-service/v<version> and the
+#   2. under a concurrency group per chart + version, package this commit,
+#      read the tag chart/br-common-service/v<version> and, logged in, the
 #      registry. Each lookup must answer present or absent: a failed lookup
 #      fails the run, it is never read as "absent". When the registry holds
 #      the version, pull it and compare it with this commit's package;
@@ -31,6 +31,9 @@
 #      rendered;
 #   5. helm push the package of step 2 to oci://ghcr.io/botresources/charts;
 #   6. tag chart/br-common-service/v<version>, never forced.
+# Credentials: the checkout keeps none; the registry login lives only in the
+# steps that read (2) or push (5) and is logged out at their end; the token
+# reaches git only in the tag push (6). The gate (4) runs with none.
 # A published version is never pushed again and a tag is never moved. Nothing
 # is ever tagged `latest`, on the registry or in git. A failure before step 6
 # leaves nothing mislabelled; the next run resumes from the decision.
@@ -106,21 +109,18 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0 # the gate diffs against origin/main and reads tags
+          persist-credentials: false # only the tag push gets the token
 
       # helm and yq ship in the runner image (the repository's action
       # allowlist has no helm installer).
       - name: tool versions
         run: helm version --short && yq --version
 
-      # Before any registry read: the lookup must see what the publisher sees.
-      - name: helm registry login
-        env:
-          ACTOR: ${{ github.actor }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: helm registry login ghcr.io --username "${ACTOR}" --password-stdin <<<"${TOKEN}"
-
       - name: decide — push, tag only, nothing, or refuse
         id: decide
+        env:
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # shellcheck source=/dev/null
@@ -134,6 +134,10 @@ jobs:
           package="${work}/local/${NAME}-${VERSION}.tgz"
 
           tag_state="$(chart_tag_state origin "$tag")" || refuse "$tag_state"
+          # Logged in for the registry reads only: the lookup must see what the
+          # publisher sees. Logged out when the step ends, whatever its outcome.
+          trap 'helm registry logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          helm registry login ghcr.io --username "${ACTOR}" --password-stdin <<<"${TOKEN}"
           registry_state="$(chart_registry_state "$OCI_REPO" "$NAME" "$VERSION")" || refuse "$registry_state"
           content=""
           if [ "$registry_state" = present ]; then
@@ -163,15 +167,25 @@ jobs:
         if: steps.decide.outputs.decision == 'push'
         env:
           PACKAGE: ${{ steps.decide.outputs.package }}
-        run: helm push "$PACKAGE" "$OCI_REPO"
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          trap 'helm registry logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          helm registry login ghcr.io --username "${ACTOR}" --password-stdin <<<"${TOKEN}"
+          helm push "$PACKAGE" "$OCI_REPO"
 
       - name: tag the release
         if: steps.decide.outputs.decision == 'push' || steps.decide.outputs.decision == 'tag'
         env:
           TAG: ${{ steps.decide.outputs.tag }}
+          TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "${TAG}" -m "chart ${NAME} ${VERSION}"
-          git push origin "refs/tags/${TAG}"
+          # The checkout persisted no credential: the token is used for this
+          # push only, in a URL built here and never printed (git shows the
+          # remote without its credentials; Actions masks the token).
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"

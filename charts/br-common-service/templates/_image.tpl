@@ -11,8 +11,12 @@ Declared by the service chart as the Chart.yaml annotation
 `botresources.ai/supported-app-versions`: a Masterminds semver constraint (the
 syntax of Helm's `semverCompare` and of Kargo's `constraint:`). `.Chart` is
 the service chart here, because the service chart includes these templates
-with its own context. Same annotation, same enforcement, as the runner charts
-(br-runner) and br-svc-runners.
+with its own context. Same annotation as the runner charts (br-runner) and
+br-svc-runners; the enforcement is this library's own
+(br-common-service.imageTag): a digest is split off and the tag before it
+checked, SemVer build metadata is refused, a version tag is always
+range-checked, and `image.enforceSupportedVersions=false` lifts the check for
+local-build tags only.
 */ -}}
 {{- define "br-common-service.supportedRange" -}}
 {{- $range := index (.Chart.Annotations | default dict) "botresources.ai/supported-app-versions" | default "" -}}
@@ -20,9 +24,10 @@ with its own context. Same annotation, same enforcement, as the runner charts
 {{- end -}}
 
 {{- /*
-The image tag the pod runs: `<tag>`, or `<tag>@sha256:<64 hex>` to pin the
-digest as well. REQUIRED: the deploying repository pins it per environment
-(Kargo writes it on promotion); the chart never picks a binary on its own.
+The image tag the pod runs: `<tag>`, or `<tag>@sha256:<64 lowercase hex>` to
+pin the digest as well. REQUIRED: the deploying repository pins it per
+environment (Kargo writes it on promotion); the chart never picks a binary on
+its own.
 The checks, in order:
 
   1. A digest suffix `@sha256:<64 lowercase hex>` is split off and kept in the
@@ -36,6 +41,8 @@ The checks, in order:
      optional leading `v`, no build metadata — must be inside the supported
      range, ALWAYS: a promotion's `helm template` step cannot pair the chart
      with a binary it cannot run, and no values file can lift that check.
+     A pre-release is inside the range only if the range names a pre-release,
+     e.g. `>=0.5.0-0 <0.6.0` (Masterminds/Kargo semantics).
   4. A tag that starts like a version (`v` then a digit, or a digit) but is
      not a full release version (`0.9`, `0.9.0_x`) fails, whatever the flag
      says.

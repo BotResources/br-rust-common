@@ -48,7 +48,7 @@ greater than the base branch's that is not yet released.
   `MAJOR.MINOR.PATCH[-PRERELEASE]`, optional leading `v`, no build metadata,
   which an OCI tag cannot carry) inside the service chart's
   `botresources.ai/supported-app-versions` annotation, optionally followed by
-  a digest `@sha256:<64 hex>` that is admitted whatever the flag says and
+  a digest `@sha256:<64 lowercase hex>` that is admitted whatever the flag says and
   kept in the rendered reference; `image.enforceSupportedVersions: false`
   admits one more kind of tag only, a local build (`local-…`, `local.…`,
   `dev-…`, `dev.…`), while a version tag is always range-checked and `latest`,
