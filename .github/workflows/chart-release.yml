@@ -1,0 +1,155 @@
+# chart-release — publish the br-common-service library chart.
+#
+# charts/br-common-service/ is released on its own version line, independent of
+# the crates' workspace version that release-tags.yml tags. The PR gate
+# (ci.yml, job `chart`) refuses a change under the chart without a `version`
+# bump, so every chart change reaches a release branch through a Chart.yaml
+# change; workflow_dispatch retries a failed run.
+#
+# Branches: `main`, and `release/**` for a maintenance line (e.g. 1.0.x while
+# main is on 2.x). A version is published once, whichever branch gets there
+# first; the other branch can only confirm it.
+#
+# Order — the tag marks a shipped artifact, never a promise:
+#   1. resolve the chart name and version (job `resolve`);
+#   2. under a concurrency group per chart + version, stop if the tag
+#      chart/br-common-service/v<version> exists;
+#   3. re-run .github/scripts/check-chart.sh, so the package is exactly what the
+#      gate rendered;
+#   4. helm push to oci://ghcr.io/botresources/charts — unless that version is
+#      already on the registry (a previous run pushed and failed before the
+#      tag): then the published package must hold the same files as this
+#      commit's, or the run fails. A published version is never overwritten;
+#   5. tag chart/br-common-service/v<version>, never forced.
+# Nothing is ever tagged `latest`, on the registry or in git. A failure before
+# step 5 leaves nothing mislabelled; the next run retries.
+#
+# The chart/br-common-service/v* tag does not match release-tags.yml's
+# `v<X.Y.Z>` workspace tags nor the semver job's baseline glob, and a
+# chart-only push carries no Cargo version bump, so no crate is re-released.
+
+name: chart-release
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+    paths:
+      - "charts/br-common-service/Chart.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CHART_DIR: charts/br-common-service
+  OCI_REPO: oci://ghcr.io/botresources/charts
+  TAG_PREFIX: chart/br-common-service/v
+
+jobs:
+  resolve:
+    name: resolve the chart version
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.chart.outputs.name }}
+      version: ${{ steps.chart.outputs.version }}
+    steps:
+      - name: refuse a branch that does not publish
+        if: github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/')
+        run: |
+          echo "::error::charts are published from main or release/** only, not from ${GITHUB_REF}"
+          exit 1
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: read name and version from Chart.yaml
+        id: chart
+        run: |
+          set -euo pipefail
+          name="$(yq '.name' "${CHART_DIR}/Chart.yaml")"
+          version="$(yq '.version' "${CHART_DIR}/Chart.yaml")"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error file=${CHART_DIR}/Chart.yaml::version '${version}' is not a semantic version"
+            exit 1
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: publish ${{ needs.resolve.outputs.name }} ${{ needs.resolve.outputs.version }}
+    needs: resolve
+    runs-on: ubuntu-latest
+    # One run at a time per chart and version: two pushes of the same version
+    # (main and a release branch, or a retry) never race on the push or the tag.
+    concurrency:
+      group: chart-release-${{ needs.resolve.outputs.name }}-${{ needs.resolve.outputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # the chart/br-common-service/v<version> tag
+      packages: write # helm push to ghcr.io/botresources/charts
+    env:
+      NAME: ${{ needs.resolve.outputs.name }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0 # the gate diffs against origin/main and reads tags
+
+      # helm and yq ship in the runner image (the repository's action
+      # allowlist has no helm installer).
+      - name: tool versions
+        run: helm version --short && yq --version
+
+      - name: stop if this version is already released
+        id: released
+        run: |
+          set -euo pipefail
+          tag="${TAG_PREFIX}${VERSION}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "${tag} exists: ${NAME} ${VERSION} is released, nothing to do."
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "Will release ${NAME} ${VERSION} as ${tag}."
+          fi
+
+      - name: chart gate
+        if: steps.released.outputs.released == 'false'
+        run: bash .github/scripts/check-chart.sh
+
+      - name: helm registry login
+        if: steps.released.outputs.released == 'false'
+        env:
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: helm registry login ghcr.io --username "${ACTOR}" --password-stdin <<<"${TOKEN}"
+
+      - name: helm package and push, never over a published version
+        if: steps.released.outputs.released == 'false'
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          helm package "$CHART_DIR" --destination "${out}/local"
+          if helm show chart "${OCI_REPO}/${NAME}" --version "${VERSION}" >/dev/null 2>&1; then
+            echo "${OCI_REPO}/${NAME} ${VERSION} is already on the registry: comparing it with this commit's package."
+            helm pull "${OCI_REPO}/${NAME}" --version "${VERSION}" --untar --untardir "${out}/published"
+            tar -xzf "${out}/local/${NAME}-${VERSION}.tgz" -C "${out}/local"
+            if ! diff -r "${out}/published/${NAME}" "${out}/local/${NAME}"; then
+              echo "::error::${NAME} ${VERSION} is published with different content. A published version is immutable: bump the chart version."
+              exit 1
+            fi
+            echo "::notice::the published ${NAME} ${VERSION} matches this commit; not pushed again, tagging only."
+            exit 0
+          fi
+          helm push "${out}/local/${NAME}-${VERSION}.tgz" "${OCI_REPO}"
+
+      - name: tag the release
+        if: steps.released.outputs.released == 'false'
+        env:
+          TAG: ${{ steps.released.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "chart ${NAME} ${VERSION}"
+          git push origin "refs/tags/${TAG}"

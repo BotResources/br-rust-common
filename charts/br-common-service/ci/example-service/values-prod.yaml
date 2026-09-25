@@ -1,0 +1,38 @@
+# Per-environment values, as a deploying repository sets them (prod). Neutral
+# stand-ins: the pull secret, the NATS URL, the Postgres Service name and the
+# zone are examples, not a real environment's objects.
+env: prod
+
+image:
+  tag: 0.5.3
+
+imagePullSecrets:
+  - name: registry-pull
+
+replicaCount: 1
+
+nats:
+  url: nats://nats:4222
+
+postgres:
+  host: pg-rw
+  trustedNetwork: true
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+# Prefer the zone where the database primary runs; never required.
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: topology.kubernetes.io/zone
+              operator: In
+              values: ["example-zone-a"]

@@ -1,0 +1,10 @@
+# What a deploying repository ADDS to each per-environment values file when it
+# moves a pre-library service chart onto br-common-service. The pre-library
+# charts hard-coded TRUSTED_NETWORK_HOSTS to their Postgres Service; the
+# library derives it from `postgres.host`, but only when the environment says
+# that host speaks plaintext on a trusted network.
+#
+# ../diff-against-chart.sh layers this file over the deploying repository's
+# own per-environment values when it renders the example chart.
+postgres:
+  trustedNetwork: true

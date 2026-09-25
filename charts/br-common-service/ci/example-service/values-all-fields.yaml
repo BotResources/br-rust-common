@@ -1,0 +1,83 @@
+# Every optional field of br-common-service set at once, layered over
+# values.yaml + values-prod.yaml by .github/scripts/check-chart.sh. Not a
+# realistic service: each value exists to prove one field reaches the render.
+image:
+  pullPolicy: Always
+
+args: ["serve"]
+
+maxReplicas: 3
+replicaCount: 3
+
+strategy:
+  type: Recreate
+
+topologySpreadEnabled: true
+
+probes:
+  livenessPath: /livez
+  readinessPath: /ready
+  readiness:
+    periodSeconds: 7
+  liveness:
+    timeoutSeconds: 3
+  startup:
+    enabled: true
+    failureThreshold: 60
+
+postgres:
+  port: 6432
+  appPasswordEnv: EXAMPLE_APP_PASSWORD
+
+waitForPostgres:
+  image: registry.example.com/tools/busybox:1.37
+
+extraInitContainers:
+  - name: check-owner
+    image: registry.example.com/tools/psql:16
+    env:
+      - name: OWNER_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: owner-check-credentials
+            key: password
+
+extraEnv:
+  - name: SCOPE_DECLARATION_ENABLED
+    value: "true"
+  - name: BLOB_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: blob-credentials
+        key: secret-key
+
+automountServiceAccountToken: true
+
+podSecurityContext:
+  runAsUser: 10001
+
+containerSecurityContext:
+  readOnlyRootFilesystem: false
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+networkPolicy:
+  enabled: true
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: object-store
+      ports:
+        - protocol: TCP
+          port: 9000
+
+nodeSelector:
+  kubernetes.io/arch: arm64
+
+tolerations:
+  - key: example.com/dedicated
+    operator: Exists
+    effect: NoSchedule

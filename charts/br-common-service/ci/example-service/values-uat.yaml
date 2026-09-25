@@ -1,0 +1,28 @@
+# Per-environment values, as a deploying repository sets them (uat). Neutral
+# stand-ins: the pull secret, the NATS URL and the Postgres Service name are
+# examples, not a real environment's objects.
+env: uat
+
+image:
+  tag: 0.5.3
+
+imagePullSecrets:
+  - name: registry-pull
+
+replicaCount: 1
+
+nats:
+  url: nats://nats:4222
+
+postgres:
+  host: pg-rw
+  # The in-namespace Postgres Service speaks plaintext: trust exactly that host.
+  trustedNetwork: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
