@@ -176,9 +176,18 @@ jobs:
       # helm and yq (mikefarah v4) ship in the runner image; the repository's
       # action allowlist has no helm installer. The gate passes on Helm 3 and 4.
       - name: tool versions
-        run: helm version --short && yq --version
+        run: helm version --short && yq --version && shellcheck --version | head -2
+      - name: shellcheck the chart scripts
+        run: >-
+          shellcheck -x
+          .github/scripts/check-chart.sh
+          .github/scripts/chart-release-lib.sh
+          .github/scripts/test-chart-release.sh
+          charts/br-common-service/ci/diff-against-chart.sh
       - name: lint, render, contract assertions, guards, version gate
         run: bash .github/scripts/check-chart.sh
+      - name: release decisions (version gate, tag and registry lookups, publish table)
+        run: bash .github/scripts/test-chart-release.sh
 
   trufflehog:
     name: trufflehog (secret scan)

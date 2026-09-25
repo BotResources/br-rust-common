@@ -1,6 +1,8 @@
-# Per-environment values, as a deploying repository sets them (uat). Neutral
-# stand-ins: the pull secret, the NATS URL and the Postgres Service name are
-# examples, not a real environment's objects.
+# Per-environment values, as a deploying repository sets them (uat). The
+# in-namespace names — the Postgres Service `pg-rw`, the NATS Service `nats`,
+# the two DSN Secrets — are the deploying repository's own names for charter,
+# so that ../diff-against-chart.sh compares like with like: short in-namespace
+# names, no hostname, no credential. The pull secret is a neutral stand-in.
 env: uat
 
 image:
@@ -16,8 +18,11 @@ nats:
 
 postgres:
   host: pg-rw
+  port: 5432
   # The in-namespace Postgres Service speaks plaintext: trust exactly that host.
   trustedNetwork: true
+  appSecretName: pg-charter-app-credentials
+  ownerSecretName: pg-charter-owner-credentials
 
 resources:
   requests:

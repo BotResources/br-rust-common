@@ -9,18 +9,22 @@
 #   5. prove each render guard: a missing per-environment value, an unsafe
 #      combination or a forbidden override fails the render with a message
 #      that names it;
-#   6. version gate: a change under charts/br-common-service/ (ci/ excepted)
-#      needs a Chart.yaml version bump, and every version a
-#      `## [<version>]` heading in the chart's CHANGELOG.md.
+#   6. version gate (chart_version_gate in chart-release-lib.sh): a change
+#      under charts/br-common-service/ (ci/ excepted) needs a Chart.yaml
+#      version greater than the base's and not yet tagged; every version needs
+#      a `## [<version>]` heading in the chart's CHANGELOG.md.
 #
 # Runs in CI (ci.yml, job `chart`) and in the release workflow before a push;
 # runs locally the same way. Needs helm (v3 or v4), yq (mikefarah, v4), git.
+# The release decisions themselves are tested by test-chart-release.sh.
 #
 # shellcheck disable=SC2016 # '$(PGUSER)' below is Kubernetes syntax, compared literally
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
+# shellcheck source-path=SCRIPTDIR source=chart-release-lib.sh
+source "${repo_root}/.github/scripts/chart-release-lib.sh"
 
 chart_dir="charts/br-common-service"
 example="${chart_dir}/ci/example-service"
@@ -49,7 +53,10 @@ fi
 
 # ── 2. The example service chart ────────────────────────────────────────────
 echo "── helm dependency build ${example}"
-helm dependency build "$example" >/dev/null
+# charts/ and Chart.lock are build output (gitignored): rebuild them from the
+# library in this checkout, never from a stale local build.
+rm -rf "${example}/charts" "${example}/Chart.lock"
+helm dependency build --skip-refresh "$example" >/dev/null
 
 for env in $envs; do
   echo "── helm lint ${example} (${env})"
@@ -170,7 +177,7 @@ expect "NetworkPolicy egress port" "9000" "$(q "$out" NetworkPolicy '.spec.egres
 expect "NetworkPolicy has no ingress key" "false" "$(q "$out" NetworkPolicy '.spec | has("ingress")')"
 
 echo "── a service that never migrates, on a TLS Postgres"
-out="$(render -f "${example}/values-dev.yaml" --set postgres.migrate=false --set postgres.ownerSecretName=null --set postgres.trustedNetwork=null)"
+out="$(render -f "${example}/values-dev.yaml" --set postgres.migrate=false --set postgres.ownerSecretName=null --set postgres.trustedNetwork=false)"
 expect "no DATABASE_URL_OWNER" "0" "$(q "$out" Deployment "[${c}.env[] | select(.name | test(\"OWNER\"))] | length")"
 expect "no TRUSTED_NETWORK_HOSTS" "0" "$(q "$out" Deployment "[${c}.env[] | select(.name == \"TRUSTED_NETWORK_HOSTS\")] | length")"
 expect "reload annotation without owner" "pg-charter-app-credentials,registry-pull" \
@@ -197,8 +204,8 @@ must_fail() {
 
 dev=(-f "${example}/values-dev.yaml")
 echo "── required values"
-for key in env image.tag replicaCount nats.url postgres.host serviceName port \
-  image.repository postgres.database postgres.appSecretName postgres.ownerSecretName; do
+for key in env image.tag replicaCount nats.url postgres.host postgres.port postgres.trustedNetwork \
+  serviceName port image.repository postgres.database postgres.appSecretName postgres.ownerSecretName; do
   must_fail "${key} is required" "${dev[@]}" --set "${key}=null"
 done
 must_fail "resources is required" "${dev[@]}" --set resources=null
@@ -221,13 +228,31 @@ must_fail "is not a DNS-1035 label" "${dev[@]}" --set serviceName=Charter_Svc
 must_fail "port must be a TCP port" "${dev[@]}" --set port=70000
 must_fail "is not an environment variable name" "${dev[@]}" --set postgres.appPasswordEnv=app-password
 
+echo "── extraEnv cannot replace a contract variable"
+# Kubernetes keeps the LAST of two env entries with the same name: each of
+# these would silently replace what the library renders.
+for name in ENVIRONMENT PORT TRUSTED_NETWORK_HOSTS PGUSER PGPASSWORD DATABASE_URL \
+  PGUSER_OWNER PGPASSWORD_OWNER DATABASE_URL_OWNER NATS_URL; do
+  must_fail "extraEnv must not set ${name}" "${dev[@]}" \
+    --set "extraEnv[0].name=${name}" --set "extraEnv[0].value=x"
+done
+must_fail "extraEnv must not set ALLOW_INSECURE_DATABASE" "${dev[@]}" \
+  --set extraEnv[0].name=ALLOW_INSECURE_DATABASE --set-string extraEnv[0].value=true
+must_fail "extraEnv must not set EXAMPLE_APP_PASSWORD: postgres.appPasswordEnv" "${dev[@]}" \
+  --set postgres.appPasswordEnv=EXAMPLE_APP_PASSWORD --set extraEnv[0].name=EXAMPLE_APP_PASSWORD --set extraEnv[0].value=x
+must_fail "extraEnv declares SCOPE_DECLARATION_ENABLED twice" "${dev[@]}" \
+  --set extraEnv[0].name=SCOPE_DECLARATION_ENABLED --set-string extraEnv[0].value=true \
+  --set extraEnv[1].name=SCOPE_DECLARATION_ENABLED --set-string extraEnv[1].value=false
+must_fail "extraEnv[0] has no name" "${dev[@]}" --set extraEnv[0].value=x
+must_fail "postgres.appPasswordEnv must not be DATABASE_URL" "${dev[@]}" --set postgres.appPasswordEnv=DATABASE_URL
+
 echo "── a chart without the supported-range annotation"
 bare="$(mktemp -d)"
 cp -R "$example" "${bare}/example-service"
 rm -rf "${bare}/example-service/charts" "${bare}/example-service/Chart.lock"
 yq -i 'del(.annotations)' "${bare}/example-service/Chart.yaml"
 sed -i.bak 's#file://../..#file://'"${repo_root}/${chart_dir}"'#' "${bare}/example-service/Chart.yaml"
-helm dependency build "${bare}/example-service" >/dev/null
+helm dependency build --skip-refresh "${bare}/example-service" >/dev/null
 if err="$(helm template example "${bare}/example-service" "${dev[@]}" 2>&1 >/dev/null)"; then
   fail "a chart without botresources.ai/supported-app-versions rendered"
 elif grep -qF "botresources.ai/supported-app-versions is required" <<<"$err"; then
@@ -246,25 +271,13 @@ else
   fail "${chart_dir}/CHANGELOG.md has no '## [${version}]' heading"
 fi
 
-base="origin/${GITHUB_BASE_REF:-main}"
-if git rev-parse --verify --quiet "$base" >/dev/null; then
-  merge_base="$(git merge-base HEAD "$base")"
-  changed="$(git diff --name-only "$merge_base" -- "$chart_dir" | grep -v "^${chart_dir}/ci/" || true)"
-  if [ -z "$changed" ]; then
-    ok "no packaged file changed since ${base}"
-  elif ! git cat-file -e "${merge_base}:${chart_dir}/Chart.yaml" 2>/dev/null; then
-    ok "${chart_dir} is new since ${base} (version ${version})"
-  else
-    previous="$(git show "${merge_base}:${chart_dir}/Chart.yaml" | yq '.version')"
-    if [ "$previous" = "$version" ]; then
-      fail "${chart_dir} changed but Chart.yaml version is still ${version}: a chart change is a chart release — bump the version and add a CHANGELOG.md entry"
-    else
-      ok "version ${previous} -> ${version}"
-    fi
-  fi
-else
-  echo "::notice::${base} not found; version-bump check skipped (not a PR checkout)"
-fi
+gate_rc=0
+gate_msg="$(chart_version_gate "$chart_dir" "origin/${GITHUB_BASE_REF:-main}" "chart/br-common-service/v")" || gate_rc=$?
+case "$gate_rc" in
+  0) ok "$gate_msg" ;;
+  2) echo "::notice::${gate_msg}" ;;
+  *) fail "$gate_msg" ;;
+esac
 
 if [ "$failures" -gt 0 ]; then
   echo "✗ ${failures} check(s) failed" >&2

@@ -14,8 +14,11 @@ Two kinds of values, never mixed (README.md, "The ops contract"):
     paths, database name, the environment variables it reads — is set by the
     service chart, once, for every environment;
   - what differs per environment — `env`, `image.tag`, `replicaCount`,
-    `resources`, `postgres.host`, `nats.url`, scheduling — has NO default here:
-    a missing value fails the render with a message that names it.
+    `resources`, `postgres.host`, `postgres.port`, `postgres.trustedNetwork`,
+    the DSN Secret names, `nats.url` — has NO default here: a missing value
+    fails the render with a message that names it. (Optional per-environment
+    settings — scheduling, a PodDisruptionBudget — are simply absent unless
+    set.)
 
 Under `helm lint`, `required` and `fail` report instead of stopping the
 render, so no helper may panic on an empty value it has just reported (a
@@ -194,65 +197,6 @@ the render.
 {{- fail "resources is required: requests and limits of the service container, set by the deploying repository per environment" -}}
 {{- end -}}
 {{- toYaml $resources -}}
-{{- end -}}
-
-{{- /* ── Postgres ─────────────────────────────────────────────────────────── */ -}}
-
-{{- /* "true" when the binary migrates its database at boot as the owner role. */ -}}
-{{- define "br-common-service.migrates" -}}
-{{- include "br-common-service.flag" (dict "value" (.Values.postgres | default dict).migrate "default" true "field" "postgres.migrate") -}}
-{{- end -}}
-
-{{- define "br-common-service.postgresHost" -}}
-{{- toString (required "postgres.host is required: the Postgres read-write Service of this environment (e.g. the CNPG <cluster>-rw Service), set by the deploying repository per environment" (.Values.postgres | default dict).host) -}}
-{{- end -}}
-
-{{- define "br-common-service.postgresPort" -}}
-{{- $pg := .Values.postgres | default dict -}}
-{{- include "br-common-service.tcpPort" (dict "value" (default 5432 $pg.port) "field" "postgres.port") -}}
-{{- end -}}
-
-{{- define "br-common-service.postgresDatabase" -}}
-{{- toString (required "postgres.database is required: the database the service owns; set it in the service chart" (.Values.postgres | default dict).database) -}}
-{{- end -}}
-
-{{- define "br-common-service.appSecretName" -}}
-{{- toString (required "postgres.appSecretName is required: the Secret (keys username, password) of the least-privilege runtime role behind DATABASE_URL. It must never name the owner Secret: the owner role bypasses row-level security" (.Values.postgres | default dict).appSecretName) -}}
-{{- end -}}
-
-{{- define "br-common-service.ownerSecretName" -}}
-{{- $pg := .Values.postgres | default dict -}}
-{{- $owner := toString (required "postgres.ownerSecretName is required: the Secret (keys username, password) of the database owner role behind DATABASE_URL_OWNER, used only to migrate at boot. Set postgres.migrate=false for a service that never migrates" $pg.ownerSecretName) -}}
-{{- if and $owner (eq $owner (toString $pg.appSecretName)) -}}
-{{- fail "postgres.ownerSecretName and postgres.appSecretName name the same Secret: the runtime pool would run as the owner role, which bypasses row-level security" -}}
-{{- end -}}
-{{- $owner -}}
-{{- end -}}
-
-{{- /*
-TRUSTED_NETWORK_HOSTS (br-util-postgres): the hosts a DSN may reach WITHOUT
-TLS. The library builds both DSNs from `postgres.host`, so the only host the
-pod ever connects to is that one: `postgres.trustedNetwork: true` trusts
-exactly it, and nothing else can be listed. Default false — TLS required
-(sslmode=require), and br-util-postgres refuses a plaintext remote DSN at
-boot. A per-environment statement: an in-namespace Postgres Service without
-TLS (CNPG's <cluster>-rw) is trusted, any other host is not.
-*/ -}}
-{{- define "br-common-service.trustedNetwork" -}}
-{{- include "br-common-service.flag" (dict "value" (.Values.postgres | default dict).trustedNetwork "default" false "field" "postgres.trustedNetwork") -}}
-{{- end -}}
-
-{{- define "br-common-service.envVarName" -}}
-{{- if not (regexMatch "^[A-Z_][A-Z0-9_]*$" (toString .value)) -}}
-{{- fail (printf "%s %q is not an environment variable name ([A-Z_][A-Z0-9_]*)" .field (toString .value)) -}}
-{{- end -}}
-{{- .value -}}
-{{- end -}}
-
-{{- /* ── NATS ─────────────────────────────────────────────────────────────── */ -}}
-
-{{- define "br-common-service.natsUrl" -}}
-{{- toString (required "nats.url is required: the NATS server of this environment (NATS_URL), set by the deploying repository per environment" (.Values.nats | default dict).url) -}}
 {{- end -}}
 
 {{- /* ── Rollout on Secret change ─────────────────────────────────────────── */ -}}

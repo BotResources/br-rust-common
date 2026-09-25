@@ -61,7 +61,9 @@ done
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-helm dependency build "$example" >/dev/null
+# charts/ and Chart.lock are build output: rebuild them from this checkout.
+rm -rf "${example}/charts" "${example}/Chart.lock"
+helm dependency build --skip-refresh "$example" >/dev/null
 
 normalise() {
   yq eval-all -P '[.] | map(select(. != null)) | sort_by(.kind, .metadata.name) | .[] | ... comments="" | sort_keys(..) | split_doc' -

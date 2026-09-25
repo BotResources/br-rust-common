@@ -1,10 +1,17 @@
 # What a deploying repository ADDS to each per-environment values file when it
-# moves a pre-library service chart onto br-common-service. The pre-library
-# charts hard-coded TRUSTED_NETWORK_HOSTS to their Postgres Service; the
-# library derives it from `postgres.host`, but only when the environment says
-# that host speaks plaintext on a trusted network.
+# moves a pre-library service chart onto br-common-service: the values the
+# pre-library chart defaulted in its own values.yaml, which the library leaves
+# to the environment without a default.
+#   - TRUSTED_NETWORK_HOSTS was hard-coded to the Postgres Service; the library
+#     derives it from `postgres.host`, but only when the environment states
+#     that host speaks plaintext on a trusted network;
+#   - the Postgres port and the two DSN Secret names are the environment's
+#     objects, never the service chart's.
 #
 # ../diff-against-chart.sh layers this file over the deploying repository's
 # own per-environment values when it renders the example chart.
 postgres:
+  port: 5432
   trustedNetwork: true
+  appSecretName: pg-charter-app-credentials
+  ownerSecretName: pg-charter-owner-credentials

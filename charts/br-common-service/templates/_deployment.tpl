@@ -9,6 +9,7 @@ the owner DSN (DATABASE_URL_OWNER), open the runtime pool through the app DSN
 soon as the listener is up, readiness only once the service can serve.
 */ -}}
 {{- define "br-common-service.deployment" -}}
+{{- include "br-common-service.checkEnv" . -}}
 {{- $name := include "br-common-service.name" . -}}
 {{- $port := include "br-common-service.port" . -}}
 {{- $pgHost := include "br-common-service.postgresHost" . -}}

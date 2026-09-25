@@ -1,6 +1,7 @@
 # What the service binary defines — the same in every environment. A service
-# chart ships these in its own values.yaml; the deploying repository sets only
-# the per-environment values (values-dev.yaml and siblings stand in for them).
+# chart ships these in its own values.yaml; the deploying repository sets the
+# per-environment values, its own objects' names included (values-dev.yaml and
+# siblings stand in for them).
 #
 # These mirror the pre-library chart of charter, a BotResources Rust service
 # built on the br-rust-common crates.
@@ -19,8 +20,6 @@ probes:
 
 postgres:
   database: charter
-  appSecretName: pg-charter-app-credentials
-  ownerSecretName: pg-charter-owner-credentials
 
 # The BotResources GraphQL gateway discovers its subgraphs by this label.
 commonLabels:

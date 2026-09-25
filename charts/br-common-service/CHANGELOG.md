@@ -10,8 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the chart adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 a major changes the ops contract or removes a value, a minor adds an optional
 value, a patch changes neither. `.github/scripts/check-chart.sh` requires a
-`## [<version>]` heading here that matches the `version` in `Chart.yaml`, and a
-version bump for every change under `charts/br-common-service/` outside `ci/`.
+`## [<version>]` heading here that matches the `version` in `Chart.yaml`, and,
+for every change under `charts/br-common-service/` outside `ci/`, a version
+greater than the base branch's that is not yet released.
 
 ## [1.0.0] - 2026-09-25
 
@@ -31,20 +32,24 @@ version bump for every change under `charts/br-common-service/` outside `ci/`.
   `postgres.appPasswordEnv`, `postgres.migrate`, `args`, `extraEnv`,
   `maxReplicas`, `strategy`, `commonLabels`.
 - **No default for a per-environment value**: `env`, `image.tag`,
-  `replicaCount`, `resources`, `postgres.host`, `nats.url`, and the two DSN
-  Secret names fail the render when absent, with a message that names them.
+  `replicaCount`, `resources`, `postgres.host`, `postgres.port`,
+  `postgres.trustedNetwork`, `nats.url`, and the two DSN Secret names (the
+  deploying repository's objects) fail the render when absent, with a message
+  that names them.
 - **The two-role Postgres DSNs** (`DATABASE_URL` as the app role,
   `DATABASE_URL_OWNER` as the owner role, for migrations only), built by
   interpolation from Secret keys `username` / `password`; the principle that
   every role password is alphanumeric is documented at the interpolation site.
   `postgres.trustedNetwork: true` sets `TRUSTED_NETWORK_HOSTS` to exactly
-  `postgres.host`; the default is TLS required.
+  `postgres.host`; `false` requires TLS.
 - **Render guards**: the image tag must be a release version inside the
   service chart's `botresources.ai/supported-app-versions` annotation (unless
   `image.enforceSupportedVersions: false`); `replicaCount` above
   `maxReplicas`; a PodDisruptionBudget that leaves no pod evictable; an owner
   Secret equal to the app Secret; a `commonLabels` entry that replaces a
-  library label; a probe override that is not a timing field.
+  library label; a probe override that is not a timing field; an `extraEnv`
+  entry (or `postgres.appPasswordEnv`) that would replace a contract variable,
+  sets `ALLOW_INSECURE_DATABASE`, repeats a name or has none.
 - **Hardened pod by default**: non-root UID 65532, `RuntimeDefault` seccomp,
   no privilege escalation, read-only root filesystem, every capability dropped,
   service-account token not mounted.
