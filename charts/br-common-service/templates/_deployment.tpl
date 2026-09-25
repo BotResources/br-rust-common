@@ -66,10 +66,12 @@ spec:
         Wait for the Postgres Service to accept TCP before the service boots:
         the binary migrates on every start (advisory-locked, safe with several
         pods), and a pod that crash-loops on a not-yet-ready database only
-        delays itself with back-off.
+        delays itself with back-off. The default image is busybox 1.36 pinned
+        to the digest of its multi-arch index (amd64 and arm64 among others),
+        so the tag cannot move under a running environment.
         */}}
         - name: wait-for-postgres
-          image: {{ $wait.image | default "busybox:1.36" | quote }}
+          image: {{ $wait.image | default "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662" | quote }}
           command:
             - sh
             - -c

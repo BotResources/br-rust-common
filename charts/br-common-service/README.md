@@ -59,7 +59,7 @@ modified copy of the context.
 | `br-common-service.deployment` | `Deployment` |
 | `br-common-service.pdb` | `PodDisruptionBudget`, or nothing unless `podDisruptionBudget.enabled` |
 | `br-common-service.networkpolicy` | `NetworkPolicy`, or nothing unless `networkPolicy.enabled` |
-| `br-common-service.name`, `.labels`, `.selectorLabels`, `.image`, `.imageTag` | helpers for the service chart's own resources |
+| `br-common-service.name`, `.labels`, `.selectorLabels`, `.image`, `.imageTag` | helpers for the service chart's own resources (`.imageTag` is the checked `image.tag`, digest included) |
 
 ## The ops contract
 
@@ -102,8 +102,8 @@ deploying repository's own objects — set by the deploying repository.
 |---|---|---|---|
 | `serviceName` | service chart | **required** | DNS-1035 name of every resource and of the selector. |
 | `image.repository` | service chart | **required** | Image without tag. |
-| `image.tag` | environment | **required** | The version to run (Kargo writes it on promotion). Must be a release version inside the service chart's `botresources.ai/supported-app-versions` annotation. |
-| `image.enforceSupportedVersions` | local build only | `true` | `false` admits a tag that is not a version (a local build such as `dev-<sha>`). A version tag is always checked against the range: no values file can pair the chart with a binary outside it. |
+| `image.tag` | environment | **required** | The version to run (Kargo writes it on promotion): a release version — SemVer 2.0 `MAJOR.MINOR.PATCH[-PRERELEASE]`, optional leading `v`, no build metadata (`+…` is not valid in an OCI tag) — inside the service chart's `botresources.ai/supported-app-versions` annotation. It may end with a digest, `@sha256:<64 lowercase hex>`, rendered as `<repository>:<tag>@sha256:…`: the digest is admitted whatever `image.enforceSupportedVersions` says, and the tag before it is checked as if it were alone. Anything else fails the render: `latest`, a tag that starts like a version without being a full one (`0.9`, `0.9.0_x`), a tag that is not a valid OCI tag. |
+| `image.enforceSupportedVersions` | local build only | `true` | `false` admits one more kind of tag: a local build, whose tag starts with `local-`, `local.`, `dev-` or `dev.` (e.g. `local-build`, `dev-<sha>`) and has no version to check. Nothing else: a version tag is still checked against the range (no values file can pair the chart with a binary outside it), and `latest` or a tag that starts like a version without being one still fails. |
 | `image.pullPolicy` | service chart | `IfNotPresent` | |
 | `port` | service chart | **required** | `PORT`, the container port and the Service port. |
 | `args` | service chart | none | Container arguments, when the image needs a subcommand. |
@@ -129,12 +129,12 @@ deploying repository's own objects — set by the deploying repository.
 | `imagePullSecrets` | environment | none | Kubernetes shape: `[{name: …}]`. |
 | `nodeSelector`, `tolerations`, `affinity` | environment | none | Scheduling. |
 | `topologySpreadEnabled` | environment | `false` | Spread pods across nodes (`ScheduleAnyway`). |
-| `podDisruptionBudget.enabled` | environment | `false` | With exactly one of `minAvailable` / `maxUnavailable`, each an integer or a percentage (`"50%"`, 0–100); a quoted integer is read as the integer. A budget that leaves no pod evictable fails: it would hang every node drain — `minAvailable` ≥ `replicaCount`, a percentage counted as Kubernetes counts it (rounded up: `100%`, or `67%` of 3 pods), or `maxUnavailable` `0` / `0%`. |
+| `podDisruptionBudget.enabled` | environment | `false` | With exactly one of `minAvailable` / `maxUnavailable`, each an integer or a percentage (`"50%"`, 0–100); a quoted integer is read as the integer. A budget that leaves no pod evictable fails: it would hang every node drain — `minAvailable` ≥ `replicaCount` when `replicaCount` is above 0, a percentage counted as Kubernetes counts it (rounded up: `100%`, or `67%` of 3 pods), or `maxUnavailable` `0` / `0%` at any `replicaCount`. At `replicaCount` 0 there is no pod to evict, so any `minAvailable` renders: an environment scaled to 0 may keep its budget. |
 | `networkPolicy.enabled` | environment | `false` | With `networkPolicy.ingress` and/or `networkPolicy.egress` (rules, verbatim); each key present adds its direction to `policyTypes`. Named `serviceName`. |
 | `commonLabels` | service chart | none | String labels added to every resource and the pod template, e.g. `graphql-federation/component: subgraph` for gateway discovery. The five library labels cannot be replaced. |
 | `extraEnv` | service chart | none | Variables the binary reads beyond the contract, appended last (so they may reference `$(DATABASE_URL)` and the others). A contract variable, `ALLOW_INSECURE_DATABASE`, the `postgres.appPasswordEnv` name, a repeated name or an entry without a name fails the render. |
 | `extraInitContainers` | service chart | none | Appended after `wait-for-postgres`; one without a `securityContext` gets the hardened container defaults. Its environment is its own (not checked against the contract variables): a wait container may read the owner DSN. |
-| `waitForPostgres.enabled`, `.image` | service chart | `true`, `busybox:1.36` | The TCP wait before boot. |
+| `waitForPostgres.enabled`, `.image` | service chart | `true`, `busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662` | The TCP wait before boot. The default is busybox 1.36 pinned to the digest of its multi-arch index (amd64 and arm64 among others), so the tag cannot move under a running environment. |
 | `automountServiceAccountToken` | service chart | `false` | `true` only if the binary calls the Kubernetes API. |
 | `podSecurityContext`, `containerSecurityContext` | service chart | hardened | A key set here replaces the default key of the same name, a key set to `null` removes it. |
 
@@ -152,12 +152,13 @@ its move.
 
 **charter — verified.** [`ci/example-service`](ci/example-service) mirrors
 the pre-library chart of charter. Rendered with the deploying repository's
-dev, uat and prod values, the two charts differ in exactly three ways:
+dev, uat and prod values, the two charts differ in exactly four ways:
 
 - `app.kubernetes.io/managed-by` is `Helm` (`.Release.Service`), was `helm`;
 - the pod does not mount a service-account token;
 - `extraEnv` entries (`SCOPE_DECLARATION_ENABLED`) come after the contract
-  variables, no longer before them.
+  variables, no longer before them;
+- the `wait-for-postgres` image is the same `busybox:1.36`, pinned by digest.
 
 The deploying repository adds to each environment's values what the
 pre-library chart defaulted in its own `values.yaml`: `postgres.port`,
@@ -165,10 +166,11 @@ pre-library chart defaulted in its own `values.yaml`: `postgres.port`,
 `TRUSTED_NETWORK_HOSTS`) and the two DSN Secret names — see
 [`ci/example-service/values-deploy-additions.yaml`](ci/example-service/values-deploy-additions.yaml).
 
-**The other eight — read, not rendered.** All eight share the three
-differences above (every one labels `managed-by: helm` and mounts the token).
-Their templates show these further differences, none of them verified by a
-render yet:
+**The other eight — read, not rendered.** Like charter, each labels
+`managed-by: helm` and mounts the service-account token, and each but ux
+(which waits with `psql`, below) waits on the unpinned `busybox:1.36`. Their
+templates show these further differences, none of them verified by a render
+yet:
 
 | Charts | Pre-library | On the library |
 |---|---|---|

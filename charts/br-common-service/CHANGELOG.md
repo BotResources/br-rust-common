@@ -44,13 +44,20 @@ greater than the base branch's that is not yet released.
   `postgres.host`; `false` requires TLS: both DSNs end with
   `?sslmode=<postgres.sslMode>` (`require`, `verify-ca` or `verify-full`),
   the mode `br-util-postgres` requires of a remote host at boot.
-- **Render guards**: the image tag must be a release version inside the
-  service chart's `botresources.ai/supported-app-versions` annotation
-  (`image.enforceSupportedVersions: false` admits a tag that is not a
-  version, for a local build; a version tag is always checked);
+- **Render guards**: the image tag must be a release version (SemVer 2.0
+  `MAJOR.MINOR.PATCH[-PRERELEASE]`, optional leading `v`, no build metadata,
+  which an OCI tag cannot carry) inside the service chart's
+  `botresources.ai/supported-app-versions` annotation, optionally followed by
+  a digest `@sha256:<64 hex>` that is admitted whatever the flag says and
+  kept in the rendered reference; `image.enforceSupportedVersions: false`
+  admits one more kind of tag only, a local build (`local-…`, `local.…`,
+  `dev-…`, `dev.…`), while a version tag is always range-checked and `latest`,
+  a tag that starts like a version without being one (`0.9`, `0.9.0_x`) or
+  that is not a valid OCI tag always fail;
   `replicaCount` above `maxReplicas`; a PodDisruptionBudget that leaves no
   pod evictable, whether its bound is an integer, a quoted integer or a
-  percentage; a `postgres.sslMode` missing off a trusted network, set on one,
+  percentage (`minAvailable` checked when `replicaCount` is above 0,
+  `maxUnavailable` 0 at any count); a `postgres.sslMode` missing off a trusted network, set on one,
   or other than `require` / `verify-ca` / `verify-full`; an owner
   Secret equal to the app Secret; a `commonLabels` entry that replaces a
   library label; a probe override that is not a timing field; an `extraEnv`
@@ -58,6 +65,8 @@ greater than the base branch's that is not yet released.
   sets `ALLOW_INSECURE_DATABASE`, repeats a name or has none.
 - **Hardened pod by default**: non-root UID 65532, `RuntimeDefault` seccomp,
   no privilege escalation, read-only root filesystem, every capability dropped,
-  service-account token not mounted.
+  service-account token not mounted; the default `wait-for-postgres` image is
+  `busybox:1.36` pinned to the digest of its multi-arch index
+  (`sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662`).
 - **Rollout on Secret change**: the Stakater Reloader annotation lists every
   Secret the pod reads.

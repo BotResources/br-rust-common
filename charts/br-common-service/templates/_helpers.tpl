@@ -87,59 +87,6 @@ botresources.ai/env: {{ include "br-common-service.env" . | quote }}
 {{- with $labels }}{{ toYaml . }}{{ end -}}
 {{- end -}}
 
-{{- /* ── Image ────────────────────────────────────────────────────────────── */ -}}
-
-{{- /*
-THE SUPPORTED BINARY RANGE — the service versions the SERVICE chart can run.
-
-Declared by the service chart as the Chart.yaml annotation
-`botresources.ai/supported-app-versions`: a Masterminds semver constraint (the
-syntax of Helm's `semverCompare` and of Kargo's `constraint:`). `.Chart` is
-the service chart here, because the service chart includes these templates
-with its own context. Same annotation, same enforcement, as the runner charts
-(br-runner) and br-svc-runners.
-*/ -}}
-{{- define "br-common-service.supportedRange" -}}
-{{- $range := index (.Chart.Annotations | default dict) "botresources.ai/supported-app-versions" | default "" -}}
-{{- required (printf "%s: the Chart.yaml annotation botresources.ai/supported-app-versions is required — it states which versions of the service binary this chart can run" .Chart.Name) $range -}}
-{{- end -}}
-
-{{- /*
-The image tag the pod runs. REQUIRED: the deploying repository pins it per
-environment (Kargo writes it on promotion); the chart never picks a binary on
-its own. A version tag outside the supported range fails the render, ALWAYS —
-so a promotion's `helm template` step cannot pair a chart with a binary it
-cannot run, and no values file can lift that check. A tag that is not a
-version fails as well, unless `image.enforceSupportedVersions` is false: the
-one exception is a local build (e.g. `local-build`, `dev-<sha>`), which has no
-version to check.
-
-`else if` and a non-empty range on purpose: under `helm lint` a missing tag
-reaches the check as "", and `semverCompare` on "" is a template panic.
-*/ -}}
-{{- define "br-common-service.imageTag" -}}
-{{- $image := .Values.image | default dict -}}
-{{- $tag := toString (required "image.tag is required: the service version to deploy, set per environment by the deploying repository (Kargo writes it on promotion)" $image.tag) -}}
-{{- $isVersion := regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$" $tag -}}
-{{- $enforce := eq (include "br-common-service.flag" (dict "value" $image.enforceSupportedVersions "default" true "field" "image.enforceSupportedVersions")) "true" -}}
-{{- if or $enforce $isVersion -}}
-{{- $range := include "br-common-service.supportedRange" . -}}
-{{- if not $isVersion -}}
-{{- fail (printf "image.tag %q is not a release version. The chart %s supports %s (Chart.yaml annotation botresources.ai/supported-app-versions); image.enforceSupportedVersions=false admits a tag that is not a version, for a local build only" $tag .Chart.Name $range) -}}
-{{- else if $range -}}
-{{- if not (semverCompare $range $tag) -}}
-{{- fail (printf "image.tag %s is outside the range the chart %s %s supports: %s (Chart.yaml annotation botresources.ai/supported-app-versions). Deploy it with a chart version whose range covers %s" $tag .Chart.Name .Chart.Version $range $tag) -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- $tag -}}
-{{- end -}}
-
-{{- define "br-common-service.image" -}}
-{{- $image := .Values.image | default dict -}}
-{{- required "image.repository is required: the service image, without tag; set it in the service chart" $image.repository -}}:{{- include "br-common-service.imageTag" . -}}
-{{- end -}}
-
 {{- /* ── Scalars ──────────────────────────────────────────────────────────── */ -}}
 
 {{- /*

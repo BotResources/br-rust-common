@@ -95,6 +95,8 @@ app_dsn_port='postgres://$(PGUSER):$(PGPASSWORD)@pg-rw:6432/charter'            
 app_dsn_tls='postgres://$(PGUSER):$(PGPASSWORD)@pg-rw:5432/charter?sslmode=require'                    # trufflehog:ignore
 app_dsn_verify='postgres://$(PGUSER):$(PGPASSWORD)@pg-rw:5432/charter?sslmode=verify-full'             # trufflehog:ignore
 owner_dsn_verify='postgres://$(PGUSER_OWNER):$(PGPASSWORD_OWNER)@pg-rw:5432/charter?sslmode=verify-full' # trufflehog:ignore
+# busybox:1.36, pinned to the digest of its multi-arch index (amd64, arm64, …).
+wait_image='busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662'
 for env in $envs; do
   echo "── ops contract (${env})"
   out="$(render -f "${example}/values-${env}.yaml")"
@@ -132,6 +134,7 @@ for env in $envs; do
   expect "reload annotation" "pg-charter-owner-credentials,pg-charter-app-credentials,registry-pull" \
     "$(q "$out" Deployment '.metadata.annotations["secret.reloader.stakater.com/reload"]')"
   expect "wait-for-postgres" "wait-for-postgres" "$(q "$out" Deployment '.spec.template.spec.initContainers[0].name')"
+  expect "wait image pinned by digest" "$wait_image" "$(q "$out" Deployment '.spec.template.spec.initContainers[0].image')"
   expect "no token mounted" "false" "$(q "$out" Deployment '.spec.template.spec.automountServiceAccountToken')"
   expect "runAsNonRoot" "true" "$(q "$out" Deployment '.spec.template.spec.securityContext.runAsNonRoot')"
   expect "readOnlyRootFilesystem" "true" "$(q "$out" Deployment "${c}.securityContext.readOnlyRootFilesystem")"
@@ -197,9 +200,20 @@ expect "DATABASE_URL carries the TLS mode" "$app_dsn_verify" \
 expect "DATABASE_URL_OWNER carries the TLS mode" "$owner_dsn_verify" \
   "$(q "$out" Deployment "${c}.env[] | select(.name == \"DATABASE_URL_OWNER\") | .value")"
 
-echo "── a local build, on explicit request"
+echo "── image references: a digest pin, a local build on explicit request"
+# Any digest: the chart checks its shape, never its value.
+digest="sha256:$(printf '%064d' 0 | tr 0 a)"
+repo='ghcr.io/botresources/br-svc-charter'
+out="$(render -f "${example}/values-dev.yaml" --set-string "image.tag=0.5.3@${digest}")"
+expect "a version pinned by digest, the check enforced" "${repo}:0.5.3@${digest}" "$(q "$out" Deployment "${c}.image")"
+out="$(render -f "${example}/values-dev.yaml" --set-string image.tag=v0.5.4)"
+expect "a leading v" "${repo}:v0.5.4" "$(q "$out" Deployment "${c}.image")"
 out="$(render -f "${example}/values-dev.yaml" --set image.tag=local-build --set image.enforceSupportedVersions=false)"
-expect "local tag" "ghcr.io/botresources/br-svc-charter:local-build" "$(q "$out" Deployment "${c}.image")"
+expect "local tag" "${repo}:local-build" "$(q "$out" Deployment "${c}.image")"
+out="$(render -f "${example}/values-dev.yaml" --set-string "image.tag=dev.4f2a9c1@${digest}" --set image.enforceSupportedVersions=false)"
+expect "local tag pinned by digest" "${repo}:dev.4f2a9c1@${digest}" "$(q "$out" Deployment "${c}.image")"
+out="$(render -f "${example}/values-dev.yaml" --set-string image.tag=0.5.3 --set image.enforceSupportedVersions=false)"
+expect "a version in range, the check lifted" "${repo}:0.5.3" "$(q "$out" Deployment "${c}.image")"
 
 echo "── PodDisruptionBudget bounds: percentages, quoted integers"
 all=(-f "${example}/values-prod.yaml" -f "${example}/values-all-fields.yaml")
@@ -209,6 +223,11 @@ out="$(render "${all[@]}" --set-string podDisruptionBudget.minAvailable=2)"
 expect "quoted integer rendered as an integer" "2" "$(q "$out" PodDisruptionBudget '.spec.minAvailable | to_json')"
 out="$(render "${all[@]}" --set podDisruptionBudget.minAvailable=null --set-string podDisruptionBudget.maxUnavailable=1%)"
 expect "maxUnavailable percentage" '"1%"' "$(q "$out" PodDisruptionBudget '.spec.maxUnavailable | to_json')"
+# No pod, nothing to evict: an environment scaled to 0 keeps its budget.
+out="$(render -f "${example}/values-dev.yaml" --set replicaCount=0 --set podDisruptionBudget.enabled=true --set podDisruptionBudget.minAvailable=1)"
+expect "minAvailable kept at replicaCount 0" "1" "$(q "$out" PodDisruptionBudget '.spec.minAvailable')"
+out="$(render -f "${example}/values-dev.yaml" --set replicaCount=0 --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=100%)"
+expect "minAvailable 100% kept at replicaCount 0" '"100%"' "$(q "$out" PodDisruptionBudget '.spec.minAvailable | to_json')"
 
 # ── 5. Render guards ────────────────────────────────────────────────────────
 # must_fail <message fragment> <helm template args…>
@@ -236,9 +255,28 @@ must_fail "resources is required" "${dev[@]}" --set resources=null
 
 echo "── guards"
 must_fail "is outside the range" "${dev[@]}" --set image.tag=0.6.0
+must_fail "is outside the range" "${dev[@]}" --set-string "image.tag=0.6.0@${digest}"
 must_fail "is not a release version" "${dev[@]}" --set image.tag=latest
-# enforceSupportedVersions=false admits a tag that is not a version, never a version outside the range.
-must_fail "is outside the range" "${dev[@]}" --set image.enforceSupportedVersions=false --set image.tag=0.9.0
+must_fail "is not a release version" "${dev[@]}" --set-string image.tag=0.5
+# SemVer build metadata renders, then fails at the kubelet: an OCI tag has no '+'.
+must_fail "is not an image tag" "${dev[@]}" --set-string image.tag=0.5.3+build.1
+# A digest in upper-case hex, a short one, one without a tag.
+must_fail "is not an image tag" "${dev[@]}" --set-string "image.tag=0.5.3@sha256:$(printf '%064d' 0 | tr 0 A)"
+must_fail "is not an image tag" "${dev[@]}" --set-string image.tag=0.5.3@sha256:abc
+must_fail "is not an image tag" "${dev[@]}" --set-string "image.tag=@${digest}"
+# enforceSupportedVersions=false admits a local build (local-…, dev-…) and
+# nothing else: never a version outside the range, digest or not, never a tag
+# that starts like a version without being one, never `latest`.
+lifted=("${dev[@]}" --set image.enforceSupportedVersions=false)
+must_fail "is outside the range" "${lifted[@]}" --set image.tag=0.9.0
+must_fail "is outside the range" "${lifted[@]}" --set-string "image.tag=0.9.0@${digest}"
+must_fail "is not a release version: a version tag is" "${lifted[@]}" --set-string image.tag=0.9
+must_fail "is not a release version: a version tag is" "${lifted[@]}" --set-string image.tag=0.9.0_x
+must_fail "is not a release version: a version tag is" "${lifted[@]}" --set-string image.tag=v0.5.3-01
+must_fail "neither a release version nor a local build tag" "${lifted[@]}" --set image.tag=latest
+must_fail "neither a release version nor a local build tag" "${lifted[@]}" --set image.tag=localbuild
+must_fail "is not an image tag" "${lifted[@]}" --set-string image.tag=0.5.3+build.1
+must_fail "image.enforceSupportedVersions must be a YAML boolean" "${dev[@]}" --set-string image.enforceSupportedVersions=false
 must_fail "exceeds maxReplicas" "${dev[@]}" --set maxReplicas=1 --set replicaCount=2
 must_fail "leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.minAvailable=1
 must_fail "leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=0
@@ -248,6 +286,8 @@ must_fail "minAvailable 1 with replicaCount 1" "${dev[@]}" --set podDisruptionBu
 must_fail "minAvailable 67% with replicaCount 3" "${all[@]}" --set-string podDisruptionBudget.minAvailable=67%
 must_fail "maxUnavailable 0% leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.maxUnavailable=0%
 must_fail "maxUnavailable 0 leaves no pod evictable" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.maxUnavailable=0
+must_fail "maxUnavailable 0 leaves no pod evictable, at any replicaCount" "${dev[@]}" --set replicaCount=0 \
+  --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=0
 must_fail "must be an integer or a percentage" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=half
 must_fail "must be an integer or a percentage" "${dev[@]}" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=-1
 must_fail "is above 100%" "${dev[@]}" --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.maxUnavailable=150%

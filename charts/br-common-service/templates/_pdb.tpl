@@ -5,8 +5,11 @@ br-common-service.pdb — the PodDisruptionBudget, rendered only when
 percentage, and a budget that no eviction can ever satisfy fails the render —
 it would hang every node drain forever:
   - `minAvailable` at or above `replicaCount`, a percentage counted as
-    Kubernetes counts it (rounded up: 100%, or 60% of 1 pod, keeps every pod);
-  - `maxUnavailable` 0 or 0%.
+    Kubernetes counts it (rounded up: 100%, or 60% of 1 pod, keeps every pod).
+    Checked only when `replicaCount` is above 0: with no pod, there is nothing
+    to evict, so an environment scaled to 0 may keep its budget;
+  - `maxUnavailable` 0 or 0%, at any `replicaCount`: it never allows an
+    eviction once a pod runs.
 A quoted integer ("1") is read as the integer, so the guard cannot be passed
 by quoting.
 */ -}}
@@ -25,11 +28,11 @@ by quoting.
 {{- $n := int (trimSuffix "%" $bound) -}}
 {{- /* The pods the budget counts, rounded up for a percentage as Kubernetes does. */ -}}
 {{- $pods := ternary (div (add (mul $replicas $n) 99) 100) $n $percent -}}
-{{- if and $hasMin (ge (int $pods) $replicas) -}}
+{{- if and $hasMin (gt $replicas 0) (ge (int $pods) $replicas) -}}
 {{- fail (printf "podDisruptionBudget.minAvailable %s with replicaCount %d keeps %d pod(s) available and leaves no pod evictable: every node drain would hang. Lower it, or disable the budget" $bound $replicas (int $pods)) -}}
 {{- end -}}
 {{- if and $hasMax (eq $n 0) -}}
-{{- fail (printf "podDisruptionBudget.maxUnavailable %s leaves no pod evictable: every node drain would hang" $bound) -}}
+{{- fail (printf "podDisruptionBudget.maxUnavailable %s leaves no pod evictable, at any replicaCount: once a pod runs, every node drain would hang. Raise it, or disable the budget" $bound) -}}
 {{- end -}}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
