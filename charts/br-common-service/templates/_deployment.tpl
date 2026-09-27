@@ -25,6 +25,27 @@ soon as the listener is up, readiness only once the service can serve.
 {{- $startup := $probes.startup | default dict -}}
 {{- $livenessPath := include "br-common-service.probePath" (dict "value" $probes.livenessPath "default" "/livez" "field" "probes.livenessPath") -}}
 {{- $readinessPath := include "br-common-service.probePath" (dict "value" $probes.readinessPath "default" "/readyz" "field" "probes.readinessPath") -}}
+{{- /*
+extraVolumes / extraVolumeMounts: pod volumes and mounts of the service
+container, rendered verbatim, only when set. A mount must name a declared
+volume: the API server would refuse the Deployment at apply time, so the
+render refuses it first.
+*/ -}}
+{{- $volumeNames := list -}}
+{{- range $i, $volume := (.Values.extraVolumes | default list) -}}
+{{- if not (get $volume "name") -}}
+{{- fail (printf "extraVolumes[%d] has no name" $i) -}}
+{{- end -}}
+{{- if has $volume.name $volumeNames -}}
+{{- fail (printf "extraVolumes declares %s twice" $volume.name) -}}
+{{- end -}}
+{{- $volumeNames = append $volumeNames $volume.name -}}
+{{- end -}}
+{{- range $i, $mount := (.Values.extraVolumeMounts | default list) -}}
+{{- if not (has (get $mount "name" | default "") $volumeNames) -}}
+{{- fail (printf "extraVolumeMounts[%d] mounts %q, which extraVolumes does not declare" $i (get $mount "name" | default "")) -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -217,6 +238,11 @@ spec:
           securityContext:
             {{- . | nindent 12 }}
           {{- end }}
+          {{- /* E.g. an emptyDir at /tmp for a runtime that writes scratch files, with readOnlyRootFilesystem kept. */}}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
       {{- if eq (include "br-common-service.flag" (dict "value" .Values.topologySpreadEnabled "default" false "field" "topologySpreadEnabled")) "true" }}
       topologySpreadConstraints:
         - maxSkew: 1
@@ -236,6 +262,10 @@ spec:
       {{- end }}
       {{- with .Values.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end -}}
