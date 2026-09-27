@@ -34,7 +34,7 @@ annotations:
   botresources.ai/supported-app-versions: ">=1.4.0 <1.5.0"
 dependencies:
   - name: br-common-service
-    version: "~1.0.0"
+    version: "~1.1.0"
     repository: oci://ghcr.io/botresources/charts
 ```
 
@@ -79,8 +79,8 @@ What the library renders the same way for every service, without a value:
 | `NATS_URL` | `nats.url`. |
 | Contract variables | the variables above are the library's. Kubernetes keeps the last of two entries with the same name, so `extraEnv` may not redeclare one, nor `ALLOW_INSECURE_DATABASE`, nor `postgres.appPasswordEnv`, nor one of its own entries: the render fails. An extra `DATABASE_URL: $(DATABASE_URL_OWNER)` would otherwise run every request as the owner role, which bypasses row-level security. |
 | Boot order | init container `wait-for-postgres` waits until `postgres.host:port` accepts TCP; the service then migrates, binds NATS and serves. |
-| Rollout | annotation `secret.reloader.stakater.com/reload` lists every Secret the pod reads (owner, app, `extraEnv` and `extraInitContainers` references, pull secrets): the DSNs are read once at boot, so a rotated password needs a new pod. |
-| Hardening | non-root UID/GID 65532, `RuntimeDefault` seccomp, no privilege escalation, read-only root filesystem, all capabilities dropped, service-account token not mounted. |
+| Rollout | annotation `secret.reloader.stakater.com/reload` lists every Secret the pod reads through its environment (owner, app, `extraEnv` and `extraInitContainers` references, pull secrets): the DSNs are read once at boot, so a rotated password needs a new pod. A Secret mounted through `extraVolumes` is not listed: the kubelet refreshes its files in place. |
+| Hardening | non-root UID/GID 65532, `RuntimeDefault` seccomp, no privilege escalation, read-only root filesystem, all capabilities dropped, service-account token not mounted. A service that must write files (a runtime's scratch space) gets a writable path through `extraVolumes` and `extraVolumeMounts`, never by turning the read-only root filesystem off. |
 
 ### Role passwords must be alphanumeric
 
@@ -134,6 +134,8 @@ deploying repository's own objects — set by the deploying repository.
 | `commonLabels` | service chart | none | String labels added to every resource and the pod template, e.g. `graphql-federation/component: subgraph` for gateway discovery. The five library labels cannot be replaced. |
 | `extraEnv` | service chart | none | Variables the binary reads beyond the contract, appended last (so they may reference `$(DATABASE_URL)` and the others). A contract variable, `ALLOW_INSECURE_DATABASE`, the `postgres.appPasswordEnv` name, a repeated name or an entry without a name fails the render. |
 | `extraInitContainers` | service chart | none | Appended after `wait-for-postgres`; one without a `securityContext` gets the hardened container defaults. Its environment is its own (not checked against the contract variables): a wait container may read the owner DSN. |
+| `extraVolumes` | service chart | none | Pod `volumes`, verbatim (Kubernetes shape). Rendered only when set. Each entry needs a `name`; a repeated name fails the render. E.g. `[{name: scratch, emptyDir: {sizeLimit: 64Mi}}]` for a runtime that writes to `/tmp`. |
+| `extraVolumeMounts` | service chart | none | `volumeMounts` of the service container, verbatim (Kubernetes shape). Rendered only when set. A mount that names no `extraVolumes` entry fails the render. E.g. `[{name: scratch, mountPath: /tmp}]`: the root filesystem stays read-only. An extra init container mounts a volume through its own `volumeMounts`. |
 | `waitForPostgres.enabled`, `.image` | service chart | `true`, `busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662` | The TCP wait before boot. The default is busybox 1.36 pinned to the digest of its multi-arch index (amd64 and arm64 among others), so the tag cannot move under a running environment. |
 | `automountServiceAccountToken` | service chart | `false` | `true` only if the binary calls the Kubernetes API. |
 | `podSecurityContext`, `containerSecurityContext` | service chart | hardened | A key set here replaces the default key of the same name, a key set to `null` removes it. |
@@ -186,6 +188,12 @@ yet:
 | website, anonymous-writer | a NetworkPolicy | `networkPolicy` (compare the rules) |
 | anonymous-writer | no owner role | `postgres.migrate: false` |
 | projects, services, timesheet | `SCOPE_DECLARATION_ENABLED` before the contract variables | `extraEnv`, after them |
+
+**engagement-notes** (a Python service, not one of the eight) writes scratch
+files: its pre-library chart mounts an emptyDir `scratch` (`sizeLimit: 64Mi`)
+at `/tmp` and sets `HOME` and `TMPDIR` to `/tmp`. On the library, that is
+`extraVolumes` plus `extraVolumeMounts` (since 1.1.0) and `extraEnv`, with the
+read-only root filesystem kept.
 
 ## CI
 

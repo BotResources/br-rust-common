@@ -14,6 +14,24 @@ value, a patch changes neither. `.github/scripts/check-chart.sh` requires a
 for every change under `charts/br-common-service/` outside `ci/`, a version
 greater than the base branch's that is not yet released.
 
+## [1.1.0] - 2026-09-27
+
+### Added
+
+Still **ops contract 1**, for services on br-rust-common `1.x`: two optional
+values, no default changed. A render that sets neither is byte-identical to
+1.0.0.
+
+- **`extraVolumes`** — pod `volumes`, rendered verbatim and only when set. Each
+  entry needs a `name`; a repeated name fails the render. Reason:
+  engagement-notes (a Python service) writes scratch files to `/tmp`, and its
+  move onto the library must keep `readOnlyRootFilesystem: true`, with an
+  emptyDir `scratch` as its only writable path.
+- **`extraVolumeMounts`** — `volumeMounts` of the service container, rendered
+  verbatim and only when set. A mount that names no `extraVolumes` entry fails
+  the render (the API server would refuse the Deployment at apply time).
+  Reason: the same — the emptyDir `scratch` mounted at `/tmp`.
+
 ## [1.0.0] - 2026-09-25
 
 ### Added
