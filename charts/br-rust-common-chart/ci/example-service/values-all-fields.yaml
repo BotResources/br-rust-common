@@ -1,4 +1,4 @@
-# Every optional field of br-common-service set at once, layered over
+# Every optional field of br-rust-common-chart set at once, layered over
 # values.yaml + values-prod.yaml by .github/scripts/check-chart.sh. Not a
 # realistic service: each value exists to prove one field reaches the render.
 image:

@@ -46,6 +46,11 @@ let fabric = Fabric::connect_with(
 ).await?;
 ```
 
+In a service the URL is `NATS_URL`, read and validated by
+[`br-util-boot`](../br-util-boot/README.md)'s `BootEnv` — whose constant
+`br_util_boot::env::NATS_URL` owns the name — and passed as
+`Fabric::connect(boot.nats_url.as_str())`, never a literal.
+
 `connect` dials anonymously; `connect_with` dials with a user/password
 (`NatsAuth { user, password }` — a typed pair that keeps `async_nats` out of the
 public signature). `NatsAuth` carries a hand-written `Debug` that masks the
@@ -1058,7 +1063,7 @@ from a fresh copy on recovery.
 ## Dependency
 
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.3.0", version = "1.3.0" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.4.0", version = "1.4.0" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.3.0", version = "1.3.0", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.4.0", version = "1.4.0", features = ["outbox"] }
 ```

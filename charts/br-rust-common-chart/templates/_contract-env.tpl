@@ -1,34 +1,44 @@
 {{- /*
-br-common-service — the environment variables of the ops contract: the
+br-rust-common-chart — the environment variables of the ops contract: the
 Postgres DSN parts, NATS, and the guard that keeps the contract variables the
 library's. Same rules as _helpers.tpl: the TOP-LEVEL `.Values` of the service
 chart, no default for a per-environment value.
+
+EVERY NAME IS THE CODE'S. A variable the binary reads is named by the
+br-rust-common constant that reads it — ENVIRONMENT, PORT, DATABASE_URL and
+NATS_URL by br_util_boot::env, DATABASE_URL_OWNER and TRUSTED_NETWORK_HOSTS by
+br_util_postgres::env — and .github/scripts/check-chart.sh fails when a
+rendered name differs from its constant (ci/ops-contract.json). The only
+names the chart owns are the ones only the chart uses: the DSN parts PGUSER,
+PGPASSWORD, PGUSER_OWNER, PGPASSWORD_OWNER, which the kubelet interpolates
+into the two DSNs, and POSTGRES_HOST, POSTGRES_PORT of its own
+wait-for-postgres container (README.md, "Names").
 */ -}}
 
 {{- /* ── Postgres ─────────────────────────────────────────────────────────── */ -}}
 
 {{- /* "true" when the binary migrates its database at boot as the owner role. */ -}}
-{{- define "br-common-service.migrates" -}}
-{{- include "br-common-service.flag" (dict "value" (.Values.postgres | default dict).migrate "default" true "field" "postgres.migrate") -}}
+{{- define "br-rust-common-chart.migrates" -}}
+{{- include "br-rust-common-chart.flag" (dict "value" (.Values.postgres | default dict).migrate "default" true "field" "postgres.migrate") -}}
 {{- end -}}
 
-{{- define "br-common-service.postgresHost" -}}
+{{- define "br-rust-common-chart.postgresHost" -}}
 {{- toString (required "postgres.host is required: the Postgres read-write Service of this environment (e.g. the CNPG <cluster>-rw Service), set by the deploying repository per environment" (.Values.postgres | default dict).host) -}}
 {{- end -}}
 
-{{- define "br-common-service.postgresPort" -}}
-{{- include "br-common-service.tcpPort" (dict "value" (required "postgres.port is required: the port of postgres.host (5432 for a CNPG <cluster>-rw Service), set by the deploying repository per environment" (.Values.postgres | default dict).port) "field" "postgres.port") -}}
+{{- define "br-rust-common-chart.postgresPort" -}}
+{{- include "br-rust-common-chart.tcpPort" (dict "value" (required "postgres.port is required: the port of postgres.host (5432 for a CNPG <cluster>-rw Service), set by the deploying repository per environment" (.Values.postgres | default dict).port) "field" "postgres.port") -}}
 {{- end -}}
 
-{{- define "br-common-service.postgresDatabase" -}}
+{{- define "br-rust-common-chart.postgresDatabase" -}}
 {{- toString (required "postgres.database is required: the database the service owns; set it in the service chart" (.Values.postgres | default dict).database) -}}
 {{- end -}}
 
-{{- define "br-common-service.appSecretName" -}}
+{{- define "br-rust-common-chart.appSecretName" -}}
 {{- toString (required "postgres.appSecretName is required: the Secret (keys username, password) of the least-privilege runtime role behind DATABASE_URL, set by the deploying repository. It must never name the owner Secret: the owner role bypasses row-level security" (.Values.postgres | default dict).appSecretName) -}}
 {{- end -}}
 
-{{- define "br-common-service.ownerSecretName" -}}
+{{- define "br-rust-common-chart.ownerSecretName" -}}
 {{- $pg := .Values.postgres | default dict -}}
 {{- $owner := toString (required "postgres.ownerSecretName is required: the Secret (keys username, password) of the database owner role behind DATABASE_URL_OWNER, used only to migrate at boot, set by the deploying repository. Set postgres.migrate=false for a service that never migrates" $pg.ownerSecretName) -}}
 {{- if and $owner (eq $owner (toString $pg.appSecretName)) -}}
@@ -38,11 +48,11 @@ chart, no default for a per-environment value.
 {{- end -}}
 
 {{- /*
-TRUSTED_NETWORK_HOSTS (br-util-postgres): the hosts a DSN may reach WITHOUT
-TLS. The library builds both DSNs from `postgres.host`, so the only host the
+TRUSTED_NETWORK_HOSTS (br_util_postgres::env::TRUSTED_NETWORK_HOSTS): the
+hosts a DSN may reach WITHOUT TLS. The library builds both DSNs from `postgres.host`, so the only host the
 pod ever connects to is that one: `postgres.trustedNetwork: true` trusts
 exactly it, and nothing else can be listed; `false` requires TLS, and both
-DSNs then end with `?sslmode=<postgres.sslMode>` (br-common-service.dsnQuery),
+DSNs then end with `?sslmode=<postgres.sslMode>` (br-rust-common-chart.dsnQuery),
 without which br-util-postgres refuses a remote DSN at boot.
 
 REQUIRED, no default: it is a per-environment statement (an in-namespace
@@ -55,12 +65,12 @@ while the render succeeds — `false` crash-loops a pod on a plaintext Service,
 lint` a missing value reaches the flag check as "", which is not reported a
 second time.
 */ -}}
-{{- define "br-common-service.trustedNetwork" -}}
+{{- define "br-rust-common-chart.trustedNetwork" -}}
 {{- $value := required "postgres.trustedNetwork is required: true when postgres.host speaks plaintext on a trusted network (an in-namespace Postgres Service without TLS), false to require TLS; set per environment by the deploying repository" (.Values.postgres | default dict).trustedNetwork -}}
 {{- if and (kindIs "string" $value) (eq $value "") -}}
 false
 {{- else -}}
-{{- include "br-common-service.flag" (dict "value" $value "default" false "field" "postgres.trustedNetwork") -}}
+{{- include "br-rust-common-chart.flag" (dict "value" $value "default" false "field" "postgres.trustedNetwork") -}}
 {{- end -}}
 {{- end -}}
 
@@ -80,14 +90,14 @@ certificate a public CA signed. On a trusted network the mode is refused: the
 host speaks plaintext, and one statement is enough.
 
 A missing `trustedNetwork` renders nothing here: the helper
-br-common-service.trustedNetwork reports it, once. Under `helm lint` a
+br-rust-common-chart.trustedNetwork reports it, once. Under `helm lint` a
 missing mode reaches the enum check as "", which is not reported a second
 time.
 */ -}}
-{{- define "br-common-service.dsnQuery" -}}
+{{- define "br-rust-common-chart.dsnQuery" -}}
 {{- $pg := .Values.postgres | default dict -}}
 {{- if or (kindIs "invalid" $pg.trustedNetwork) (eq (toString $pg.trustedNetwork) "") -}}
-{{- else if eq (include "br-common-service.trustedNetwork" .) "true" -}}
+{{- else if eq (include "br-rust-common-chart.trustedNetwork" .) "true" -}}
 {{- if not (kindIs "invalid" $pg.sslMode) -}}
 {{- fail "postgres.sslMode is set but postgres.trustedNetwork is true: a trusted host speaks plaintext. Set postgres.trustedNetwork: false to require TLS, or remove postgres.sslMode" -}}
 {{- end -}}
@@ -106,17 +116,17 @@ env entries with the same name, so an `extraEnv` entry named like a contract
 variable would silently replace it: `DATABASE_URL: $(DATABASE_URL_OWNER)`
 would run every request as the owner role, which bypasses row-level
 security; an extra `TRUSTED_NETWORK_HOSTS` would lift TLS for other hosts.
-ALLOW_INSECURE_DATABASE is refused as well: where a binary still reads it, it
-lifts TLS for every host. The same holds for `postgres.appPasswordEnv`, and an
-`extraEnv` entry may neither repeat it nor repeat another entry.
+The same holds for `postgres.appPasswordEnv`, and an `extraEnv` entry may
+neither repeat it nor repeat another entry. The list below is every variable
+the library renders; the chart gate proves each is refused.
 
 Init containers are not checked: each has its own environment (a psql wait
 container may legitimately read the owner DSN).
 */ -}}
-{{- define "br-common-service.checkEnv" -}}
+{{- define "br-rust-common-chart.checkEnv" -}}
 {{- $owned := list "ENVIRONMENT" "PORT" "TRUSTED_NETWORK_HOSTS" "PGUSER" "PGPASSWORD" "DATABASE_URL" "PGUSER_OWNER" "PGPASSWORD_OWNER" "DATABASE_URL_OWNER" "NATS_URL" -}}
 {{- $appPasswordEnv := toString ((.Values.postgres | default dict).appPasswordEnv | default "") -}}
-{{- if has $appPasswordEnv (append $owned "ALLOW_INSECURE_DATABASE") -}}
+{{- if has $appPasswordEnv $owned -}}
 {{- fail (printf "postgres.appPasswordEnv must not be %s: the library sets that variable" $appPasswordEnv) -}}
 {{- end -}}
 {{- $seen := list -}}
@@ -127,8 +137,6 @@ container may legitimately read the owner DSN).
 {{- end -}}
 {{- if not $name -}}
 {{- fail (printf "extraEnv[%d] has no name" $i) -}}
-{{- else if eq $name "ALLOW_INSECURE_DATABASE" -}}
-{{- fail "extraEnv must not set ALLOW_INSECURE_DATABASE: it lifts the TLS requirement for every host. Set postgres.trustedNetwork: true to trust postgres.host only" -}}
 {{- else if has $name $owned -}}
 {{- fail (printf "extraEnv must not set %s: the library renders it from its own values, and a second entry would silently replace it" $name) -}}
 {{- else if eq $name $appPasswordEnv -}}
@@ -140,7 +148,7 @@ container may legitimately read the owner DSN).
 {{- end -}}
 {{- end -}}
 
-{{- define "br-common-service.envVarName" -}}
+{{- define "br-rust-common-chart.envVarName" -}}
 {{- if not (regexMatch "^[A-Z_][A-Z0-9_]*$" (toString .value)) -}}
 {{- fail (printf "%s %q is not an environment variable name ([A-Z_][A-Z0-9_]*)" .field (toString .value)) -}}
 {{- end -}}
@@ -149,6 +157,7 @@ container may legitimately read the owner DSN).
 
 {{- /* ── NATS ─────────────────────────────────────────────────────────────── */ -}}
 
-{{- define "br-common-service.natsUrl" -}}
+{{- /* NATS_URL (br_util_boot::env::NATS_URL). */ -}}
+{{- define "br-rust-common-chart.natsUrl" -}}
 {{- toString (required "nats.url is required: the NATS server of this environment (NATS_URL), set by the deploying repository per environment" (.Values.nats | default dict).url) -}}
 {{- end -}}

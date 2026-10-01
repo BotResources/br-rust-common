@@ -1,3 +1,5 @@
+use crate::env::TRUSTED_NETWORK_HOSTS;
+
 pub(crate) fn is_loopback(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
@@ -7,7 +9,7 @@ pub(crate) fn is_on_trusted_network(host: &str, trusted: &[String]) -> bool {
 }
 
 pub(crate) fn resolve_trusted_network_hosts() -> Vec<String> {
-    std::env::var("TRUSTED_NETWORK_HOSTS")
+    std::env::var(TRUSTED_NETWORK_HOSTS)
         .ok()
         .map(|val| {
             val.split(',')

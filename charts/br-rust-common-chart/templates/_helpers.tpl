@@ -1,11 +1,11 @@
 {{- /*
-br-common-service — helpers.
+br-rust-common-chart — helpers.
 
 Every named template reads the TOP-LEVEL `.Values` of the context it is given:
 the service chart includes them with its own root context (`.`), so its
 values.yaml and the deploying repository's per-environment values are what
 these templates see. A library chart's own values.yaml would land under
-`.Values.br-common-service` of the service chart and never reach them, so
+`.Values.br-rust-common-chart` of the service chart and never reach them, so
 every default of this library is coded HERE, in the templates, and documented
 in README.md.
 
@@ -36,7 +36,7 @@ services and the GraphQL gateway address the service by its in-namespace
 Service short name (http://<serviceName>:<port>). The release name only fills
 app.kubernetes.io/instance.
 */ -}}
-{{- define "br-common-service.name" -}}
+{{- define "br-rust-common-chart.name" -}}
 {{- $name := toString (required "serviceName is required: the bare name of the service (Deployment, Service, ServiceAccount and the selector label app.kubernetes.io/name); set it in the service chart" .Values.serviceName) -}}
 {{- if and $name (not (regexMatch "^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$" $name)) -}}
 {{- fail (printf "serviceName %q is not a DNS-1035 label (lowercase letters, digits and '-', starting with a letter, at most 63 characters)" $name) -}}
@@ -49,12 +49,12 @@ The logical environment (e.g. dev, uat, prod): the ENVIRONMENT variable and
 the label botresources.ai/env. No default — the chart never guesses which
 environment it is in.
 */ -}}
-{{- define "br-common-service.env" -}}
+{{- define "br-rust-common-chart.env" -}}
 {{- toString (required "env is required: the logical environment this service is deployed in (e.g. dev, uat, prod), set by the deploying repository per environment" .Values.env) -}}
 {{- end -}}
 
-{{- define "br-common-service.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "br-common-service.name" . }}
+{{- define "br-rust-common-chart.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "br-rust-common-chart.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -63,17 +63,17 @@ Labels of every resource AND of the pod template. The five library labels
 cannot be replaced through `commonLabels`: two of them are the immutable
 Deployment selector.
 */ -}}
-{{- define "br-common-service.labels" -}}
-{{ include "br-common-service.selectorLabels" . }}
+{{- define "br-rust-common-chart.labels" -}}
+{{ include "br-rust-common-chart.selectorLabels" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/component: backend
-botresources.ai/env: {{ include "br-common-service.env" . | quote }}
-{{- with include "br-common-service.commonLabels" . }}
+botresources.ai/env: {{ include "br-rust-common-chart.env" . | quote }}
+{{- with include "br-rust-common-chart.commonLabels" . }}
 {{ . }}
 {{- end }}
 {{- end -}}
 
-{{- define "br-common-service.commonLabels" -}}
+{{- define "br-rust-common-chart.commonLabels" -}}
 {{- $owned := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/managed-by" "app.kubernetes.io/component" "botresources.ai/env" -}}
 {{- $labels := .Values.commonLabels | default dict -}}
 {{- range $key, $value := $labels }}
@@ -95,7 +95,7 @@ A boolean with a default. `default` cannot be used for booleans (it replaces
 Call with (dict "value" <v> "default" <bool> "field" "<values path>");
 returns "true" or "false".
 */ -}}
-{{- define "br-common-service.flag" -}}
+{{- define "br-rust-common-chart.flag" -}}
 {{- if kindIs "invalid" .value -}}
 {{- .default -}}
 {{- else if kindIs "bool" .value -}}
@@ -106,7 +106,7 @@ returns "true" or "false".
 {{- end -}}
 
 {{- /* A TCP port. Call with (dict "value" <v> "field" "<values path>"). */ -}}
-{{- define "br-common-service.tcpPort" -}}
+{{- define "br-rust-common-chart.tcpPort" -}}
 {{- $port := int .value -}}
 {{- if or (lt $port 1) (gt $port 65535) -}}
 {{- fail (printf "%s must be a TCP port (1-65535), got %v" .field .value) -}}
@@ -119,8 +119,8 @@ PORT, the container port and the Service port. No default: each service has
 its own port (in BotResources, the one the Projects registry assigns), and a
 library default would hide a collision in a shared namespace.
 */ -}}
-{{- define "br-common-service.port" -}}
-{{- include "br-common-service.tcpPort" (dict "value" (required "port is required: the port the service binary listens on (PORT), the container port and the Service port; set it in the service chart" .Values.port) "field" "port") -}}
+{{- define "br-rust-common-chart.port" -}}
+{{- include "br-rust-common-chart.tcpPort" (dict "value" (required "port is required: the port the service binary listens on (PORT), the container port and the Service port; set it in the service chart" .Values.port) "field" "port") -}}
 {{- end -}}
 
 {{- /*
@@ -130,7 +130,7 @@ a service that is not multi-pod safe (an in-process scheduler, an outbox pump
 that is not leader-elected) sets 1, and a per-environment value above it fails
 the render.
 */ -}}
-{{- define "br-common-service.replicas" -}}
+{{- define "br-rust-common-chart.replicas" -}}
 {{- $replicas := int (required "replicaCount is required: the number of pods, set by the deploying repository per environment" .Values.replicaCount) -}}
 {{- if lt $replicas 0 -}}
 {{- fail (printf "replicaCount must be >= 0, got %d" $replicas) -}}
@@ -143,7 +143,7 @@ the render.
 {{- $replicas -}}
 {{- end -}}
 
-{{- define "br-common-service.resources" -}}
+{{- define "br-rust-common-chart.resources" -}}
 {{- $resources := .Values.resources | default dict -}}
 {{- if not $resources -}}
 {{- fail "resources is required: requests and limits of the service container, set by the deploying repository per environment" -}}
@@ -161,12 +161,12 @@ what the pod actually references, in order and without duplicates: the owner
 Secret, the app Secret, every secretKeyRef of `extraEnv` and of
 `extraInitContainers`, then every `imagePullSecrets` entry.
 */ -}}
-{{- define "br-common-service.reloadSecrets" -}}
+{{- define "br-rust-common-chart.reloadSecrets" -}}
 {{- $names := list -}}
-{{- if eq (include "br-common-service.migrates" .) "true" -}}
-{{- $names = append $names (include "br-common-service.ownerSecretName" .) -}}
+{{- if eq (include "br-rust-common-chart.migrates" .) "true" -}}
+{{- $names = append $names (include "br-rust-common-chart.ownerSecretName" .) -}}
 {{- end -}}
-{{- $names = append $names (include "br-common-service.appSecretName" .) -}}
+{{- $names = append $names (include "br-rust-common-chart.appSecretName" .) -}}
 {{- range (.Values.extraEnv | default list) -}}
 {{- $names = append $names (dig "valueFrom" "secretKeyRef" "name" "" .) -}}
 {{- end -}}
@@ -191,15 +191,15 @@ the same name, a key set to null removes it, the other defaults stay.
 `mergeOverwrite` is not used on purpose: it skips zero values, so
 `readOnlyRootFilesystem: false` would silently keep `true`.
 */ -}}
-{{- define "br-common-service.defaultPodSecurityContext" -}}
+{{- define "br-rust-common-chart.defaultPodSecurityContext" -}}
 {{- dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "fsGroup" 65532 "seccompProfile" (dict "type" "RuntimeDefault") | toYaml -}}
 {{- end -}}
 
-{{- define "br-common-service.defaultContainerSecurityContext" -}}
+{{- define "br-rust-common-chart.defaultContainerSecurityContext" -}}
 {{- dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) | toYaml -}}
 {{- end -}}
 
-{{- define "br-common-service.overrideByKey" -}}
+{{- define "br-rust-common-chart.overrideByKey" -}}
 {{- $out := .defaults | fromYaml -}}
 {{- range $key, $value := (.given | default dict) }}
 {{- if kindIs "invalid" $value }}
@@ -211,12 +211,12 @@ the same name, a key set to null removes it, the other defaults stay.
 {{- with $out }}{{ toYaml . }}{{ end -}}
 {{- end -}}
 
-{{- define "br-common-service.podSecurityContext" -}}
-{{- include "br-common-service.overrideByKey" (dict "defaults" (include "br-common-service.defaultPodSecurityContext" .) "given" .Values.podSecurityContext) -}}
+{{- define "br-rust-common-chart.podSecurityContext" -}}
+{{- include "br-rust-common-chart.overrideByKey" (dict "defaults" (include "br-rust-common-chart.defaultPodSecurityContext" .) "given" .Values.podSecurityContext) -}}
 {{- end -}}
 
-{{- define "br-common-service.containerSecurityContext" -}}
-{{- include "br-common-service.overrideByKey" (dict "defaults" (include "br-common-service.defaultContainerSecurityContext" .) "given" .Values.containerSecurityContext) -}}
+{{- define "br-rust-common-chart.containerSecurityContext" -}}
+{{- include "br-rust-common-chart.overrideByKey" (dict "defaults" (include "br-rust-common-chart.defaultContainerSecurityContext" .) "given" .Values.containerSecurityContext) -}}
 {{- end -}}
 
 {{- /* ── Probes ───────────────────────────────────────────────────────────── */ -}}
@@ -227,7 +227,7 @@ are the ops contract (`probes.livenessPath`, `probes.readinessPath`, the `http`
 port), so any other key fails the render. Call with
 (dict "given" <map> "defaults" <map> "field" "<values path>" "skip" <list>).
 */ -}}
-{{- define "br-common-service.probeTiming" -}}
+{{- define "br-rust-common-chart.probeTiming" -}}
 {{- $fields := list "initialDelaySeconds" "periodSeconds" "timeoutSeconds" "successThreshold" "failureThreshold" -}}
 {{- $skip := .skip | default list -}}
 {{- $timing := deepCopy (.defaults | default dict) -}}
@@ -248,7 +248,7 @@ port), so any other key fails the render. Call with
 {{- join "\n" $lines -}}
 {{- end -}}
 
-{{- define "br-common-service.probePath" -}}
+{{- define "br-rust-common-chart.probePath" -}}
 {{- $path := toString (default .default .value) -}}
 {{- if not (hasPrefix "/" $path) -}}
 {{- fail (printf "%s must be an absolute HTTP path, got %q" .field $path) -}}

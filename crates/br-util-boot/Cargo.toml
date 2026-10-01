@@ -1,0 +1,12 @@
+[package]
+name = "br-util-boot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The boot environment of a BotResources service: the names of the variables it reads at boot (ENVIRONMENT, PORT, HOST, DATABASE_URL, NATS_URL) and BootEnv, one typed, validating reader for them"
+
+[dependencies]
+thiserror = { workspace = true }
+url = { workspace = true }

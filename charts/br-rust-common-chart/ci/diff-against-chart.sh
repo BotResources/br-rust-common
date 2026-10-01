@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# diff-against-chart.sh — compare the example service chart (br-common-service)
+# diff-against-chart.sh — compare the example service chart (br-rust-common-chart)
 # with a pre-library service chart, environment by environment.
 #
 # Both charts are rendered with the SAME per-environment values file — the one
@@ -89,10 +89,10 @@ for env in $envs; do
     -f "$env_values" \
     -f "${example}/values-deploy-additions.yaml" | normalise > "${work}/${env}-library.yaml"
 
-  echo "===== ${env}: pre-library chart (-) vs br-common-service example (+)"
+  echo "===== ${env}: pre-library chart (-) vs br-rust-common-chart example (+)"
   if diff -u \
       --label "pre-library/${env}" "${work}/${env}-pre-library.yaml" \
-      --label "br-common-service/${env}" "${work}/${env}-library.yaml"; then
+      --label "br-rust-common-chart/${env}" "${work}/${env}-library.yaml"; then
     echo "(identical)"
   elif [ "$fail_on_diff" = true ]; then
     status=1

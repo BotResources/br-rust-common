@@ -11,6 +11,7 @@ description = "Postgres helpers for BotResources services: pools, TLS validation
 migrate = ["sqlx/migrate"]
 
 [dependencies]
+br-util-boot = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }

@@ -92,7 +92,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strum",
- "syn",
+ "syn 2.0.117",
  "thiserror 2.0.18",
 ]
 
@@ -175,18 +175,18 @@ checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
 name = "async-trait"
-version = "0.1.89"
+version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -289,7 +289,7 @@ dependencies = [
  "regex",
  "rustc-hash",
  "shlex",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "base64",
  "br-core-kernel",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-directory"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-events"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "br-core-kernel",
  "chrono",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-integration"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "br-core-events",
  "br-core-kernel",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-kernel"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-scope"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-values"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "br-identity-app"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "async-nats",
  "br-core-integration",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "br-identity-domain"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "br-core-scope",
  "serde",
@@ -421,15 +421,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-ops-contract"
+version = "1.4.0"
+dependencies = [
+ "br-util-axum-readiness",
+ "br-util-boot",
+ "br-util-observability",
+ "br-util-postgres",
+ "serde_json",
+]
+
+[[package]]
 name = "br-scope-declaration-contract"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "br-core-integration",
 ]
 
 [[package]]
 name = "br-test-support"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "sqlx",
  "uuid",
@@ -437,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "axum",
  "br-core-auth",
@@ -451,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-readiness"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "axum",
  "tokio",
@@ -460,8 +471,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-util-boot"
+version = "1.4.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "url",
+]
+
+[[package]]
 name = "br-util-broadcast"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "thiserror 2.0.18",
  "tokio",
@@ -469,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-directory"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -486,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-graphql"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "async-graphql",
  "axum",
@@ -499,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-nats-fabric"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -522,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-observability"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "axum",
  "chrono",
@@ -539,9 +558,10 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "br-test-support",
+ "br-util-boot",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
@@ -551,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-scope-declaration"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "async-nats",
  "br-core-integration",
@@ -771,7 +791,7 @@ checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -794,7 +814,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -805,7 +825,7 @@ checksum = "ac3984ec7bd6cfa798e62b4a642426a5be0e68f9401cfc2a01e3fa9ea2fcdb8d"
 dependencies = [
  "darling_core",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -855,7 +875,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1070,7 +1090,7 @@ checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1961,7 +1981,7 @@ dependencies = [
  "pest_meta",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1991,7 +2011,7 @@ checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2070,7 +2090,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2504,7 +2524,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2548,7 +2568,7 @@ checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2748,7 +2768,7 @@ dependencies = [
  "quote",
  "sqlx-core",
  "sqlx-macros-core",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2771,7 +2791,7 @@ dependencies = [
  "sqlx-mysql",
  "sqlx-postgres",
  "sqlx-sqlite",
- "syn",
+ "syn 2.0.117",
  "tokio",
  "url",
 ]
@@ -2929,7 +2949,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2950,6 +2970,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2963,7 +2994,7 @@ checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3005,7 +3036,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3016,7 +3047,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3109,7 +3140,7 @@ checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3245,7 +3276,7 @@ checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3459,7 +3490,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wasm-bindgen-shared",
 ]
 
@@ -3619,7 +3650,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3630,7 +3661,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3878,7 +3909,7 @@ dependencies = [
  "heck",
  "indexmap",
  "prettyplease",
- "syn",
+ "syn 2.0.117",
  "wasm-metadata",
  "wit-bindgen-core",
  "wit-component",
@@ -3894,7 +3925,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
@@ -3961,7 +3992,7 @@ checksum = "de844c262c8848816172cef550288e7dc6c7b7814b4ee56b3e1553f275f1858e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -3982,7 +4013,7 @@ checksum = "70e3cd084b1788766f53af483dd21f93881ff30d7320490ec3ef7526d203bad4"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4002,7 +4033,7 @@ checksum = "11532158c46691caf0f2593ea8358fed6bbf68a0315e80aae9bd41fbade684a1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -4042,7 +4073,7 @@ checksum = "625dc425cab0dca6dc3c3319506e6593dcb08a9f387ea3b284dbd52a92c40555"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
