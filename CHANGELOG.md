@@ -12,7 +12,8 @@ release; they remain reachable through the historical per-crate tags
 The Helm library chart `br-rust-common-chart` is not versioned with the crates: it
 has its own version line and changelog,
 [`charts/br-rust-common-chart/CHANGELOG.md`](charts/br-rust-common-chart/CHANGELOG.md),
-and its own tags (`chart/br-rust-common-chart/vX.Y.Z`).
+and its own tags (`chart/br-rust-common-chart/vX.Y.Z`; up to 1.1.0, when it was
+named `br-common-service`: `chart/br-common-service/vX.Y.Z`).
 
 ## [1.4.0] — 2026-09-25
 
@@ -22,8 +23,9 @@ of the crate that reads or serves it — the variable names `ENVIRONMENT`,
 `PORT`, `HOST`, `DATABASE_URL`, `NATS_URL` (`br-util-boot`, new),
 `DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` (`br-util-postgres`), and the
 paths `/livez`, `/metrics` (`br-util-observability`), `/readyz`
-(`br-util-axum-readiness`). The `br-rust-common-chart` library chart
-(`1.0.1`, its own changelog) is gated against them: it cannot render a name or
+(`br-util-axum-readiness`). The library chart, renamed `br-rust-common-chart`
+and released as `2.0.0` (breaking: the name; its own changelog; it was
+`br-common-service` up to 1.1.0), is gated against them: it cannot render a name or
 a default path the code does not define. Purely additive: the names and paths
 are the ones every `1.x` release already read and served, so no consumer is
 forced to change; services adopt the constants, the routers and `BootEnv` in
