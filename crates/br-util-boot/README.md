@@ -24,7 +24,7 @@ The names a single library reads on its own belong to that library:
 `br_util_postgres::env::{DATABASE_URL_OWNER, TRUSTED_NETWORK_HOSTS}`, and the
 probe paths `br_util_observability::{LIVENESS_PATH, METRICS_PATH}` and
 `br_util_axum_readiness::READINESS_PATH`. The library chart
-[`br-common-service`](../../charts/br-common-service/README.md#names) is gated
+[`br-rust-common-chart`](../../charts/br-rust-common-chart/README.md#names) is gated
 against all of them in CI: it cannot render a name, or a default path, that
 the code does not define.
 
@@ -98,7 +98,7 @@ let boot = BootEnv::from_lookup(|name| {
 ## Adoption
 
 Services adopt `BootEnv` in their next sealed patch (see the chart's
-[Adoption](../../charts/br-common-service/README.md#adoption)); the names are
+[Adoption](../../charts/br-rust-common-chart/README.md#adoption)); the names are
 the ones they already read, so nothing changes at runtime until then. What a
 binary moving from its own reader must know: `ENVIRONMENT` and `PORT` are
 required (no default: the chart always renders them), `ENVIRONMENT` is one of

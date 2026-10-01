@@ -13,7 +13,7 @@ use crate::nats_url::NatsUrl;
 pub const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 
 /// The boot environment of a service, read once, typed and validated: the
-/// variables the `br-common-service` chart renders for the binary (and `HOST`,
+/// variables the `br-rust-common-chart` chart renders for the binary (and `HOST`,
 /// which it leaves to its default).
 ///
 /// Every value is a type that cannot hold an invalid one, and the two URLs

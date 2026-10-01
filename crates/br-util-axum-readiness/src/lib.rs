@@ -6,7 +6,7 @@ use axum::response::IntoResponse;
 use axum::routing::{MethodRouter, get};
 
 /// The path readiness is served on. Part of the ops contract: the
-/// `br-common-service` chart probes it by default (`probes.readinessPath`) and
+/// `br-rust-common-chart` chart probes it by default (`probes.readinessPath`) and
 /// is gated against this constant.
 pub const READINESS_PATH: &str = "/readyz";
 

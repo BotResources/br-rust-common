@@ -161,7 +161,7 @@ is carried as `sqlx::Error::Migrate`. No new error variant.
 ## Environment variables
 
 Every name is a constant of the crate that reads it — the ops contract the
-`br-common-service` chart renders and is gated against. This crate owns the two
+`br-rust-common-chart` chart renders and is gated against. This crate owns the two
 it reads on its own; `DATABASE_URL` is the service's (`br-util-boot`, whose
 `BootEnv` reads it and whose constant this crate's migration-pool fallback
 uses).

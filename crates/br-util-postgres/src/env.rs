@@ -1,5 +1,5 @@
 //! The names of the variables this crate reads on its own. Part of the ops
-//! contract: the `br-common-service` chart renders them and is gated against
+//! contract: the `br-rust-common-chart` chart renders them and is gated against
 //! these constants.
 //!
 //! The runtime DSN, `DATABASE_URL`, is not among them: the service reads it

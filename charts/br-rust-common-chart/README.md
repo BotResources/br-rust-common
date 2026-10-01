@@ -1,9 +1,9 @@
-# `br-common-service` — the Rust service topology and its ops contract
+# `br-rust-common-chart` — the Rust service topology and its ops contract
 
-`br-common-service` is a Helm **library chart**. It renders nothing on its own.
+`br-rust-common-chart` is a Helm **library chart**. It renders nothing on its own.
 The application chart of a BotResources Rust service built on the
 br-rust-common crates (and not on br-service-engine, whose services use
-`br-engine-service`) depends on it and includes its named templates.
+`br-service-engine-chart`) depends on it and includes its named templates.
 
 It lives in br-rust-common because it encodes what these crates read at boot
 — the probe paths, `PORT`, the two-role Postgres DSNs, `TRUSTED_NETWORK_HOSTS`,
@@ -14,10 +14,12 @@ repository that builds the binary; whatever differs per environment lives in
 the deploying repository, and this library never defaults it — a missing value
 fails the render with a message that names it.
 
-- Chart: `oci://ghcr.io/botresources/charts/br-common-service`
+- Chart: `oci://ghcr.io/botresources/charts/br-rust-common-chart`
 - Version line: its own ([`CHANGELOG.md`](CHANGELOG.md)), independent of the
-  crates' workspace version. Version 1.x is **ops contract 1**, for services
-  on br-rust-common 1.x.
+  crates' workspace version. 2.x is **ops contract 1**, for services on
+  br-rust-common 1.x. Up to 1.1.0 the chart was named `br-common-service`
+  (deprecated, published versions untouched); 2.0.0 continues that line
+  ([migration](CHANGELOG.md#200---2026-10-01)).
 
 ## Use
 
@@ -34,33 +36,33 @@ annotations:
   # render an image.tag outside it.
   botresources.ai/supported-app-versions: ">=1.4.0 <1.5.0"
 dependencies:
-  - name: br-common-service
-    version: "~1.0.0"
+  - name: br-rust-common-chart
+    version: "~2.0.0"
     repository: oci://ghcr.io/botresources/charts
 ```
 
 `templates/service.yaml` — the whole topology:
 
 ```yaml
-{{ include "br-common-service.all" . }}
+{{ include "br-rust-common-chart.all" . }}
 ```
 
 The named templates read the **top-level** `.Values` of the context they are
 given, so the service chart's `values.yaml` holds the library values directly,
-not under a `br-common-service:` key. A service chart that needs its own
+not under a `br-rust-common-chart:` key. A service chart that needs its own
 resource (a bootstrap Job, a second Service) writes it beside the include; one
 that needs to compute a value (a Reloader entry, a tag) passes the library a
 modified copy of the context.
 
 | Template | Renders |
 |---|---|
-| `br-common-service.all` | all of the below, the PDB and NetworkPolicy only when enabled |
-| `br-common-service.serviceaccount` | `ServiceAccount` |
-| `br-common-service.service` | `Service` (ClusterIP, port `http`) |
-| `br-common-service.deployment` | `Deployment` |
-| `br-common-service.pdb` | `PodDisruptionBudget`, or nothing unless `podDisruptionBudget.enabled` |
-| `br-common-service.networkpolicy` | `NetworkPolicy`, or nothing unless `networkPolicy.enabled` |
-| `br-common-service.name`, `.labels`, `.selectorLabels`, `.image`, `.imageTag` | helpers for the service chart's own resources (`.imageTag` is the checked `image.tag`, digest included) |
+| `br-rust-common-chart.all` | all of the below, the PDB and NetworkPolicy only when enabled |
+| `br-rust-common-chart.serviceaccount` | `ServiceAccount` |
+| `br-rust-common-chart.service` | `Service` (ClusterIP, port `http`) |
+| `br-rust-common-chart.deployment` | `Deployment` |
+| `br-rust-common-chart.pdb` | `PodDisruptionBudget`, or nothing unless `podDisruptionBudget.enabled` |
+| `br-rust-common-chart.networkpolicy` | `NetworkPolicy`, or nothing unless `networkPolicy.enabled` |
+| `br-rust-common-chart.name`, `.labels`, `.selectorLabels`, `.image`, `.imageTag` | helpers for the service chart's own resources (`.imageTag` is the checked `image.tag`, digest included) |
 
 ## The ops contract
 
@@ -80,8 +82,8 @@ What the library renders the same way for every service, without a value:
 | `NATS_URL` | `nats.url`. |
 | Contract variables | the variables above are the library's. Kubernetes keeps the last of two entries with the same name, so `extraEnv` may not redeclare one, nor `postgres.appPasswordEnv`, nor one of its own entries: the render fails. An extra `DATABASE_URL: $(DATABASE_URL_OWNER)` would otherwise run every request as the owner role, which bypasses row-level security. |
 | Boot order | init container `wait-for-postgres` waits until `postgres.host:port` accepts TCP; the service then migrates, binds NATS and serves. |
-| Rollout | annotation `secret.reloader.stakater.com/reload` lists every Secret the pod reads (owner, app, `extraEnv` and `extraInitContainers` references, pull secrets): the DSNs are read once at boot, so a rotated password needs a new pod. |
-| Hardening | non-root UID/GID 65532, `RuntimeDefault` seccomp, no privilege escalation, read-only root filesystem, all capabilities dropped, service-account token not mounted. |
+| Rollout | annotation `secret.reloader.stakater.com/reload` lists every Secret the pod reads through its environment (owner, app, `extraEnv` and `extraInitContainers` references, pull secrets): the DSNs are read once at boot, so a rotated password needs a new pod. A Secret mounted through `extraVolumes` is not listed: the kubelet refreshes its files in place. |
+| Hardening | non-root UID/GID 65532, `RuntimeDefault` seccomp, no privilege escalation, read-only root filesystem, all capabilities dropped, service-account token not mounted. A service that must write files (a runtime's scratch space) gets a writable path through `extraVolumes` and `extraVolumeMounts`, never by turning the read-only root filesystem off. |
 
 ### Role passwords must be alphanumeric
 
@@ -178,6 +180,8 @@ value names a variable of the service binary itself.
 | `commonLabels` | service chart | chart | none | String labels added to every resource and the pod template, e.g. `graphql-federation/component: subgraph` for gateway discovery. The five library labels cannot be replaced. |
 | `extraEnv` | service chart | service chart | none | Variables the binary reads beyond the contract, appended last (so they may reference `$(DATABASE_URL)` and the others). A contract variable, the `postgres.appPasswordEnv` name, a repeated name or an entry without a name fails the render. |
 | `extraInitContainers` | service chart | chart | none | Appended after `wait-for-postgres`; one without a `securityContext` gets the hardened container defaults. Its environment is its own (not checked against the contract variables): a wait container may read the owner DSN. |
+| `extraVolumes` | service chart | chart | none | Pod `volumes`, verbatim (Kubernetes shape). Rendered only when set. Each entry needs a `name`; a repeated name fails the render. E.g. `[{name: scratch, emptyDir: {sizeLimit: 64Mi}}]` for a runtime that writes to `/tmp`. |
+| `extraVolumeMounts` | service chart | chart | none | `volumeMounts` of the service container, verbatim (Kubernetes shape). Rendered only when set. A mount that names no `extraVolumes` entry fails the render. E.g. `[{name: scratch, mountPath: /tmp}]`: the root filesystem stays read-only. An extra init container mounts a volume through its own `volumeMounts`. |
 | `waitForPostgres.enabled`, `.image` | service chart | chart | `true`, `busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662` | The TCP wait before boot. The default is busybox 1.36 pinned to the digest of its multi-arch index (amd64 and arm64 among others), so the tag cannot move under a running environment. |
 | `automountServiceAccountToken` | service chart | chart | `false` | `true` only if the binary calls the Kubernetes API. |
 | `podSecurityContext`, `containerSecurityContext` | service chart | chart | hardened | A key set here replaces the default key of the same name, a key set to `null` removes it. |
@@ -273,6 +277,12 @@ yet:
 | anonymous-writer | no owner role | `postgres.migrate: false` |
 | projects, services, timesheet | `SCOPE_DECLARATION_ENABLED` before the contract variables | `extraEnv`, after them |
 
+**engagement-notes** (a Python service, not one of the eight) writes scratch
+files: its pre-library chart mounts an emptyDir `scratch` (`sizeLimit: 64Mi`)
+at `/tmp` and sets `HOME` and `TMPDIR` to `/tmp`. On the library, that is
+`extraVolumes` plus `extraVolumeMounts` (since br-common-service 1.1.0) and `extraEnv`, with the
+read-only root filesystem kept.
+
 ## CI
 
 [`.github/scripts/check-chart.sh`](../../.github/scripts/check-chart.sh), job
@@ -289,12 +299,12 @@ base's, not yet tagged, and a `CHANGELOG.md` entry).
 ([`tools/br-ops-contract`](../../tools/br-ops-contract/src/main.rs)); the test
 of that tool, in the `cargo test` job, fails when the file is stale —
 regenerate it with
-`cargo run -q -p br-ops-contract > charts/br-common-service/ci/ops-contract.json`.
+`cargo run -q -p br-ops-contract > charts/br-rust-common-chart/ci/ops-contract.json`.
 The chart gate therefore needs no Rust toolchain, and neither does the release
 workflow that re-runs it.
 [`.github/workflows/chart-release.yml`](../../.github/workflows/chart-release.yml)
 publishes a new version from `main` or `release/**`, once: a published version
-and its tag `chart/br-common-service/v<version>` are never replaced, and a run
+and its tag `chart/br-rust-common-chart/v<version>` are never replaced, and a run
 for a version already published fails unless the published package equals
 the commit's. The release decisions — the version gate, the tag and registry
 lookups, the publish table — are functions of

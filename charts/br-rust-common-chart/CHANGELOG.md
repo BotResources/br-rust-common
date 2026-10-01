@@ -1,4 +1,10 @@
-# Changelog — chart br-common-service
+# Changelog — chart br-rust-common-chart
+
+Up to 1.1.0 the chart was named `br-common-service` (tags `chart/br-common-service/v<version>`,
+OCI package `oci://ghcr.io/botresources/charts/br-common-service`); that name is
+deprecated, its published versions stay on GHCR untouched, and 2.0.0 continues
+its version line under the new name (the model: `br-service-engine-chart` 2.0.0,
+renamed from `br-engine-service`).
 
 The library chart of the BotResources Rust services built on the
 br-rust-common crates (not on br-service-engine): their shared deployment
@@ -11,16 +17,32 @@ the chart adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 a major changes the ops contract or removes a value, a minor adds an optional
 value, a patch changes neither. `.github/scripts/check-chart.sh` requires a
 `## [<version>]` heading here that matches the `version` in `Chart.yaml`, and,
-for every change under `charts/br-common-service/` outside `ci/`, a version
+for every change under `charts/br-rust-common-chart/` outside `ci/`, a version
 greater than the base branch's that is not yet released.
 
-## [1.0.1] - 2026-09-25
+## [2.0.0] - 2026-10-01
 
-For services on br-rust-common `1.x`; the names it renders are constants of
-br-rust-common `1.4.0` (the same names every `1.x` release reads). A service
-chart on `1.0.0` renders the same manifests on `1.0.1`, byte for byte.
+Renamed from `br-common-service`, and every name it renders is now the code's.
+For services on br-rust-common `1.x`; the names are constants of br-rust-common
+`1.4.0` (the same names every `1.x` release reads). Still **ops contract 1**:
+for the same values, the example chart renders **byte-identical** manifests on
+2.0.0 and on `br-common-service` 1.1.0 (dev, uat and prod). What breaks is the
+dependency name and the prefix of the named templates (see *Changed*, first
+item).
 
-### Changed
+### Changed (breaking)
+
+- **The chart is named `br-rust-common-chart`.** A library chart is named
+  `<library>-chart` (principle 31): the name says whose chart it is
+  (`br-rust-common`), and no longer reads as a service. The directory is
+  `charts/br-rust-common-chart/`; the package is
+  `oci://ghcr.io/botresources/charts/br-rust-common-chart`; the tag is
+  `chart/br-rust-common-chart/v<version>`. Every named template is renamed from
+  `br-common-service.*` to `br-rust-common-chart.*`, so a service chart that
+  moves to this chart edits its dependency name and each `include`.
+  `br-common-service` 1.0.0 to 1.1.0 stay published and untouched.
+
+### Added
 
 - **Every name the chart renders is the code's, and the gate proves it.** Each
   variable the binary reads is a constant of the crate that reads it
@@ -49,7 +71,49 @@ chart on `1.0.0` renders the same manifests on `1.0.1`, byte for byte.
   that variable (`br-util-postgres` stopped reading it before `1.0.0`), so the
   chart no longer names it: an `extraEnv` entry or a `postgres.appPasswordEnv`
   of that name is an ordinary variable of the service. Only a render that
-  failed on `1.0.0` renders now; every render that succeeded is unchanged.
+  failed on `1.1.0` renders now.
+
+### Port
+
+`port` stays **required** and is never defaulted (principle 31): the chart
+wires it to the `http` container port, `PORT` and the Service port; the number
+is the deploying repository's.
+
+### Migration of a service chart
+
+Each of these depends on `br-common-service ~1.0.0` and includes its
+`br-common-service.*` templates: `accounts`, `charter`, `engagement-notes`,
+`identity`, `projects`, `services`, `tasks`, `timesheet`, `ux`,
+`website-anon-writer`, `website` (be-botresources.ai `charts/`). None moves
+by itself: `~1.0.0` does not match 2.0.0. To move one, in its own release:
+
+1. in `Chart.yaml`, replace the dependency `name: br-common-service` by
+   `name: br-rust-common-chart`, set `version: ~2.0.0` and the repository
+   (`oci://ghcr.io/botresources/charts`), then `helm dependency update`;
+2. rename each `include "br-common-service.<x>"` to
+   `include "br-rust-common-chart.<x>"` (templates and any comment that
+   names the library);
+3. render before and after with the deploying repository's values: the
+   manifests must match (compare with `ci/diff-against-chart.sh`), then
+   release the service chart.
+
+## [1.1.0] - 2026-09-27
+
+### Added
+
+Still **ops contract 1**, for services on br-rust-common `1.x`: two optional
+values, no default changed. A render that sets neither is byte-identical to
+1.0.0.
+
+- **`extraVolumes`** — pod `volumes`, rendered verbatim and only when set. Each
+  entry needs a `name`; a repeated name fails the render. Reason:
+  engagement-notes (a Python service) writes scratch files to `/tmp`, and its
+  move onto the library must keep `readOnlyRootFilesystem: true`, with an
+  emptyDir `scratch` as its only writable path.
+- **`extraVolumeMounts`** — `volumeMounts` of the service container, rendered
+  verbatim and only when set. A mount that names no `extraVolumes` entry fails
+  the render (the API server would refuse the Deployment at apply time).
+  Reason: the same — the emptyDir `scratch` mounted at `/tmp`.
 
 ## [1.0.0] - 2026-09-25
 

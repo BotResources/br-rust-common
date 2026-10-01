@@ -1,5 +1,5 @@
 {{- /*
-br-common-service.deployment — the service Deployment.
+br-rust-common-chart.deployment — the service Deployment.
 
 One container, named after the service, running the image's default command
 (or `args`). Boot sequence the binary implements (br-util-boot,
@@ -13,58 +13,79 @@ Every variable name and both default probe paths are constants of the crates
 (README.md, "Names"); .github/scripts/check-chart.sh fails when this template
 renders one that differs from its constant.
 */ -}}
-{{- define "br-common-service.deployment" -}}
-{{- include "br-common-service.checkEnv" . -}}
-{{- $name := include "br-common-service.name" . -}}
-{{- $port := include "br-common-service.port" . -}}
-{{- $pgHost := include "br-common-service.postgresHost" . -}}
-{{- $pgPort := include "br-common-service.postgresPort" . -}}
-{{- $pgDatabase := include "br-common-service.postgresDatabase" . -}}
-{{- $dsnQuery := include "br-common-service.dsnQuery" . -}}
-{{- $appSecret := include "br-common-service.appSecretName" . -}}
-{{- $migrates := eq (include "br-common-service.migrates" .) "true" -}}
+{{- define "br-rust-common-chart.deployment" -}}
+{{- include "br-rust-common-chart.checkEnv" . -}}
+{{- $name := include "br-rust-common-chart.name" . -}}
+{{- $port := include "br-rust-common-chart.port" . -}}
+{{- $pgHost := include "br-rust-common-chart.postgresHost" . -}}
+{{- $pgPort := include "br-rust-common-chart.postgresPort" . -}}
+{{- $pgDatabase := include "br-rust-common-chart.postgresDatabase" . -}}
+{{- $dsnQuery := include "br-rust-common-chart.dsnQuery" . -}}
+{{- $appSecret := include "br-rust-common-chart.appSecretName" . -}}
+{{- $migrates := eq (include "br-rust-common-chart.migrates" .) "true" -}}
 {{- $pg := .Values.postgres | default dict -}}
 {{- $image := .Values.image | default dict -}}
 {{- $wait := .Values.waitForPostgres | default dict -}}
 {{- $probes := .Values.probes | default dict -}}
 {{- $startup := $probes.startup | default dict -}}
 {{- /* The defaults are br_util_observability::LIVENESS_PATH and br_util_axum_readiness::READINESS_PATH. */ -}}
-{{- $livenessPath := include "br-common-service.probePath" (dict "value" $probes.livenessPath "default" "/livez" "field" "probes.livenessPath") -}}
-{{- $readinessPath := include "br-common-service.probePath" (dict "value" $probes.readinessPath "default" "/readyz" "field" "probes.readinessPath") -}}
+{{- $livenessPath := include "br-rust-common-chart.probePath" (dict "value" $probes.livenessPath "default" "/livez" "field" "probes.livenessPath") -}}
+{{- $readinessPath := include "br-rust-common-chart.probePath" (dict "value" $probes.readinessPath "default" "/readyz" "field" "probes.readinessPath") -}}
+{{- /*
+extraVolumes / extraVolumeMounts: pod volumes and mounts of the service
+container, rendered verbatim, only when set. A mount must name a declared
+volume: the API server would refuse the Deployment at apply time, so the
+render refuses it first.
+*/ -}}
+{{- $volumeNames := list -}}
+{{- range $i, $volume := (.Values.extraVolumes | default list) -}}
+{{- if not (get $volume "name") -}}
+{{- fail (printf "extraVolumes[%d] has no name" $i) -}}
+{{- end -}}
+{{- if has $volume.name $volumeNames -}}
+{{- fail (printf "extraVolumes declares %s twice" $volume.name) -}}
+{{- end -}}
+{{- $volumeNames = append $volumeNames $volume.name -}}
+{{- end -}}
+{{- range $i, $mount := (.Values.extraVolumeMounts | default list) -}}
+{{- if not (has (get $mount "name" | default "") $volumeNames) -}}
+{{- fail (printf "extraVolumeMounts[%d] mounts %q, which extraVolumes does not declare" $i (get $mount "name" | default "")) -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "br-common-service.labels" . | nindent 4 }}
+    {{- include "br-rust-common-chart.labels" . | nindent 4 }}
   annotations:
-    secret.reloader.stakater.com/reload: {{ include "br-common-service.reloadSecrets" . | quote }}
+    secret.reloader.stakater.com/reload: {{ include "br-rust-common-chart.reloadSecrets" . | quote }}
 spec:
-  replicas: {{ include "br-common-service.replicas" . }}
+  replicas: {{ include "br-rust-common-chart.replicas" . }}
   {{- with .Values.strategy }}
   strategy:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "br-common-service.selectorLabels" . | nindent 6 }}
+      {{- include "br-rust-common-chart.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "br-common-service.labels" . | nindent 8 }}
+        {{- include "br-rust-common-chart.labels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ $name }}
       {{- /* No BotResources Rust service calls the Kubernetes API. */}}
-      automountServiceAccountToken: {{ include "br-common-service.flag" (dict "value" .Values.automountServiceAccountToken "default" false "field" "automountServiceAccountToken") }}
+      automountServiceAccountToken: {{ include "br-rust-common-chart.flag" (dict "value" .Values.automountServiceAccountToken "default" false "field" "automountServiceAccountToken") }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with include "br-common-service.podSecurityContext" . }}
+      {{- with include "br-rust-common-chart.podSecurityContext" . }}
       securityContext:
         {{- . | nindent 8 }}
       {{- end }}
-      {{- $waitEnabled := eq (include "br-common-service.flag" (dict "value" $wait.enabled "default" true "field" "waitForPostgres.enabled")) "true" }}
+      {{- $waitEnabled := eq (include "br-rust-common-chart.flag" (dict "value" $wait.enabled "default" true "field" "waitForPostgres.enabled")) "true" }}
       {{- if or $waitEnabled .Values.extraInitContainers }}
       initContainers:
         {{- if $waitEnabled }}
@@ -90,7 +111,7 @@ spec:
               value: {{ $pgHost | quote }}
             - name: POSTGRES_PORT
               value: {{ $pgPort | quote }}
-          {{- with include "br-common-service.containerSecurityContext" . }}
+          {{- with include "br-rust-common-chart.containerSecurityContext" . }}
           securityContext:
             {{- . | nindent 12 }}
           {{- end }}
@@ -100,7 +121,7 @@ spec:
         {{- range (.Values.extraInitContainers | default list) }}
         {{- $container := deepCopy . }}
         {{- if not (hasKey $container "securityContext") }}
-        {{- $_ := set $container "securityContext" (include "br-common-service.containerSecurityContext" $ | fromYaml) }}
+        {{- $_ := set $container "securityContext" (include "br-rust-common-chart.containerSecurityContext" $ | fromYaml) }}
         {{- end }}
         {{- $extra = append $extra $container }}
         {{- end }}
@@ -110,7 +131,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ $name }}
-          image: {{ include "br-common-service.image" . | quote }}
+          image: {{ include "br-rust-common-chart.image" . | quote }}
           imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
           {{- with .Values.args }}
           args:
@@ -122,10 +143,10 @@ spec:
               protocol: TCP
           env:
             - name: ENVIRONMENT
-              value: {{ include "br-common-service.env" . | quote }}
+              value: {{ include "br-rust-common-chart.env" . | quote }}
             - name: PORT
               value: {{ $port | quote }}
-            {{- if eq (include "br-common-service.trustedNetwork" .) "true" }}
+            {{- if eq (include "br-rust-common-chart.trustedNetwork" .) "true" }}
             {{- /*
             br-util-postgres refuses a remote DSN without an sslmode of
             require, verify-ca or verify-full unless its host is listed here.
@@ -165,7 +186,7 @@ spec:
                   key: password
             {{- with $pg.appPasswordEnv }}
             {{- /* The app role's password under the name the binary reads to provision that role at boot. */}}
-            - name: {{ include "br-common-service.envVarName" (dict "value" . "field" "postgres.appPasswordEnv") }}
+            - name: {{ include "br-rust-common-chart.envVarName" (dict "value" . "field" "postgres.appPasswordEnv") }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $appSecret }}
@@ -174,7 +195,7 @@ spec:
             - name: DATABASE_URL
               value: "postgres://$(PGUSER):$(PGPASSWORD)@{{ $pgHost }}:{{ $pgPort }}/{{ $pgDatabase }}{{ $dsnQuery }}"
             {{- if $migrates }}
-            {{- $ownerSecret := include "br-common-service.ownerSecretName" . }}
+            {{- $ownerSecret := include "br-rust-common-chart.ownerSecretName" . }}
             - name: PGUSER_OWNER
               valueFrom:
                 secretKeyRef:
@@ -189,7 +210,7 @@ spec:
               value: "postgres://$(PGUSER_OWNER):$(PGPASSWORD_OWNER)@{{ $pgHost }}:{{ $pgPort }}/{{ $pgDatabase }}{{ $dsnQuery }}"
             {{- end }}
             - name: NATS_URL
-              value: {{ include "br-common-service.natsUrl" . | quote }}
+              value: {{ include "br-rust-common-chart.natsUrl" . | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -202,34 +223,39 @@ spec:
             httpGet:
               path: {{ $readinessPath }}
               port: http
-            {{- include "br-common-service.probeTiming" (dict "given" $probes.readiness "defaults" (dict "initialDelaySeconds" 5 "periodSeconds" 5) "field" "probes.readiness") | nindent 12 }}
+            {{- include "br-rust-common-chart.probeTiming" (dict "given" $probes.readiness "defaults" (dict "initialDelaySeconds" 5 "periodSeconds" 5) "field" "probes.readiness") | nindent 12 }}
           livenessProbe:
             httpGet:
               path: {{ $livenessPath }}
               port: http
-            {{- include "br-common-service.probeTiming" (dict "given" $probes.liveness "defaults" (dict "initialDelaySeconds" 30 "periodSeconds" 10) "field" "probes.liveness") | nindent 12 }}
-          {{- if eq (include "br-common-service.flag" (dict "value" $startup.enabled "default" false "field" "probes.startup.enabled")) "true" }}
+            {{- include "br-rust-common-chart.probeTiming" (dict "given" $probes.liveness "defaults" (dict "initialDelaySeconds" 30 "periodSeconds" 10) "field" "probes.liveness") | nindent 12 }}
+          {{- if eq (include "br-rust-common-chart.flag" (dict "value" $startup.enabled "default" false "field" "probes.startup.enabled")) "true" }}
           {{- /* Liveness answers once the listener is bound, i.e. at the end of boot: the startup budget covers a slow migration. */}}
           startupProbe:
             httpGet:
               path: {{ $livenessPath }}
               port: http
-            {{- include "br-common-service.probeTiming" (dict "given" $startup "defaults" (dict "periodSeconds" 5 "failureThreshold" 30) "field" "probes.startup" "skip" (list "enabled")) | nindent 12 }}
+            {{- include "br-rust-common-chart.probeTiming" (dict "given" $startup "defaults" (dict "periodSeconds" 5 "failureThreshold" 30) "field" "probes.startup" "skip" (list "enabled")) | nindent 12 }}
           {{- end }}
           resources:
-            {{- include "br-common-service.resources" . | nindent 12 }}
-          {{- with include "br-common-service.containerSecurityContext" . }}
+            {{- include "br-rust-common-chart.resources" . | nindent 12 }}
+          {{- with include "br-rust-common-chart.containerSecurityContext" . }}
           securityContext:
             {{- . | nindent 12 }}
           {{- end }}
-      {{- if eq (include "br-common-service.flag" (dict "value" .Values.topologySpreadEnabled "default" false "field" "topologySpreadEnabled")) "true" }}
+          {{- /* E.g. an emptyDir at /tmp for a runtime that writes scratch files, with readOnlyRootFilesystem kept. */}}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- if eq (include "br-rust-common-chart.flag" (dict "value" .Values.topologySpreadEnabled "default" false "field" "topologySpreadEnabled")) "true" }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              {{- include "br-common-service.selectorLabels" . | nindent 14 }}
+              {{- include "br-rust-common-chart.selectorLabels" . | nindent 14 }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -241,6 +267,10 @@ spec:
       {{- end }}
       {{- with .Values.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end -}}

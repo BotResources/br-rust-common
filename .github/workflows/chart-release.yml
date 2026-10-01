@@ -1,6 +1,6 @@
-# chart-release — publish the br-common-service library chart.
+# chart-release — publish the br-rust-common-chart library chart.
 #
-# charts/br-common-service/ is released on its own version line, independent of
+# charts/br-rust-common-chart/ is released on its own version line, independent of
 # the crates' workspace version that release-tags.yml tags. The PR gate
 # (ci.yml, job `chart`) refuses a change under the chart unless its `version`
 # is greater than the base's and not yet tagged, so every chart change reaches
@@ -15,7 +15,7 @@
 # Order — the tag marks a shipped artifact, never a promise:
 #   1. resolve the chart name and version (job `resolve`);
 #   2. under a concurrency group per chart + version, package this commit,
-#      read the tag chart/br-common-service/v<version> and, logged in, the
+#      read the tag chart/br-rust-common-chart/v<version> and, logged in, the
 #      registry. Each lookup must answer present or absent: a failed lookup
 #      fails the run, it is never read as "absent". When the registry holds
 #      the version, pull it and compare it with this commit's package;
@@ -30,7 +30,7 @@
 #   4. re-run .github/scripts/check-chart.sh, so what ships is what the gate
 #      rendered;
 #   5. helm push the package of step 2 to oci://ghcr.io/botresources/charts;
-#   6. tag chart/br-common-service/v<version>, never forced.
+#   6. tag chart/br-rust-common-chart/v<version>, never forced.
 # Credentials: the checkout keeps none; the registry login lives only in the
 # steps that read (2) or push (5) and is logged out at their end; the token
 # reaches git only in the tag push (6). The gate (4) runs with none.
@@ -38,7 +38,7 @@
 # is ever tagged `latest`, on the registry or in git. A failure before step 6
 # leaves nothing mislabelled; the next run resumes from the decision.
 #
-# The chart/br-common-service/v* tag does not match release-tags.yml's
+# The chart/br-rust-common-chart/v* tag does not match release-tags.yml's
 # `v<X.Y.Z>` workspace tags nor the semver job's baseline glob, and a
 # chart-only push carries no Cargo version bump, so no crate is re-released.
 
@@ -50,16 +50,16 @@ on:
       - main
       - "release/**"
     paths:
-      - "charts/br-common-service/Chart.yaml"
+      - "charts/br-rust-common-chart/Chart.yaml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  CHART_DIR: charts/br-common-service
+  CHART_DIR: charts/br-rust-common-chart
   OCI_REPO: oci://ghcr.io/botresources/charts
-  TAG_PREFIX: chart/br-common-service/v
+  TAG_PREFIX: chart/br-rust-common-chart/v
 
 jobs:
   resolve:
@@ -100,7 +100,7 @@ jobs:
       group: chart-release-${{ needs.resolve.outputs.name }}-${{ needs.resolve.outputs.version }}
       cancel-in-progress: false
     permissions:
-      contents: write # the chart/br-common-service/v<version> tag
+      contents: write # the chart/br-rust-common-chart/v<version> tag
       packages: write # helm push to ghcr.io/botresources/charts
     env:
       NAME: ${{ needs.resolve.outputs.name }}

@@ -48,17 +48,17 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 
 | Chart | Type | Description | Docs | Changelog |
 |---|---|---|---|---|
-| `br-common-service` | library | Deployment topology and ops contract of a BotResources Rust service built on these crates: Deployment, Service, ServiceAccount, PDB, NetworkPolicy, and the render guards for what the crates read at boot (probe paths, `PORT`, the two-role Postgres DSNs, `TRUSTED_NETWORK_HOSTS`, `NATS_URL`) — every name a constant of the crates, the chart gated against it | [README](charts/br-common-service/README.md) | [CHANGELOG](charts/br-common-service/CHANGELOG.md) |
+| `br-rust-common-chart` | library | Deployment topology and ops contract of a BotResources Rust service built on these crates: Deployment, Service, ServiceAccount, PDB, NetworkPolicy, and the render guards for what the crates read at boot (probe paths, `PORT`, the two-role Postgres DSNs, `TRUSTED_NETWORK_HOSTS`, `NATS_URL`) — every name a constant of the crates, the chart gated against it | [README](charts/br-rust-common-chart/README.md) | [CHANGELOG](charts/br-rust-common-chart/CHANGELOG.md) |
 
 The chart has its own version line, independent of the crates' version, and is
-published to `oci://ghcr.io/botresources/charts/br-common-service` by the
+published to `oci://ghcr.io/botresources/charts/br-rust-common-chart` by the
 `chart-release` workflow when its `Chart.yaml` version changes on `main` or a
 `release/**` branch.
 
 The chart cannot import a Rust constant, so
 [`tools/br-ops-contract`](tools/br-ops-contract/src/main.rs) (a CI tool, never
 published) prints the names the crates own into
-`charts/br-common-service/ci/ops-contract.json`; its test fails when that file
+`charts/br-rust-common-chart/ci/ops-contract.json`; its test fails when that file
 is stale, and the chart gate fails when the chart renders anything else.
 
 ## Architecture

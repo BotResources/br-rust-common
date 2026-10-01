@@ -1,5 +1,5 @@
 {{- /*
-br-common-service — the image reference, and the check that pairs the service
+br-rust-common-chart — the image reference, and the check that pairs the service
 chart with the binary versions it can run. Reads the TOP-LEVEL `.Values` and
 the `.Chart` of the SERVICE chart, like every helper (_helpers.tpl).
 */ -}}
@@ -13,12 +13,12 @@ syntax of Helm's `semverCompare` and of Kargo's `constraint:`). `.Chart` is
 the service chart here, because the service chart includes these templates
 with its own context. Same annotation as the runner charts (br-runner) and
 br-svc-runners; the enforcement is this library's own
-(br-common-service.imageTag): a digest is split off and the tag before it
+(br-rust-common-chart.imageTag): a digest is split off and the tag before it
 checked, SemVer build metadata is refused, a version tag is always
 range-checked, and `image.enforceSupportedVersions=false` lifts the check for
 local-build tags only.
 */ -}}
-{{- define "br-common-service.supportedRange" -}}
+{{- define "br-rust-common-chart.supportedRange" -}}
 {{- $range := index (.Chart.Annotations | default dict) "botresources.ai/supported-app-versions" | default "" -}}
 {{- required (printf "%s: the Chart.yaml annotation botresources.ai/supported-app-versions is required — it states which versions of the service binary this chart can run" .Chart.Name) $range -}}
 {{- end -}}
@@ -58,11 +58,11 @@ included: a chart that does not state what it can run is incomplete.
 missing tag or annotation reaches the checks as "", and `semverCompare` on ""
 is a template panic.
 */ -}}
-{{- define "br-common-service.imageTag" -}}
+{{- define "br-rust-common-chart.imageTag" -}}
 {{- $image := .Values.image | default dict -}}
 {{- $tag := toString (required "image.tag is required: the service version to deploy, set per environment by the deploying repository (Kargo writes it on promotion)" $image.tag) -}}
-{{- $range := include "br-common-service.supportedRange" . -}}
-{{- $enforce := eq (include "br-common-service.flag" (dict "value" $image.enforceSupportedVersions "default" true "field" "image.enforceSupportedVersions")) "true" -}}
+{{- $range := include "br-rust-common-chart.supportedRange" . -}}
+{{- $enforce := eq (include "br-rust-common-chart.flag" (dict "value" $image.enforceSupportedVersions "default" true "field" "image.enforceSupportedVersions")) "true" -}}
 {{- $digest := regexFind "@sha256:[0-9a-f]{64}$" $tag -}}
 {{- $version := trimSuffix $digest $tag -}}
 {{- $core := "(0|[1-9][0-9]*)" -}}
@@ -89,7 +89,7 @@ is a template panic.
 {{- $tag -}}
 {{- end -}}
 
-{{- define "br-common-service.image" -}}
+{{- define "br-rust-common-chart.image" -}}
 {{- $image := .Values.image | default dict -}}
-{{- required "image.repository is required: the service image, without tag; set it in the service chart" $image.repository -}}:{{- include "br-common-service.imageTag" . -}}
+{{- required "image.repository is required: the service image, without tag; set it in the service chart" $image.repository -}}:{{- include "br-rust-common-chart.imageTag" . -}}
 {{- end -}}

@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::routing::{MethodRouter, get};
 
 /// The path liveness is served on. Part of the ops contract: the
-/// `br-common-service` chart probes it by default (`probes.livenessPath`) and
+/// `br-rust-common-chart` chart probes it by default (`probes.livenessPath`) and
 /// is gated against this constant.
 pub const LIVENESS_PATH: &str = "/livez";
 

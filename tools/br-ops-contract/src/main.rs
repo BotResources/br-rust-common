@@ -1,14 +1,14 @@
 //! `br-ops-contract` — the ops-contract names the br-rust-common crates own,
 //! as JSON: `{ "<crate>::<CONSTANT>": "<value>" }`, sorted by constant.
 //!
-//! The Helm library chart `br-common-service` renders these names (the boot
+//! The Helm library chart `br-rust-common-chart` renders these names (the boot
 //! variables, the probe paths). A chart cannot import a Rust constant, so the
 //! link is a gate in two hops, both run by CI on every pull request:
 //!
 //! 1. this crate's test fails when the committed
-//!    `charts/br-common-service/ci/ops-contract.json` differs from what the
+//!    `charts/br-rust-common-chart/ci/ops-contract.json` differs from what the
 //!    constants print — regenerate it with
-//!    `cargo run -q -p br-ops-contract > charts/br-common-service/ci/ops-contract.json`;
+//!    `cargo run -q -p br-ops-contract > charts/br-rust-common-chart/ci/ops-contract.json`;
 //! 2. `.github/scripts/check-chart.sh` fails when the chart renders a name or
 //!    a default that differs from that file, renders a variable no constant
 //!    owns (and the gate does not declare the chart's own), or leaves a
@@ -60,7 +60,7 @@ mod tests {
 
     use super::*;
 
-    const COMMITTED: &str = "charts/br-common-service/ci/ops-contract.json";
+    const COMMITTED: &str = "charts/br-rust-common-chart/ci/ops-contract.json";
 
     #[test]
     fn the_committed_contract_is_what_the_constants_print() {

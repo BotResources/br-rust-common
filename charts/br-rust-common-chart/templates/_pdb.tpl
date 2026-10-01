@@ -1,5 +1,5 @@
 {{- /*
-br-common-service.pdb — the PodDisruptionBudget, rendered only when
+br-rust-common-chart.pdb — the PodDisruptionBudget, rendered only when
 `podDisruptionBudget.enabled` is true (default false). Exactly one of
 `minAvailable` / `maxUnavailable` is required, each an integer or a
 percentage, and a budget that no eviction can ever satisfy fails the render —
@@ -13,17 +13,17 @@ it would hang every node drain forever:
 A quoted integer ("1") is read as the integer, so the guard cannot be passed
 by quoting.
 */ -}}
-{{- define "br-common-service.pdb" -}}
+{{- define "br-rust-common-chart.pdb" -}}
 {{- $pdb := .Values.podDisruptionBudget | default dict -}}
-{{- if eq (include "br-common-service.flag" (dict "value" $pdb.enabled "default" false "field" "podDisruptionBudget.enabled")) "true" -}}
+{{- if eq (include "br-rust-common-chart.flag" (dict "value" $pdb.enabled "default" false "field" "podDisruptionBudget.enabled")) "true" -}}
 {{- $hasMin := not (kindIs "invalid" $pdb.minAvailable) -}}
 {{- $hasMax := not (kindIs "invalid" $pdb.maxUnavailable) -}}
 {{- if eq $hasMin $hasMax -}}
 {{- fail "podDisruptionBudget: set exactly one of minAvailable and maxUnavailable" -}}
 {{- end -}}
-{{- $replicas := int (include "br-common-service.replicas" .) -}}
+{{- $replicas := int (include "br-rust-common-chart.replicas" .) -}}
 {{- $field := ternary "minAvailable" "maxUnavailable" $hasMin -}}
-{{- $bound := include "br-common-service.pdbBound" (dict "value" (ternary $pdb.minAvailable $pdb.maxUnavailable $hasMin) "field" (printf "podDisruptionBudget.%s" $field)) -}}
+{{- $bound := include "br-rust-common-chart.pdbBound" (dict "value" (ternary $pdb.minAvailable $pdb.maxUnavailable $hasMin) "field" (printf "podDisruptionBudget.%s" $field)) -}}
 {{- $percent := hasSuffix "%" $bound -}}
 {{- $n := int (trimSuffix "%" $bound) -}}
 {{- /* The pods the budget counts, rounded up for a percentage as Kubernetes does. */ -}}
@@ -37,14 +37,14 @@ by quoting.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "br-common-service.name" . }}
+  name: {{ include "br-rust-common-chart.name" . }}
   labels:
-    {{- include "br-common-service.labels" . | nindent 4 }}
+    {{- include "br-rust-common-chart.labels" . | nindent 4 }}
 spec:
   {{ $field }}: {{ ternary ($bound | quote) $n $percent }}
   selector:
     matchLabels:
-      {{- include "br-common-service.selectorLabels" . | nindent 6 }}
+      {{- include "br-rust-common-chart.selectorLabels" . | nindent 6 }}
 {{- end -}}
 {{- end -}}
 
@@ -55,7 +55,7 @@ Kubernetes accepts). Anything else fails the render, a leading zero included:
 sprig's `int` would read "010" as octal. Call with
 (dict "value" <v> "field" "<values path>").
 */ -}}
-{{- define "br-common-service.pdbBound" -}}
+{{- define "br-rust-common-chart.pdbBound" -}}
 {{- $value := toString .value -}}
 {{- if regexMatch "^(0|[1-9][0-9]*)$" $value -}}
 {{- int $value -}}

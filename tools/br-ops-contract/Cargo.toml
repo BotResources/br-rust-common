@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-description = "CI tool, never published: prints the ops-contract names the br-rust-common crates own (boot variable names, probe paths) as JSON, the file the br-common-service chart gate compares its render against"
+description = "CI tool, never published: prints the ops-contract names the br-rust-common crates own (boot variable names, probe paths) as JSON, the file the br-rust-common-chart chart gate compares its render against"
 
 [dependencies]
 br-util-axum-readiness = { workspace = true }

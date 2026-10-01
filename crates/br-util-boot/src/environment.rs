@@ -4,7 +4,7 @@ use std::str::FromStr;
 use crate::error::InvalidValue;
 
 /// The logical environment a service runs in: the value of `ENVIRONMENT`, and
-/// the `botresources.ai/env` label the `br-common-service` chart sets beside it.
+/// the `botresources.ai/env` label the `br-rust-common-chart` chart sets beside it.
 ///
 /// Deliberately exhaustive: a new environment must make every `match` on it —
 /// typically a gate that allows a development-only backend in `Local` and

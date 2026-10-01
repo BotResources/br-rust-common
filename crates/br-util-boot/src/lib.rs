@@ -1,7 +1,7 @@
 //! The boot environment of a BotResources service.
 //!
 //! [`env`](mod@env) names the variables a service reads at boot, once, for every
-//! service and for the `br-common-service` Helm chart, which is gated against
+//! service and for the `br-rust-common-chart` Helm chart, which is gated against
 //! these constants. [`BootEnv`] reads them, typed and validated, and reports
 //! every problem at once.
 //!

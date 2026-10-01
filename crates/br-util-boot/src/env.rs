@@ -2,7 +2,7 @@
 //!
 //! These constants are the single definition of each name: a service reads the
 //! variable through [`BootEnv`] (or, when it reads one on its own, through the
-//! constant — never through a literal), and the `br-common-service` Helm chart
+//! constant — never through a literal), and the `br-rust-common-chart` Helm chart
 //! is gated against them, so the chart cannot render a name the code does not
 //! read. The Postgres names that only `br-util-postgres` reads
 //! (`DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS`) are that crate's.

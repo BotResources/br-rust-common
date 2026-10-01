@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-chart.sh — the gate of the br-common-service library chart.
+# check-chart.sh — the gate of the br-rust-common-chart library chart.
 #
 #   0. read the names the br-rust-common crates own from
 #      ci/ops-contract.json — what their constants print (tools/br-ops-contract,
@@ -13,12 +13,14 @@
 #      the few it declares its own, it leaves no constant unplaced, and
 #      README.md documents each name with its owner;
 #   4. render it per environment and assert the ops contract, field by field;
-#   5. render it with every optional field set;
+#   5. render it with every optional field set, and compare its default
+#      render with the one of the base branch's library (a warning when they
+#      differ: a new optional value must change nothing when it is unset);
 #   6. prove each render guard: a missing per-environment value, an unsafe
 #      combination or a forbidden override fails the render with a message
 #      that names it;
 #   7. version gate (chart_version_gate in chart-release-lib.sh): a change
-#      under charts/br-common-service/ (ci/ excepted) needs a Chart.yaml
+#      under charts/br-rust-common-chart/ (ci/ excepted) needs a Chart.yaml
 #      version greater than the base's and not yet tagged; every version needs
 #      a `## [<version>]` heading in the chart's CHANGELOG.md.
 #
@@ -34,7 +36,7 @@ cd "$repo_root"
 # shellcheck source-path=SCRIPTDIR source=chart-release-lib.sh
 source "${repo_root}/.github/scripts/chart-release-lib.sh"
 
-chart_dir="charts/br-common-service"
+chart_dir="charts/br-rust-common-chart"
 example="${chart_dir}/ci/example-service"
 envs="dev uat prod"
 
@@ -89,7 +91,7 @@ echo "── the package leaves the CI fixture out"
 pkg_dir="$(mktemp -d)"
 trap 'rm -rf "$pkg_dir"' EXIT
 helm package "$chart_dir" --destination "$pkg_dir" >/dev/null
-if tar -tzf "$pkg_dir"/br-common-service-*.tgz | grep -q '/ci/'; then
+if tar -tzf "$pkg_dir"/br-rust-common-chart-*.tgz | grep -q '/ci/'; then
   fail "the packaged library contains ci/ — check ${chart_dir}/.helmignore"
 else
   ok "no ci/ in the package"
@@ -246,11 +248,27 @@ for env in $envs; do
   expect "no PDB by default" "" "$(q "$out" PodDisruptionBudget '.metadata.name')"
   expect "no NetworkPolicy by default" "" "$(q "$out" NetworkPolicy '.metadata.name')"
   expect "no strategy by default" "null" "$(q "$out" Deployment '.spec.strategy')"
+  expect "no volumes by default" "null" "$(q "$out" Deployment '.spec.template.spec.volumes')"
+  expect "no volumeMounts by default" "null" "$(q "$out" Deployment "${c}.volumeMounts")"
 done
 
 # ── 5. Every optional field ─────────────────────────────────────────────────
+# extraVolumes / extraVolumeMounts (1.1.0): an emptyDir `scratch` at /tmp, as
+# engagement-notes needs it. Kept here, not in the fixture's values files, so
+# that the fixture stays the mirror of charter's pre-library chart.
+volumes_values="${pkg_dir}/values-volumes.yaml"
+cat >"$volumes_values" <<'YAML'
+extraVolumes:
+  - name: scratch
+    emptyDir:
+      sizeLimit: 64Mi
+extraVolumeMounts:
+  - name: scratch
+    mountPath: /tmp
+YAML
+
 echo "── every optional field"
-out="$(render -f "${example}/values-prod.yaml" -f "${example}/values-all-fields.yaml")"
+out="$(render -f "${example}/values-prod.yaml" -f "${example}/values-all-fields.yaml" -f "$volumes_values")"
 c='.spec.template.spec.containers[0]'
 expect "args" "serve" "$(q "$out" Deployment "${c}.args[0]")"
 expect "strategy" "Recreate" "$(q "$out" Deployment '.spec.strategy.type')"
@@ -287,6 +305,45 @@ expect "PDB selector" "charter" "$(q "$out" PodDisruptionBudget '.spec.selector.
 expect "NetworkPolicy types" "Egress" "$(q "$out" NetworkPolicy '.spec.policyTypes | join(",")')"
 expect "NetworkPolicy egress port" "9000" "$(q "$out" NetworkPolicy '.spec.egress[0].ports[0].port')"
 expect "NetworkPolicy has no ingress key" "false" "$(q "$out" NetworkPolicy '.spec | has("ingress")')"
+expect "extra volume" "scratch" "$(q "$out" Deployment '.spec.template.spec.volumes[0].name')"
+expect "extra volume mount" "/tmp" "$(q "$out" Deployment "${c}.volumeMounts[0].mountPath")"
+
+echo "── an emptyDir at /tmp, the root filesystem kept read-only"
+out="$(render -f "${example}/values-dev.yaml" -f "$volumes_values")"
+expect "volumes" "scratch" "$(q "$out" Deployment '[.spec.template.spec.volumes[].name] | join(" ")')"
+expect "emptyDir sizeLimit" "64Mi" "$(q "$out" Deployment '.spec.template.spec.volumes[0].emptyDir.sizeLimit')"
+expect "service container mounts scratch" "scratch" "$(q "$out" Deployment "${c}.volumeMounts[0].name")"
+expect "at /tmp" "/tmp" "$(q "$out" Deployment "${c}.volumeMounts[0].mountPath")"
+expect "one mount" "1" "$(q "$out" Deployment "${c}.volumeMounts | length")"
+expect "readOnlyRootFilesystem kept" "true" "$(q "$out" Deployment "${c}.securityContext.readOnlyRootFilesystem")"
+expect "wait-for-postgres mounts nothing" "null" "$(q "$out" Deployment '.spec.template.spec.initContainers[0].volumeMounts')"
+
+echo "── the default render against the base branch's library"
+# A new optional value must change nothing when it is unset. The fixture of
+# this checkout is rendered with the library of the base branch and with this
+# one; a difference is a warning, not a failure, because a later change may
+# change a default on purpose (its CHANGELOG entry says so).
+base_ref="origin/${GITHUB_BASE_REF:-main}"
+if git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null \
+  && git cat-file -e "${base_ref}:${chart_dir}/Chart.yaml" 2>/dev/null; then
+  base_dir="$(mktemp -d)"
+  git archive "$base_ref" "$chart_dir" | tar -x -C "$base_dir"
+  cp -R "$example" "${base_dir}/example-service"
+  rm -rf "${base_dir}/example-service/charts" "${base_dir}/example-service/Chart.lock"
+  sed -i.bak 's#file://../..#file://'"${base_dir}/${chart_dir}"'#' "${base_dir}/example-service/Chart.yaml"
+  helm dependency build --skip-refresh "${base_dir}/example-service" >/dev/null
+  for env in $envs; do
+    if diff <(helm template example "${base_dir}/example-service" -f "${example}/values-${env}.yaml") \
+      <(render -f "${example}/values-${env}.yaml") >/dev/null; then
+      ok "default render (${env}) byte-identical to ${base_ref}"
+    else
+      echo "::warning::the default render (${env}) differs from the one with the library of ${base_ref}"
+    fi
+  done
+  rm -rf "$base_dir"
+else
+  echo "::notice::${base_ref} has no ${chart_dir}; default-render comparison skipped"
+fi
 
 echo "── a service that never migrates, on a TLS Postgres"
 out="$(render -f "${example}/values-dev.yaml" --set postgres.migrate=false --set postgres.ownerSecretName=null \
@@ -425,6 +482,13 @@ must_fail "neither networkPolicy.ingress nor networkPolicy.egress" "${dev[@]}" -
 must_fail "is not a DNS-1035 label" "${dev[@]}" --set serviceName=Charter_Svc
 must_fail "port must be a TCP port" "${dev[@]}" --set port=70000
 must_fail "is not an environment variable name" "${dev[@]}" --set postgres.appPasswordEnv=app-password
+must_fail "extraVolumeMounts[0] mounts \"scratch\", which extraVolumes does not declare" "${dev[@]}" \
+  --set extraVolumeMounts[0].name=scratch --set extraVolumeMounts[0].mountPath=/tmp
+must_fail "extraVolumeMounts[0] mounts \"cache\", which extraVolumes does not declare" "${dev[@]}" -f "$volumes_values" \
+  --set extraVolumeMounts[0].name=cache
+must_fail "extraVolumes[0] has no name" "${dev[@]}" --set extraVolumes[0].emptyDir.medium=Memory
+must_fail "extraVolumes declares scratch twice" "${dev[@]}" -f "$volumes_values" \
+  --set extraVolumes[1].name=scratch --set extraVolumes[1].emptyDir.medium=Memory
 
 echo "── extraEnv cannot replace a contract variable"
 # Kubernetes keeps the LAST of two env entries with the same name: each of
@@ -467,7 +531,7 @@ else
 fi
 
 gate_rc=0
-gate_msg="$(chart_version_gate "$chart_dir" "origin/${GITHUB_BASE_REF:-main}" "chart/br-common-service/v")" || gate_rc=$?
+gate_msg="$(chart_version_gate "$chart_dir" "origin/${GITHUB_BASE_REF:-main}" "chart/br-rust-common-chart/v")" || gate_rc=$?
 case "$gate_rc" in
   0) ok "$gate_msg" ;;
   2) echo "::notice::${gate_msg}" ;;
@@ -478,4 +542,4 @@ if [ "$failures" -gt 0 ]; then
   echo "✗ ${failures} check(s) failed" >&2
   exit 1
 fi
-echo "✓ br-common-service chart gate passed"
+echo "✓ br-rust-common-chart chart gate passed"

@@ -1,5 +1,5 @@
 # What a deploying repository ADDS to each per-environment values file when it
-# moves a pre-library service chart onto br-common-service: the values the
+# moves a pre-library service chart onto br-rust-common-chart: the values the
 # pre-library chart defaulted in its own values.yaml, which the library leaves
 # to the environment without a default.
 #   - TRUSTED_NETWORK_HOSTS was hard-coded to the Postgres Service; the library

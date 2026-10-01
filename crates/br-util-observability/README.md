@@ -30,7 +30,7 @@ the convention this crate exists to enforce.
 | Item | Kind | Behavior |
 |---|---|---|
 | `init_logging` | `fn(component: &str)` | Installs a global `tracing` subscriber that emits **one JSON object per line** on stdout. Canonical keys: `ts` (RFC 3339, UTC), `level`, `component`, `msg`; every event field is carried alongside. Level is env-driven (`RUST_LOG`, default `info`). Idempotent — a second call is a no-op (logs a notice, never panics). Call once, first thing in `main`. |
-| `LIVENESS_PATH` | `&str` = `"/livez"` | The path liveness is served on — ops contract: the `br-common-service` chart probes it by default and is gated against this constant. |
+| `LIVENESS_PATH` | `&str` = `"/livez"` | The path liveness is served on — ops contract: the `br-rust-common-chart` chart probes it by default and is gated against this constant. |
 | `liveness_router::<S>` | `fn() -> Router<S>` | A router serving `liveness_route` on `LIVENESS_PATH`, to `merge` into the service's router. **Prefer it**: the path comes from the constant, so a service cannot serve liveness where the probe does not look. |
 | `liveness_route::<S>` | `fn() -> MethodRouter<S>` | Axum `GET` route, **always** `200 OK` (body `"alive"`). Generic over the router state, so it mounts into any `Router<S>`. |
 | `init_metrics` | `fn(component: &str) -> Result<MetricsHandle, MetricsError>` | Installs the **process-global** Prometheus recorder, registers the universal process collectors, and pins the latency buckets **for its own `http_request_duration_seconds` metric only** (the recorder default stays neutral, so the service's own histograms are unaffected). `component` is a constant global label (the service name, never PII), symmetric with `init_logging`. Fallible (the recorder installs once per process); a second call returns `MetricsError::Install` rather than panicking. Call once in `main`, keep the handle. |
@@ -143,7 +143,7 @@ let app = Router::new()
 ```
 
 Each path is a constant of the crate that serves it, never a literal of the
-service: the `br-common-service` chart probes the same constants, so the two
+service: the `br-rust-common-chart` chart probes the same constants, so the two
 cannot drift apart. A service that still mounts `liveness_route()` by hand on
 another path keeps that path set explicitly in its chart until it adopts the
 router.

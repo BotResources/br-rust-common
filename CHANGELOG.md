@@ -9,10 +9,10 @@ Earlier per-crate versions and their changelogs were consolidated into this
 release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
 
-The Helm library chart `br-common-service` is not versioned with the crates: it
+The Helm library chart `br-rust-common-chart` is not versioned with the crates: it
 has its own version line and changelog,
-[`charts/br-common-service/CHANGELOG.md`](charts/br-common-service/CHANGELOG.md),
-and its own tags (`chart/br-common-service/vX.Y.Z`).
+[`charts/br-rust-common-chart/CHANGELOG.md`](charts/br-rust-common-chart/CHANGELOG.md),
+and its own tags (`chart/br-rust-common-chart/vX.Y.Z`).
 
 ## [1.4.0] — 2026-09-25
 
@@ -22,7 +22,7 @@ of the crate that reads or serves it — the variable names `ENVIRONMENT`,
 `PORT`, `HOST`, `DATABASE_URL`, `NATS_URL` (`br-util-boot`, new),
 `DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` (`br-util-postgres`), and the
 paths `/livez`, `/metrics` (`br-util-observability`), `/readyz`
-(`br-util-axum-readiness`). The `br-common-service` library chart
+(`br-util-axum-readiness`). The `br-rust-common-chart` library chart
 (`1.0.1`, its own changelog) is gated against them: it cannot render a name or
 a default path the code does not define. Purely additive: the names and paths
 are the ones every `1.x` release already read and served, so no consumer is
@@ -65,7 +65,7 @@ their next sealed patch (chart README, *Adoption*).
   crate now reads them through the constants.
 - **`tools/br-ops-contract` — CI tool, never published** (outside `crates/`,
   `publish = false`): prints the ten constants above as JSON into
-  `charts/br-common-service/ci/ops-contract.json`, and its test fails when that
+  `charts/br-rust-common-chart/ci/ops-contract.json`, and its test fails when that
   committed file is stale. `.github/scripts/check-chart.sh` reads every name it
   expects from that file — none is spelled in the gate — and fails when the
   chart renders a name or a default path that differs, renders a variable that
