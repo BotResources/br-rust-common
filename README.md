@@ -72,9 +72,14 @@ is stale, and the chart gate fails when the chart renders anything else.
 
 ## Distribution
 
-Not on crates.io. Every crate is its own library: it has its own version, its own `CHANGELOG.md` and
-is released by its own git tag `{crate}/v{version}`, starting at `0.1.0`. Crates are released in waves, a crate
-only after the sibling crates it depends on.
+Not on crates.io. Every publishable crate is its own library: it has its own version, its own `CHANGELOG.md` and
+is released by its own git tag `{crate}/v{version}`, starting at `0.1.0` (`br-test-support` is `publish = false` and
+is never released). Crates are released in waves, a crate only after the sibling crates it depends on.
+
+Release rule, enforced by `check-sibling-pins.sh`: a released crate pins each internal sibling it depends on by tag,
+as `{ git = "https://github.com/BotResources/br-rust-common", tag = "<sibling>/v<version>", version = "<version>" }`,
+with a root `[patch."https://github.com/BotResources/br-rust-common"]` to the local path of the sibling. A crate stays
+at `0.0.0` until the siblings it depends on are tagged.
 
 A crate marked `v1.4.0` only in the catalog is not yet released on its own line (it is at `0.0.0` in this tree).
 It has shipped in every `v1.x` workspace release: until its wave, the only pin for it is the workspace tag
@@ -84,12 +89,15 @@ It has shipped in every `v1.x` workspace release: until its wave, the only pin f
 br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.4.0", version = "1.4.0" }
 ```
 
-Crates share types: `br-core-events` re-exports `UserId`, `ServiceAccountId` and `Actor` from `br-core-kernel`,
-`br-core-auth` re-exports `ScopeKey` from `br-core-scope` and uses `UserId`, `br-identity-domain` re-exports
-`ScopeDeclaration` from `br-core-scope`, `br-core-integration` re-exports from `br-core-events`, and
-`br-util-graphql` wraps `br-core-values`. A consumer must not mix a per-crate pin and `v1.4.0` for crates that
-share types: the build then holds two copies of the same type and fails to compile. Move such crates together,
-all to per-crate pins or all to `v1.4.0`.
+Crates share types: any crate that names a type of a sibling in its public API has the same type as that sibling.
+For example `br-core-events` re-exports `UserId`, `ServiceAccountId` and `Actor` from `br-core-kernel`; `br-core-auth`
+re-exports `ScopeKey` from `br-core-scope` and uses `UserId`; `br-identity-domain` re-exports `ScopeDeclaration` from
+`br-core-scope`; `br-core-integration` re-exports from `br-core-events`; `br-util-graphql` wraps `br-core-values`;
+`br-util-directory` returns `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` from
+`br-core-directory`; `br-util-scope-declaration` takes `ScopeDeclaration` from `br-core-scope` and `ReadinessHandle`
+from `br-util-axum-readiness`. A consumer must not mix a per-crate pin and `v1.4.0` for crates that share types: the
+build then holds two copies of the same type and fails to compile. Move such crates together, all to per-crate pins
+or all to `v1.4.0`.
 
 Released crates are pinned by their own tag, with the matching `version` beside it (a tag-only git dependency
 carries a `*` version requirement, which `cargo-deny` rejects):

@@ -9,6 +9,8 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+v1.4.0 does not contain the fix below; it ships with the crate's first release on its own line.
+
 ### Fixed
 
 - **`br-util-postgres` — `validate_database_tls` no longer reads the host from
