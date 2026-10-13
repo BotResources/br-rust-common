@@ -43,6 +43,10 @@ for crate in ${TRACKED_LIBRARIES:-}; do
 
     echo "${crate}: ${base_version:-<absent>} -> ${version} — gating against ${line} and the registry."
     "$LAW" check "$crate" "$version" "refs/heads/${line}"
+    metadata="$(mktemp)"
+    cargo metadata --format-version 1 --locked --all-features >"$metadata"
+    bash "$SCRIPTS/check-sibling-pins.sh" "$crate" "$metadata" || { rm -f "$metadata"; exit 1; }
+    rm -f "$metadata"
     bash "$SCRIPTS/registry-gate.sh" "$crate" "$version"
     gated=1
 done

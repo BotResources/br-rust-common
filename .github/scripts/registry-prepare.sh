@@ -42,7 +42,7 @@ if [[ "$(git rev-parse "${COMMIT}^{commit}")" != "$(git rev-parse HEAD)" ]]; the
     git worktree add --detach "$SRC" "$COMMIT" >/dev/null
 fi
 
-(cd "$SRC" && cargo public-api -p "$CRATE" --color never) >"$OUT/listing.txt"
+(cd "$SRC" && cargo public-api -p "$CRATE" --all-features --color never) >"$OUT/listing.txt"
 if [[ ! -s "$OUT/listing.txt" ]]; then
     echo "::error::registry prepare: cargo public-api printed an empty API for ${CRATE} at ${COMMIT}." >&2
     exit 1
@@ -54,10 +54,12 @@ if [[ -n "$BASELINE_TAG" ]]; then
         echo "::error::registry prepare: the baseline tag ${BASELINE_TAG} named by the registry is not in this clone." >&2
         exit 1
     fi
-    (cd "$SRC" && cargo public-api -p "$CRATE" --color never diff "${BASELINE_TAG}..${COMMIT}") >"$OUT/diff.txt"
+    (cd "$SRC" && cargo public-api -p "$CRATE" --all-features --color never diff "${BASELINE_TAG}..${COMMIT}") >"$OUT/diff.txt"
 fi
 
 (cd "$SRC" && cargo metadata --format-version 1 --locked --all-features) >"$WORK/metadata.json"
+
+bash "$SCRIPTS/check-sibling-pins.sh" "$CRATE" "$WORK/metadata.json"
 
 python3 - "$WORK/metadata.json" "$CRATE" "$SRC" "${TRACKED_LIBRARIES:-}" >"$WORK/raw.json" <<'PY'
 import json, os, re, sys

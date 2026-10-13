@@ -84,19 +84,42 @@ expect_equal "$(request_field 2 input.dependencies)" "[]" "no registered depende
 expect_equal "$(request_field 3 input.releaseTag)" "br-alpha/v0.1.0" "release tag recorded"
 expect_equal "$(request_field 3 input.releaseCommit)" "$RELEASE_COMMIT" "release commit recorded"
 
+echo "== record: a tracked sibling as a bare path dependency is refused"
+stub_reset
+rm -rf "$WORK/reg"
+expect 1 'br-beta depends on its tracked sibling br-alpha without a tag pin' "path dependency on a tracked sibling: refuses, naming both" record br-beta 0.1.0 br-beta/v0.1.0 "$RELEASE_COMMIT"
+expect_equal "$(requests)" 0 "nothing is sent to the registry"
+expect 0 'br-alpha 0.1.0 recorded' "a crate with no sibling dependency still records" record br-alpha 0.1.0 br-alpha/v0.1.0 "$RELEASE_COMMIT"
+
 echo "== record: baseline, workspace and registered dependencies"
 stub_reset
 rm -rf "$WORK/reg"
+python3 - "$DEV/crates/br-beta/Cargo.toml" "$ORIGIN" <<'PY'
+import sys
+path, origin = sys.argv[1], sys.argv[2]
+s = open(path).read().replace(
+    'br-alpha = { path = "../br-alpha" }',
+    'br-alpha = { git = "file://%s", tag = "br-alpha/v0.1.0", version = "0.1.0" }' % origin,
+)
+open(path, "w").write(s)
+PY
+printf '\n[patch."file://%s"]\nbr-alpha = { path = "crates/br-alpha" }\n' "$ORIGIN" >>"$DEV/Cargo.toml"
+(cd "$DEV" && cargo generate-lockfile -q)
+BETA_COMMIT="$(commit_all "beta pins alpha by tag")"
+g tag -d br-beta/v0.1.0 >/dev/null
+g tag -a br-beta/v0.1.0 -m t "$BETA_COMMIT"
 g tag -a br-beta/v0.0.9 -m old "$(g rev-parse HEAD~1)" 2>/dev/null || g tag -a br-beta/v0.0.9 -m old "$RELEASE_COMMIT"
 stub_response librariesLookupPackages "{\"data\":{\"librariesLookupPackages\":[{\"found\":true,\"packageName\":\"extdep\",\"version\":\"2.3.4\",\"line\":\"2.3\",\"lineStatus\":\"ACTIVE\",\"library\":{\"id\":\"$EXTERNAL_ID\",\"name\":\"extdep\"}}]}}"
 stub_response librariesRecordDependencies '{"data":{"librariesRecordDependencies":{"success":true,"warnings":[{"code":"DEPENDENCY_LINE_DEPRECATED","params":{"x":1}}]}}}'
-expect 0 '::warning::registry: DEPENDENCY_LINE_DEPRECATED' "warnings printed as ::warning::" record br-beta 0.1.0 br-beta/v0.1.0 "$RELEASE_COMMIT" br-beta/v0.0.9
+expect 0 '::warning::registry: DEPENDENCY_LINE_DEPRECATED' "warnings printed as ::warning::" record br-beta 0.1.0 br-beta/v0.1.0 "$BETA_COMMIT" br-beta/v0.0.9
 expect_equal "$(requests)" 4 "look-up plus three records"
 expect_file_has "$STUB_DIR/requests/1.json" '"packageName": "extdep"' "only the package outside the workspace is looked up"
 expect_file_lacks "$STUB_DIR/requests/1.json" 'br-alpha' "workspace crates are not looked up"
 expect_equal "$(request_field 3 input.dependencies)" "[{\"libraryId\": \"$ALPHA_ID\", \"version\": \"0.1.0\"}, {\"libraryId\": \"$EXTERNAL_ID\", \"version\": \"2.3.4\"}]" "dependencies: br-alpha (workspace) and extdep (look-up), no dev-dependency"
 expect_equal "$(request_field 2 input.apiDiff)" "DIFF-OUTPUT" "baseline: diff recorded verbatim"
-expect_file_has "$STUB_DIR/cargo.log" "diff br-beta/v0.0.9..$RELEASE_COMMIT" "diff is taken from the baseline tag to the release commit"
+expect_equal "$(grep -c 'public-api' "$STUB_DIR/cargo.log")" "$(grep -c -- '--all-features' "$STUB_DIR/cargo.log")" "every cargo public-api call (listing and diff) passes --all-features"
+expect_file_has "$STUB_DIR/cargo.log" "public-api -p br-beta --all-features --color never diff" "the diff call is for the crate"
+expect_file_has "$STUB_DIR/cargo.log" "diff br-beta/v0.0.9..$BETA_COMMIT" "diff is taken from the baseline tag to the release commit"
 
 echo "== record: refusals and recovery"
 stub_reset
@@ -122,7 +145,6 @@ rm -rf "$WORK/reg"
 GAMMA_ID="01a00000-0000-7000-8000-00000000000a"
 write_crate br-gamma "\n[dependencies]\nbr-alpha = { git = \"file://$ORIGIN\", tag = \"br-alpha/v0.1.0\", version = \"0.1.0\" }\n"
 printf 'library-id = "%s"\n' "$GAMMA_ID" >"$DEV/crates/br-gamma/registry.toml"
-printf '\n[patch."file://%s"]\nbr-alpha = { path = "crates/br-alpha" }\n' "$ORIGIN" >>"$DEV/Cargo.toml"
 set_tracked "br-alpha br-beta br-delta br-gamma"
 sed -e 's/^version = "0.1.0"/version = "0.1.1"/' "$DEV/crates/br-alpha/Cargo.toml" >"$DEV/crates/br-alpha/Cargo.toml.new" && mv "$DEV/crates/br-alpha/Cargo.toml.new" "$DEV/crates/br-alpha/Cargo.toml"
 sed -e 's/^version = "0.0.0"/version = "0.1.0"/' "$DEV/crates/br-gamma/Cargo.toml" >"$DEV/crates/br-gamma/Cargo.toml.new" && mv "$DEV/crates/br-gamma/Cargo.toml.new" "$DEV/crates/br-gamma/Cargo.toml"

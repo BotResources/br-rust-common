@@ -113,6 +113,14 @@ stub_error librariesValidateReleaseTarget PATCH_IMPLEMENTED "implemented"
 expect 1 'immutable' "bump on an implemented patch: already released, fails" in_dev env BASE_REF=main BR_REGISTRY_KEY=k bash .github/scripts/pr-registry-gate.sh
 g checkout -q main
 g branch -q -D feat/bump
+g checkout -q -b feat/sibling main
+set_version br-beta 0.1.0
+commit_all "beta 0.1.0 with a bare path dependency on alpha" >/dev/null
+stub_reset
+eligible_target null true 0.1.0
+expect 1 'br-beta depends on its tracked sibling br-alpha without a tag pin' "bump of a crate with a bare path dependency on a tracked sibling: fails" in_dev env BASE_REF=main BR_REGISTRY_KEY=k bash .github/scripts/pr-registry-gate.sh
+g checkout -q main
+g branch -q -D feat/sibling
 g checkout -q -b feat/line main
 set_version br-alpha 0.1.5
 commit_all "alpha 0.1.5 into main" >/dev/null
