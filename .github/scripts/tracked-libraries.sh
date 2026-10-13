@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+export TRACKED_LIBRARIES="br-core-kernel br-core-events br-core-integration br-core-scope br-core-auth br-core-values br-core-directory br-util-boot br-util-observability br-util-axum-readiness br-util-broadcast br-util-postgres br-util-graphql br-util-axum-auth br-util-nats-fabric br-util-directory br-util-scope-declaration br-scope-declaration-contract br-identity-domain br-identity-app"

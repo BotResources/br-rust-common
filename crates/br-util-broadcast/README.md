@@ -106,13 +106,13 @@ not UI prose; the human text and its i18n live at the edge. The enum is
 
 Tier `util`: depends only on `tokio` (`sync` for the broadcast channel) and
 `thiserror` (the error type). No I/O beyond the in-process channel, no `br-*`
-dependency. Unified workspace versioning, distributed by git tag.
+dependency. Versioned on its own line, distributed by the git tag `br-util-broadcast/v<version>`.
 
 ## Install
 
 ```toml
 [dependencies]
-br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "v1.4.0", version = "1.4.0" }
+br-util-broadcast = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-broadcast", tag = "br-util-broadcast/v0.1.0", version = "0.1.0" }
 ```
 
 [`tokio::sync::broadcast`]: https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html

@@ -2,8 +2,17 @@ name: release-tags
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
   workflow_dispatch:
+    inputs:
+      crate:
+        description: Crate to release (a tracked library crate)
+        required: true
+        type: string
+      version:
+        description: Version to release (the version the crate declares)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,9 +22,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tag:
-    name: Auto-tag the workspace version
+  detect:
+    name: Detect crates to release
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      refused: ${{ steps.detect.outputs.refused }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+      - name: Detect
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CRATE: ${{ inputs.crate }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/release-detect.sh
+
+  release-line-law:
+    name: Release-line law
+    needs: detect
+    if: needs.detect.outputs.refused != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report refused versions
+        env:
+          REFUSED: ${{ needs.detect.outputs.refused }}
+        run: |
+          set -euo pipefail
+          python3 -c '
+          import json, os
+          for entry in json.loads(os.environ["REFUSED"]):
+              print("::error::" + entry)
+          '
+          exit 1
+
+  release:
+    name: Release ${{ matrix.crate }} ${{ matrix.version }}
+    needs: detect
+    if: needs.detect.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJson(needs.detect.outputs.matrix) }}
+    env:
+      CRATE: ${{ matrix.crate }}
+      VERSION: ${{ matrix.version }}
+      LINE: ${{ matrix.line }}
+      COMMIT: ${{ matrix.commit }}
+      BR_REGISTRY_KEY: ${{ secrets.BR_REGISTRY_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -26,50 +85,40 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Verify changelog entry before tagging
-        run: bash .github/scripts/check-changelog.sh
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: release
+      - uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+        with:
+          tool: cargo-public-api
 
-      - name: Tag and release the workspace version
+      - name: Verify the changelog entry
+        run: bash .github/scripts/check-changelog.sh "$CRATE" "$COMMIT"
+
+      - name: Registry gate
+        id: gate
+        run: bash .github/scripts/registry-gate.sh "$CRATE" "$VERSION" "$CRATE/v$VERSION"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          version=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\1/')
-          if [ -z "$version" ]; then
-            echo "::error::could not extract [workspace.package] version from Cargo.toml"
-            exit 1
-          fi
-          tag="v${version}"
-          changelog="CHANGELOG.md"
+          GATE_REV: ${{ matrix.commit }}
 
-          if git rev-parse --verify "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "✓ tag ${tag} already exists"
-          else
-            echo "→ creating tag ${tag}"
-            git tag -a "${tag}" \
-              -m "br-rust-common ${version}" \
-              -m "Auto-tagged from main. See ${changelog} for the entry."
-            git push origin "${tag}"
-          fi
+      - name: Compute API listing, API diff and dependencies
+        if: steps.gate.outputs.implemented != 'true'
+        env:
+          BASELINE_TAG: ${{ steps.gate.outputs.baseline_tag }}
+        run: bash .github/scripts/registry-prepare.sh "$CRATE" "$VERSION" "$COMMIT" "$BASELINE_TAG"
 
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            echo "✓ release ${tag} already exists"
-          else
-            echo "→ creating release ${tag}"
-            notes_file=$(mktemp)
-            awk -v target="## [${version}]" '
-              index($0, target) == 1 { in_section = 1; print; next }
-              in_section && index($0, "## [") == 1 { exit }
-              in_section { print }
-            ' "$changelog" > "$notes_file"
-            if [ ! -s "$notes_file" ]; then
-              echo "::warning file=${changelog}::could not extract notes for ${tag}; using placeholder"
-              printf 'See [%s](https://github.com/%s/blob/%s/%s) for changes.\n' \
-                "$changelog" "$GITHUB_REPOSITORY" "$tag" "$changelog" > "$notes_file"
-            fi
-            gh release create "${tag}" \
-              --title "br-rust-common ${version}" \
-              --notes-file "$notes_file" \
-              --verify-tag
-            rm -f "$notes_file"
-          fi
+      - name: Tag and release
+        if: steps.gate.outputs.implemented != 'true'
+        run: bash .github/scripts/release-crate.sh "$CRATE" "$VERSION" "refs/heads/$LINE" "$COMMIT"
+
+      - name: Record in the registry
+        if: steps.gate.outputs.implemented != 'true'
+        env:
+          BASELINE_TAG: ${{ steps.gate.outputs.baseline_tag }}
+        run: bash .github/scripts/registry-record.sh "$CRATE" "$VERSION" "$CRATE/v$VERSION" "$COMMIT" "$BASELINE_TAG"

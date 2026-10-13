@@ -153,13 +153,13 @@ router.
 Tier `util`: a technical wrapper over `tracing` / `tracing-subscriber`, `axum` /
 `tower`, and the `metrics` facade (`metrics-exporter-prometheus` with the HTTP
 listener disabled, `metrics-process` for the universal collectors). No domain,
-no policy. Unified workspace versioning, distributed by git tag.
+no policy. Versioned on its own line, distributed by the git tag `br-util-observability/v<version>`.
 
 ## Install
 
 ```toml
 [dependencies]
-br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "v1.4.0", version = "1.4.0" }
+br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "br-util-observability/v0.1.0", version = "0.1.0" }
 ```
 
 ---

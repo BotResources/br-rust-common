@@ -1,46 +1,25 @@
 # Changelog
 
-All notable changes to the `br-rust-common` workspace are documented here. The
-format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This file is the history of the `br-rust-common` workspace releases, up to and including `1.4.0`.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-From `0.8.0` on, every crate in the workspace shares a single version, this file
-is the single changelog, and the workspace ships under one git tag (`vX.Y.Z`).
-Earlier per-crate versions and their changelogs were consolidated into this
-release; they remain reachable through the historical per-crate tags
+From `0.8.0` to `1.4.0`, every crate in the workspace shared a single version, this file was the single
+changelog, and the workspace shipped under one git tag (`vX.Y.Z`). Earlier per-crate versions and their
+changelogs were consolidated into that release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
+
+**Releases are now per crate.** `1.4.0` is the last workspace-wide release; its sections below, and the
+`v1.4.0` tag and the tags before it, are never rewritten. Each library crate now has its own version, its own
+`crates/<crate>/CHANGELOG.md` and its own git tag `<crate>/v<version>`, and its first release is `0.1.0`.
+Crates are released in waves, a crate only after the sibling crates it depends on. A crate not yet released on
+its own line stays at `0.0.0` in the tree, and `v1.4.0` remains the only tag a consumer can pin for it. Changes
+after `1.4.0` are written in the changelog of the crate they change, not here.
 
 The Helm library chart `br-rust-common-chart` is not versioned with the crates: it
 has its own version line and changelog,
 [`charts/br-rust-common-chart/CHANGELOG.md`](charts/br-rust-common-chart/CHANGELOG.md),
 and its own tags (`chart/br-rust-common-chart/vX.Y.Z`; up to 1.1.0, when it was
 named `br-common-service`: `chart/br-common-service/vX.Y.Z`).
-
-## [Unreleased]
-
-### Fixed
-
-- **`br-util-postgres` — `validate_database_tls` no longer reads the host from
-  outside the URL authority (fail-open parsing).** The host was taken after the
-  first `@` of the whole DSN, so a DSN with `@localhost` only in its query,
-  path or fragment (for example `postgres://evil.example.com/db?x=a@localhost`)
-  was judged `localhost`: treated as loopback and accepted without TLS, while
-  the driver connected to `evil.example.com`. The host is now read from the
-  authority only (credentials end at the last `@` of the authority; a `@` in the
-  path, query or fragment, or percent-encoded in the user information, never
-  changes it), with the same URL parser the driver uses. `init_pool` and
-  `init_migration_pool` inherit the fix. The public signatures are unchanged.
-
-### Changed
-
-- **`br-util-postgres` — `validate_database_tls` is stricter about what it
-  accepts.** These DSNs were accepted before and now return
-  `PostgresError::Config` before any trust check: a DSN with no scheme
-  (`localhost`, `localhost/db`), a foreign scheme (`mysql://`, `pg://`), and a
-  DSN with no explicit host (`postgres:///db?sslmode=require`, or
-  `?sslmode=bogus`), whose host the driver would take from `PGHOSTADDR`,
-  `PGHOST` or a socket directory: such a DSN must now name its host. IPv6 hosts
-  compare in canonical lower-case form (`[0:0:0:0:0:0:0:1]` is `::1`). An
-  upper-case scheme (`POSTGRES://`) is now accepted.
 
 ## [1.4.0] — 2026-09-25
 

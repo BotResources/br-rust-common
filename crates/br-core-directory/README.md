@@ -92,7 +92,7 @@ anchor and the Px/Cx conformance suites live in `br-e2e-harness`.
 
 ```toml
 [dependencies]
-br-core-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-directory", tag = "v1.4.0", version = "1.4.0" }
+br-core-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-directory", tag = "br-core-directory/v0.1.0", version = "0.1.0" }
 ```
 
 ## Why

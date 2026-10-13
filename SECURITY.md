@@ -24,5 +24,10 @@ guarantee of reward.
 
 ## Supported versions
 
-We support the latest tagged version of each crate (`<crate>-vX.Y.Z`). Older
-tags receive no fixes; upgrade to the latest tag.
+We support the latest tagged version of each crate (`<crate>/vX.Y.Z`; `v1.4.0` for
+a crate not yet released on its own line). Older tags receive no fixes; upgrade to
+the latest tag.
+
+`br-util-postgres` v1.4.0 does not contain the fix that reads the DSN host from the URL authority only
+(fail-open parsing of `validate_database_tls`). The fix is in the tree and ships with the crate's first release
+on its own line, which cannot happen before wave 2 because the crate depends on `br-util-boot`.
