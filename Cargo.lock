@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "br-scope-declaration-contract"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "br-core-integration",
 ]
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-nats-fabric"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-nats",
  "async-trait",

@@ -1062,8 +1062,10 @@ from a fresh copy on recovery.
 
 ## Dependency
 
+`br-util-nats-fabric/v0.1.0` pins `br-core-integration/v0.1.0` and `br-core-events/v0.1.0`, and re-exports their `EventMetadata`, `IntegrationEvent`, `IntegrationCommand`, `MessageOutcome` and coordinate types (`Bc`, `Aggregate`, `Verb`, `PastFact`, `CommandCoords`, `EventCoords`, `CoordError`). Take `br-core-integration`, `br-core-events` and `br-core-kernel` at their `0.1.0` tags in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a coordinate or an envelope to the fabric then fails to compile (E0308). No type-keyed channel carries these types, so the mix never fails silently. `features = ["outbox"]` adds the Postgres transactional outbox; leave it off otherwise.
+
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.4.0", version = "1.4.0" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.4.0", version = "1.4.0", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0", features = ["outbox"] }
 ```

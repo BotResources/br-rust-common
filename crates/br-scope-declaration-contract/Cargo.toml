@@ -1,6 +1,6 @@
 [package]
 name = "br-scope-declaration-contract"
-version = "0.0.0"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,4 +8,4 @@ repository.workspace = true
 description = "Single-source wire coordinates (bc/aggregate/version/command) for the identity service-scope declaration contract, shared by the identity-app publisher and the util-scope-declaration handshake"
 
 [dependencies]
-br-core-integration = { workspace = true }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration/v0.1.0", version = "0.1.0" }

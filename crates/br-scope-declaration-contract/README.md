@@ -40,9 +40,11 @@ composition logic.
 
 ## Install
 
+`br-scope-declaration-contract/v0.1.0` pins `br-core-integration/v0.1.0` and returns its `CommandCoords`, `EventCoords` and `CoordError`. Take `br-core-integration` (and `br-util-nats-fabric`, which hands the same coordinates to the broker) at their `0.1.0` tags in the same service: another tag (such as `v1.4.0`) holds a second copy of the type, and passing a coordinate across fails to compile (E0308).
+
 ```toml
 [dependencies]
-br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "v1.4.0", version = "1.4.0" }
+br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.0", version = "0.1.0" }
 ```
 
 ---
