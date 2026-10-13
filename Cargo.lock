@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "base64",
  "br-core-kernel",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-events"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "br-core-kernel",
  "chrono",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "br-identity-domain"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "br-core-scope",
  "serde",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-graphql"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-graphql",
  "axum",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "br-test-support",
  "br-util-boot",

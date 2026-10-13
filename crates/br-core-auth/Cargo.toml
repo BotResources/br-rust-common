@@ -1,6 +1,6 @@
 [package]
 name = "br-core-auth"
-version = "0.0.0"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,8 +12,8 @@ test-support = []
 
 [dependencies]
 base64 = { workspace = true }
-br-core-kernel = { workspace = true }
-br-core-scope = { workspace = true }
+br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "br-core-kernel/v0.1.0", version = "0.1.0" }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.0", version = "0.1.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

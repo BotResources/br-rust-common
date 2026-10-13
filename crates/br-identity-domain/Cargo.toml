@@ -1,6 +1,6 @@
 [package]
 name = "br-identity-domain"
-version = "0.0.0"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Identity bounded context — pure domain. Scope-registration slice: the ScopeRegistry aggregate, its commands, events and hydration"
 
 [dependencies]
-br-core-scope = { workspace = true }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.0", version = "0.1.0" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

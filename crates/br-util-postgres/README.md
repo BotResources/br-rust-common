@@ -223,9 +223,9 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.4.0", version = "1.4.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0" }
 # with the migration-status helper:
-# br-util-postgres = { git = "...", package = "br-util-postgres", tag = "v1.4.0", version = "1.4.0", features = ["migrate"] }
+# br-util-postgres = { git = "...", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0", features = ["migrate"] }
 ```
 
 ## sqlx is part of the public contract
