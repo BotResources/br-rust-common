@@ -66,10 +66,11 @@ equals the host extracted from the URL, exactly:
   compares against the *host* only (the port is stripped during URL
   parsing). An entry that contains `:port` (e.g. `cnpg-rw:5432`) therefore
   matches **no** host — list the bare hostname.
-- **Parsing fails closed.** A URL whose host can't be parsed extracts to the
-  empty string, which is on no trusted list, so TLS is required rather than
-  skipped. Empty / whitespace-only list entries are dropped, so the trusted
-  list can never contain `""`.
+- **Parsing fails closed.** A DSN that cannot be parsed, or that has no
+  explicit host, is a `PostgresError::Config` before any trust check; it is
+  never treated as loopback or trusted. IPv6 hosts compare in canonical
+  lower-case form. Empty / whitespace-only list entries are dropped, so the
+  trusted list can never contain `""`.
 - Loopback (`localhost`, `127.0.0.1`, `::1`) is always trusted regardless of
   the list, and short-circuits before the list (and its env read) is touched.
 
@@ -81,7 +82,7 @@ equals the host extracted from the URL, exactly:
 |---|---|
 | `init_pool(url) -> PgPool` | Long-lived runtime pool (max 20, min 2 connections). Validates TLS before connecting. **Does not run migrations.** |
 | `init_migration_pool() -> PgPool` | Short-lived owner pool (max 2). Reads `DATABASE_URL_OWNER` (falls back to `DATABASE_URL`). Use to run migrations, then drop before creating the app pool. |
-| `validate_database_tls(url)` | Standalone TLS validator. `sslmode` is resolved by sqlx itself (single source of truth: `sslmode`/`ssl-mode` alias, case-insensitive, last value wins); the host is judged from the URL **authority** only (credentials, path, query and fragment never contribute to it) by an independent, fail-closed extractor — deliberately *not* sqlx's, whose absent-host default is `localhost`; a DSN that is unparseable, whose scheme is not `postgres`/`postgresql`, or whose authority has no host is a `PostgresError::Config`, never loopback — and a URL that overrides the target via a `host=`/`hostaddr=` query parameter is rejected outright (the validator cannot vouch for a host it does not judge). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` — unconditionally, with no escape hatch. Validation only — the bundled rustls backend is what lets such a connection actually complete. |
+| `validate_database_tls(url)` | Standalone TLS validator. `sslmode` is resolved by sqlx itself (single source of truth: `sslmode`/`ssl-mode` alias, case-insensitive, last value wins); the host is judged from the URL **authority** only (credentials, path, query and fragment never contribute to it), with the same URL parser as the driver but without the driver's absent-host defaults (`PGHOSTADDR`, `PGHOST`, a local socket directory, `localhost`); a DSN that cannot be parsed, whose scheme is not `postgres`/`postgresql`, or whose authority has no explicit host is a `PostgresError::Config` before any trust check, never loopback; IPv6 hosts compare in canonical lower-case form, `::1` for `[0:0:0:0:0:0:0:1]`; and a URL that overrides the target via a `host=`/`hostaddr=` query parameter is rejected outright (the validator cannot vouch for a host it does not judge). Loopback and `TRUSTED_NETWORK_HOSTS` entries (hosts on a trusted network segment, e.g. an intra-namespace CNPG database) are always allowed; every other remote host must carry `sslmode=require/verify-ca/verify-full` — unconditionally, with no escape hatch. Validation only — the bundled rustls backend is what lets such a connection actually complete. |
 
 ### Role provisioning
 

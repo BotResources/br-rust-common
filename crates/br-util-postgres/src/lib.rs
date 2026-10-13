@@ -1,6 +1,8 @@
 mod dsn;
 pub mod env;
 mod error;
+#[cfg(test)]
+mod fixtures;
 mod grant;
 #[cfg(feature = "migrate")]
 mod migrations;
