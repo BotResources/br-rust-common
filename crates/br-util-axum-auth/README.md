@@ -97,11 +97,11 @@ let app = Router::new()
 To make a route public (skip the middleware), put it on a separate `Router`
 that doesn't carry the layer and merge them at the top level.
 
-Add to `Cargo.toml`:
+Add to `Cargo.toml`. The `Passport` extension is keyed by type, so this crate and the service must use the same `br-core-auth` source tag. `br-util-axum-auth/v0.1.0` pins `br-core-auth/v0.1.0`: take that pair together. Any other `br-core-auth` tag next to it (`v1.4.0`, or a later `br-core-auth/v0.1.x`), or `br-util-axum-auth` at `v1.4.0` next to `br-core-auth/v0.1.0`, compiles and holds two `Passport` types: every handler that extracts the `Passport` then gets a 500 `Missing request extension` (or `None` for an `Option` extractor). A request without the header still gets 401, and a handler that ignores the `Passport` still gets 200.
 
 ```toml
 [dependencies]
-br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "v1.4.0", version = "1.4.0" }
+br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth/v0.1.0", version = "0.1.0" }
 ```
 
 ---

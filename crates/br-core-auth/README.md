@@ -258,7 +258,7 @@ if received.is_impersonating() {
 }
 ```
 
-Add to `Cargo.toml`. Keep `br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` in any service that mounts `br-util-axum-auth` (still `v1.4.0` only): that crate inserts this crate's `Passport` into the request extensions, so with `br-core-auth/v0.1.0` the build compiles but every handler gets a 500 or no passport.
+Add to `Cargo.toml`. `br-util-axum-auth` inserts this crate's `Passport` into the request extensions, keyed by type, so it and the service must use the same `br-core-auth` source tag. `br-util-axum-auth/v0.1.0` pins `br-core-auth/v0.1.0`: take that pair together. Any other `br-core-auth` tag next to it (`v1.4.0`, or a later `br-core-auth/v0.1.x`), or `br-util-axum-auth` at `v1.4.0` next to `br-core-auth/v0.1.0`, compiles and holds two `Passport` types: every handler that extracts the `Passport` then gets a 500 `Missing request extension` (or `None` for an `Option` extractor). A request without the header still gets 401, and a handler that ignores the `Passport` still gets 200. A service that mounts `br-util-axum-auth` at `v1.4.0` keeps `br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` until it moves `br-util-axum-auth` to `0.1.0`.
 
 ```toml
 [dependencies]
