@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-integration"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "br-core-events",
  "br-core-kernel",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "axum",
  "br-core-auth",

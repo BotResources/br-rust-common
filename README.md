@@ -27,14 +27,14 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-core-kernel` | core | Typed ID wrappers (`UserId`, `ServiceAccountId`) | `0.1.0` | [CHANGELOG](crates/br-core-kernel/CHANGELOG.md) |
 | `br-core-auth` | core | `Passport` DTO, `X-Passport` header codec, PAT bearer-token contract | `0.1.0` | [CHANGELOG](crates/br-core-auth/CHANGELOG.md) |
 | `br-core-events` | core | Shared event envelopes (`EventMetadata`, `DomainEvent`) | `0.1.0` | [CHANGELOG](crates/br-core-events/CHANGELOG.md) |
-| `br-core-integration` | core | Transport-independent integration contracts: message coordinates, `IntegrationEvent`/`IntegrationCommand` envelopes, `MessageOutcome`, and the pure outbox state machine (no NATS, no DB) | `v1.4.0` only | [CHANGELOG](crates/br-core-integration/CHANGELOG.md) |
+| `br-core-integration` | core | Transport-independent integration contracts: message coordinates, `IntegrationEvent`/`IntegrationCommand` envelopes, `MessageOutcome`, and the pure outbox state machine (no NATS, no DB) | `0.1.0` | [CHANGELOG](crates/br-core-integration/CHANGELOG.md) |
 | `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | `0.1.0` | [CHANGELOG](crates/br-core-scope/CHANGELOG.md) |
 | `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | `0.1.0` | [CHANGELOG](crates/br-core-values/CHANGELOG.md) |
 | `br-core-directory` | core | Frozen read contract for the identity Published Language: `PublishedUser` / `PublishedGroup` directory entries, the `identity/_meta` manifest and the KV key conventions | `0.1.0` | [CHANGELOG](crates/br-core-directory/CHANGELOG.md) |
 | `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | `v1.4.0` only | [CHANGELOG](crates/br-scope-declaration-contract/CHANGELOG.md) |
 | `br-util-boot` | util | The boot environment of a service: the names it reads at boot (`ENVIRONMENT`, `PORT`, `HOST`, `DATABASE_URL`, `NATS_URL`) and `BootEnv`, one typed, validating reader that reports every problem at once and never logs a credential | `0.1.0` | [CHANGELOG](crates/br-util-boot/CHANGELOG.md) |
 | `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs; owns the names `DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` | `0.1.0` | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
-| `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | `v1.4.0` only | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
+| `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | `0.1.0` | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
 | `br-util-axum-readiness` | util | Readiness gate for HTTP services, served on `READINESS_PATH` (`/readyz`) | `0.1.0` | [CHANGELOG](crates/br-util-axum-readiness/CHANGELOG.md) |
 | `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | `0.1.0` | [CHANGELOG](crates/br-util-broadcast/CHANGELOG.md) |
 | `br-util-graphql` | util | GraphQL/REST edge kit: `ErrorCode` cross-service contract, `Affordance` / `MutationResult` / `Connection` / `SubscriptionPayload`, fallible `br-core-values` wrappers | `0.1.0` | [CHANGELOG](crates/br-util-graphql/CHANGELOG.md) |
@@ -92,17 +92,19 @@ br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", 
 Crates share types: any crate that names a type of a sibling in its public API has the same type as that sibling.
 For example `br-core-events` re-exports `UserId`, `ServiceAccountId` and `Actor` from `br-core-kernel`; `br-core-auth`
 re-exports `ScopeKey` from `br-core-scope` and names `Actor` from `br-core-kernel`; `br-identity-domain` re-exports
-`ScopeDeclaration` from `br-core-scope`; `br-core-integration` re-exports from `br-core-events`; `br-util-graphql` wraps
-`br-core-values`; `br-util-directory` returns `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and
-`DirectoryMeta` from `br-core-directory`; `br-util-scope-declaration` takes `ScopeDeclaration` from `br-core-scope` and
-`ReadinessHandle` from `br-util-axum-readiness`. A consumer must not mix a per-crate pin and `v1.4.0` for crates that
-share types: the build then holds two copies of the same type. Move such crates together, all to per-crate pins or all
-to `v1.4.0`.
+`ScopeDeclaration` from `br-core-scope`; `br-core-integration` re-exports from `br-core-events`; `br-util-axum-auth`
+names `br-core-auth`'s `Passport`; `br-util-graphql` wraps `br-core-values`; `br-util-directory` returns
+`PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` from `br-core-directory`;
+`br-util-scope-declaration` takes `ScopeDeclaration` from `br-core-scope` and `ReadinessHandle` from
+`br-util-axum-readiness`. A consumer must not mix a per-crate pin and `v1.4.0` for crates that share types: the build
+then holds two copies of the same type. Move such crates together, all to per-crate pins or all to `v1.4.0`.
 
-Most mixes fail to compile. A type-keyed channel does not: `br-util-axum-auth` (`v1.4.0` only) inserts `br-core-auth`'s
-`Passport` into the request extensions, so with `br-core-auth/v0.1.0` it compiles and every handler gets a 500 or no
-passport. Keep `br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` in any service that mounts
-`br-util-axum-auth` until `br-util-axum-auth` is released.
+Most mixes fail to compile. A type-keyed channel does not: `br-util-axum-auth` inserts `br-core-auth`'s `Passport` into
+the request extensions, and a handler reads it by that type. Take `br-util-axum-auth` and `br-core-auth` at `0.1.0`
+together: `br-util-axum-auth` at `v1.4.0` with `br-core-auth/v0.1.0` (or `br-util-axum-auth/v0.1.0` with
+`br-core-auth` at `v1.4.0`) compiles, holds two `Passport` types, and every handler answers 500
+`Missing request extension` or gets no passport. A service that still mounts `br-util-axum-auth` at `v1.4.0` keeps
+`br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` until it moves `br-util-axum-auth` to `0.1.0`.
 
 Every pin must name the repository as `https://github.com/BotResources/br-rust-common` (a `.git` suffix or another case
 is the same repository): the sibling pins inside the crates hard-code that URL, so a pin through `ssh://git@...` splits
@@ -114,6 +116,10 @@ crates:
 ```toml
 [[bans.deny]]
 crate = "br-core-auth"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-core-events"
 deny-multiple-versions = true
 
 [[bans.deny]]
@@ -143,6 +149,8 @@ br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package
 br-identity-domain = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-domain", tag = "br-identity-domain/v0.1.0", version = "0.1.0" }
 br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0" }
 br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "br-util-graphql/v0.1.0", version = "0.1.0", features = ["graphql"] }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration/v0.1.0", version = "0.1.0" }
+br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth/v0.1.0", version = "0.1.0" }
 ```
 
 `br-util-graphql` exports nothing without `features = ["graphql"]`. `br-util-postgres` takes `features = ["migrate"]` for `migrations_status`, and `br-core-auth` takes `features = ["test-support"]` as a dev-dependency only.

@@ -32,23 +32,24 @@ license = "Apache-2.0"
 repository = "https://github.com/BotResources/br-rust-common"
 
 [patch."https://github.com/BotResources/br-rust-common"]
+br-core-auth = { path = "crates/br-core-auth" }
+br-core-events = { path = "crates/br-core-events" }
 br-core-kernel = { path = "crates/br-core-kernel" }
 br-core-scope = { path = "crates/br-core-scope" }
 br-core-values = { path = "crates/br-core-values" }
 br-util-boot = { path = "crates/br-util-boot" }
 
 [workspace.dependencies]
-br-core-auth = { path = "crates/br-core-auth", version = "0.1.0" }
 br-core-directory = { path = "crates/br-core-directory", version = "0.1.0" }
 br-core-events = { path = "crates/br-core-events", version = "0.1.0" }
-br-core-integration = { path = "crates/br-core-integration", version = "0.0.0" }
+br-core-integration = { path = "crates/br-core-integration", version = "0.1.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.1.0" }
 br-core-scope = { path = "crates/br-core-scope", version = "0.1.0" }
 br-identity-app = { path = "crates/br-identity-app", version = "0.0.0" }
 br-identity-domain = { path = "crates/br-identity-domain", version = "0.1.0" }
 br-scope-declaration-contract = { path = "crates/br-scope-declaration-contract", version = "0.0.0" }
 br-test-support = { path = "crates/br-test-support", version = "0.0.0" }
-br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.0.0" }
+br-util-axum-auth = { path = "crates/br-util-axum-auth", version = "0.1.0" }
 br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.1.0" }
 br-util-boot = { path = "crates/br-util-boot", version = "0.1.0" }
 br-util-broadcast = { path = "crates/br-util-broadcast", version = "0.1.0" }
