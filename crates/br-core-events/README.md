@@ -64,7 +64,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "v1.4.0", version = "1.4.0" }
+br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "br-core-events/v0.1.0", version = "0.1.0" }
 ```
 
 ---

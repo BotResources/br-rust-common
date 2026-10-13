@@ -124,7 +124,7 @@ match judge_declaration(&mut registry, command) {
 
 ```toml
 [dependencies]
-br-identity-domain = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-domain", tag = "v1.4.0", version = "1.4.0" }
+br-identity-domain = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-domain", tag = "br-identity-domain/v0.1.0", version = "0.1.0" }
 ```
 
 ---

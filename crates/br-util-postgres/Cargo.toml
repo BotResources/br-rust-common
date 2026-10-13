@@ -1,6 +1,6 @@
 [package]
 name = "br-util-postgres"
-version = "0.0.0"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ description = "Postgres helpers for BotResources services: pools, TLS validation
 migrate = ["sqlx/migrate"]
 
 [dependencies]
-br-util-boot = { workspace = true }
+br-util-boot = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-boot", tag = "br-util-boot/v0.1.0", version = "0.1.0" }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }

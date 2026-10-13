@@ -230,7 +230,7 @@ binary; enable it as a dev-dependency:
 
 ```toml
 [dev-dependencies]
-br-core-auth = { git = "...", package = "br-core-auth", tag = "v1.4.0", version = "1.4.0", features = ["test-support"] }
+br-core-auth = { git = "...", package = "br-core-auth", tag = "br-core-auth/v0.1.0", version = "0.1.0", features = ["test-support"] }
 ```
 
 ## Usage
@@ -258,11 +258,11 @@ if received.is_impersonating() {
 }
 ```
 
-Add to `Cargo.toml`:
+Add to `Cargo.toml`. Keep `br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` in any service that mounts `br-util-axum-auth` (still `v1.4.0` only): that crate inserts this crate's `Passport` into the request extensions, so with `br-core-auth/v0.1.0` the build compiles but every handler gets a 500 or no passport.
 
 ```toml
 [dependencies]
-br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v1.4.0", version = "1.4.0" }
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth/v0.1.0", version = "0.1.0" }
 ```
 
 ---
