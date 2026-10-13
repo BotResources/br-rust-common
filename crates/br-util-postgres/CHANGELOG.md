@@ -15,7 +15,7 @@ form to decide whether a version ships.
 
 - First release of `br-util-postgres` as its own library, tagged `br-util-postgres/v0.1.0`. The code is the one shipped by the workspace release `v1.4.0` plus the DSN host fix below, which `v1.4.0` does not contain; the versioning also changes: the single workspace version and the single `vX.Y.Z` tag are gone, and this crate now carries its own version line.
 - Dependency pin: `{ git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0" }`. Moving from `tag = "v1.4.0"`, change both the tag and the version: the number goes down because the line restarts at `0.1`.
-- Sibling pin: this crate depends on `br-util-boot` pinned by tag `br-util-boot/v0.1.0`, so a consumer resolves one copy of the types they share. Move this crate and `br-util-boot` from `v1.4.0` to their per-crate pins together.
+- Sibling pin: this crate depends on `br-util-boot` pinned by tag `br-util-boot/v0.1.0`, so the two crates agree on one `DATABASE_URL` name constant and one resolved `br-util-boot`. They share no type. Move this crate and `br-util-boot` from `v1.4.0` to their per-crate pins together.
 - **`br-util-postgres` — `validate_database_tls` is stricter about what it
   accepts.** `v1.4.0` does not contain these rules. These DSNs were accepted
   before and now return `PostgresError::Config` before any trust decision: a
@@ -26,7 +26,7 @@ form to decide whether a version ships.
   parse, whatever its host: a DSN with an invalid `sslmode` value
   (`?sslmode=bogus`) or an invalid port, which `v1.4.0` accepted when the host
   was loopback, is now refused before the loopback shortcut. A loopback DSN is
-  accepted only when sqlx can parse it. IPv6 hosts compare in canonical
+  accepted only when sqlx can parse it, and a host listed in `TRUSTED_NETWORK_HOSTS` is no exception: a trusted host with an invalid `sslmode` is now a `Config` error. A non-ASCII trusted host no longer matches, because the URL parser percent-encodes the host. IPv6 hosts compare in canonical
   lower-case form (`[0:0:0:0:0:0:0:1]` is `::1`). An upper-case scheme
   (`POSTGRES://`) is now accepted.
 

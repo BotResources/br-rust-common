@@ -44,7 +44,6 @@ br-core-events = { path = "crates/br-core-events", version = "0.1.0" }
 br-core-integration = { path = "crates/br-core-integration", version = "0.0.0" }
 br-core-kernel = { path = "crates/br-core-kernel", version = "0.1.0" }
 br-core-scope = { path = "crates/br-core-scope", version = "0.1.0" }
-br-core-values = { path = "crates/br-core-values", version = "0.1.0" }
 br-identity-app = { path = "crates/br-identity-app", version = "0.0.0" }
 br-identity-domain = { path = "crates/br-identity-domain", version = "0.1.0" }
 br-scope-declaration-contract = { path = "crates/br-scope-declaration-contract", version = "0.0.0" }

@@ -91,13 +91,39 @@ br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", 
 
 Crates share types: any crate that names a type of a sibling in its public API has the same type as that sibling.
 For example `br-core-events` re-exports `UserId`, `ServiceAccountId` and `Actor` from `br-core-kernel`; `br-core-auth`
-re-exports `ScopeKey` from `br-core-scope` and uses `UserId`; `br-identity-domain` re-exports `ScopeDeclaration` from
-`br-core-scope`; `br-core-integration` re-exports from `br-core-events`; `br-util-graphql` wraps `br-core-values`;
-`br-util-directory` returns `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` from
-`br-core-directory`; `br-util-scope-declaration` takes `ScopeDeclaration` from `br-core-scope` and `ReadinessHandle`
-from `br-util-axum-readiness`. A consumer must not mix a per-crate pin and `v1.4.0` for crates that share types: the
-build then holds two copies of the same type and fails to compile. Move such crates together, all to per-crate pins
-or all to `v1.4.0`.
+re-exports `ScopeKey` from `br-core-scope` and names `Actor` from `br-core-kernel`; `br-identity-domain` re-exports
+`ScopeDeclaration` from `br-core-scope`; `br-core-integration` re-exports from `br-core-events`; `br-util-graphql` wraps
+`br-core-values`; `br-util-directory` returns `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and
+`DirectoryMeta` from `br-core-directory`; `br-util-scope-declaration` takes `ScopeDeclaration` from `br-core-scope` and
+`ReadinessHandle` from `br-util-axum-readiness`. A consumer must not mix a per-crate pin and `v1.4.0` for crates that
+share types: the build then holds two copies of the same type. Move such crates together, all to per-crate pins or all
+to `v1.4.0`.
+
+Most mixes fail to compile. A type-keyed channel does not: `br-util-axum-auth` (`v1.4.0` only) inserts `br-core-auth`'s
+`Passport` into the request extensions, so with `br-core-auth/v0.1.0` it compiles and every handler gets a 500 or no
+passport. Keep `br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` in any service that mounts
+`br-util-axum-auth` until `br-util-axum-auth` is released.
+
+Every pin must name the repository as `https://github.com/BotResources/br-rust-common` (a `.git` suffix or another case
+is the same repository): the sibling pins inside the crates hard-code that URL, so a pin through `ssh://git@...` splits
+every sibling into two copies. A consumer also needs `allow-git = ["https://github.com/BotResources/br-rust-common"]`
+under `[sources]` in its `deny.toml` (without it `cargo-deny` reports `source-not-allowed`) and keeps `version = "x.y.z"`
+beside each tag. To turn a silent second copy into a build failure, a consumer bans multiple versions of the shared
+crates:
+
+```toml
+[[bans.deny]]
+crate = "br-core-auth"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-core-kernel"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-core-scope"
+deny-multiple-versions = true
+```
 
 Released crates are pinned by their own tag, with the matching `version` beside it (a tag-only git dependency
 carries a `*` version requirement, which `cargo-deny` rejects):
@@ -116,8 +142,10 @@ br-core-events = { git = "https://github.com/BotResources/br-rust-common", packa
 br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth/v0.1.0", version = "0.1.0" }
 br-identity-domain = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-domain", tag = "br-identity-domain/v0.1.0", version = "0.1.0" }
 br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0" }
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "br-util-graphql/v0.1.0", version = "0.1.0" }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "br-util-graphql/v0.1.0", version = "0.1.0", features = ["graphql"] }
 ```
+
+`br-util-graphql` exports nothing without `features = ["graphql"]`. `br-util-postgres` takes `features = ["migrate"]` for `migrations_status`, and `br-core-auth` takes `features = ["test-support"]` as a dev-dependency only.
 
 The general form is `{ git = "https://github.com/BotResources/br-rust-common", package = "<crate>", tag = "<crate>/v<version>", version = "<version>" }`.
 

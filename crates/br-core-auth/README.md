@@ -258,7 +258,7 @@ if received.is_impersonating() {
 }
 ```
 
-Add to `Cargo.toml`:
+Add to `Cargo.toml`. Keep `br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` in any service that mounts `br-util-axum-auth` (still `v1.4.0` only): that crate inserts this crate's `Passport` into the request extensions, so with `br-core-auth/v0.1.0` the build compiles but every handler gets a 500 or no passport.
 
 ```toml
 [dependencies]
