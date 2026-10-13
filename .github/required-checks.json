@@ -1,0 +1,18 @@
+{
+  "required": [
+    "cargo fmt + clippy + test",
+    "cargo doc",
+    "cargo-deny check",
+    "cargo-machete (unused deps)",
+    "cargo semver-checks",
+    "trufflehog (secret scan)",
+    "MSRV 1.88 build",
+    "e2e (br-util-postgres vs PG 16)",
+    "coverage (per-crate, UT vs UT+E2E)",
+    "changelog entry per Cargo.toml version",
+    "helm library chart (br-rust-common-chart)",
+    "shellcheck",
+    "release-line law and registry wiring tests",
+    "registry gate"
+  ]
+}
