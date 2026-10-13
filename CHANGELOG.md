@@ -15,6 +15,24 @@ has its own version line and changelog,
 and its own tags (`chart/br-rust-common-chart/vX.Y.Z`; up to 1.1.0, when it was
 named `br-common-service`: `chart/br-common-service/vX.Y.Z`).
 
+## [Unreleased]
+
+### Fixed
+
+- **`br-util-postgres` — `validate_database_tls` no longer reads the host from
+  outside the URL authority (fail-open parsing).** The host was taken after the
+  first `@` of the whole DSN, so `postgres://evil.example.com/db?x=a@localhost`
+  was judged `localhost`: treated as loopback, accepted without TLS, while the
+  driver connected to `evil.example.com`. The host is now read from the
+  authority only (credentials end at the last `@` of the authority; a `@` in the
+  path, query or fragment, or percent-encoded in the user information, never
+  changes it), with the same URL parser the driver uses. A DSN that is
+  unparseable, whose scheme is not `postgres`/`postgresql`, or whose authority
+  has no host now returns `PostgresError::Config` instead of an empty host.
+  `init_pool` and `init_migration_pool` inherit the fix. The public signatures
+  are unchanged; a DSN that relied on a hostless authority (host taken from
+  `PGHOST`) must now name its host.
+
 ## [1.4.0] — 2026-09-25
 
 **The code owns the service ops contract.** Every name a service built on these
