@@ -8,7 +8,7 @@ VERIFY_ONLY=false
 
 if [[ -z "${REPO:-}" ]]; then
     origin="$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)"
-    REPO="$(sed -E 's#^git@github\.com:##; s#^https://github\.com/##; s#\.git$##' <<<"$origin")"
+    REPO="$(sed -E 's#^git@github\.com:##; s#^ssh://git@github\.com/##; s#^https://github\.com/##; s#\.git$##' <<<"$origin")"
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -91,7 +91,7 @@ jq -r '.[] | "  - " + .' <<<"$CONTEXTS"
 echo "rulesets: release-lines (refs/heads/release/**), release-tags (refs/tags/**/v*)"
 echo "main: required status checks replaced by the declared list"
 echo "security: secret scanning, push protection"
-echo "actions: fork PR approval for all outside contributors, SHA pinning enforced"
+echo "actions: fork PR approval for all outside contributors, SHA pinning enforced, the allowed-actions mode left as it is"
 
 if [[ "${DRY_RUN}" == "true" ]]; then
     echo "DRY-RUN: nothing applied"
@@ -102,6 +102,8 @@ if ! gh auth status >/dev/null 2>&1; then
     echo "ERROR: gh CLI is not authenticated" >&2
     exit 1
 fi
+
+ALLOWED_ACTIONS="$(gh api "repos/${REPO}/actions/permissions" --jq .allowed_actions)"
 
 upsert_ruleset() {
     local name="$1" payload="$2" id
@@ -121,7 +123,7 @@ apply_rules() {
     gh api -X PATCH --input - "repos/${REPO}/branches/main/protection/required_status_checks" <<<"$main_checks" >/dev/null
     gh api -X PATCH --input - "repos/${REPO}" >/dev/null <<<'{"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}'
     gh api -X PUT --input - "repos/${REPO}/actions/permissions/fork-pr-contributor-approval" >/dev/null <<<'{"approval_policy":"all_external_contributors"}'
-    gh api -X PUT --input - "repos/${REPO}/actions/permissions" >/dev/null <<<'{"enabled":true,"allowed_actions":"all","sha_pinning_required":true}'
+    gh api -X PUT --input - "repos/${REPO}/actions/permissions" >/dev/null <<<"$(jq -nc --arg mode "$ALLOWED_ACTIONS" '{enabled: true, allowed_actions: $mode, sha_pinning_required: true}')"
     echo "applied"
 }
 
@@ -148,7 +150,7 @@ read_fork_approval() {
 }
 
 read_sha_pinning() {
-    gh api "repos/${REPO}/actions/permissions" --jq '{sha_pinning_required}'
+    gh api "repos/${REPO}/actions/permissions" --jq '{allowed_actions, sha_pinning_required}'
 }
 
 FAILURES=0
@@ -177,7 +179,7 @@ verify_rules() {
     expect "ruleset release-tags" "$(jq -c "$RULESET_SHAPE" <<<"$tag_ruleset")" read_ruleset release-tags
     expect "secret scanning and push protection" '{"secret_scanning":"enabled","push_protection":"enabled"}' read_security
     expect "fork PR approval" '{"approval_policy":"all_external_contributors"}' read_fork_approval
-    expect "SHA pinning" '{"sha_pinning_required":true}' read_sha_pinning
+    expect "allowed actions and SHA pinning" "$(jq -nc --arg mode "$ALLOWED_ACTIONS" '{allowed_actions: $mode, sha_pinning_required: true}')" read_sha_pinning
     if [[ "$FAILURES" -gt 0 ]]; then
         echo "${FAILURES} setting(s) differ from the declared state" >&2
         exit 1
