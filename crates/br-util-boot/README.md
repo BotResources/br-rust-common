@@ -109,7 +109,7 @@ scheme.
 
 ```toml
 [dependencies]
-br-util-boot = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-boot", tag = "v1.4.0", version = "1.4.0" }
+br-util-boot = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-boot", tag = "br-util-boot/v0.1.0", version = "0.1.0" }
 ```
 
 ---

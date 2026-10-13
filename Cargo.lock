@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "base64",
  "br-core-kernel",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-directory"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-events"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "br-core-kernel",
  "chrono",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-integration"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "br-core-events",
  "br-core-kernel",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-kernel"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-scope"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "br-core-values"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "br-identity-app"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "async-nats",
  "br-core-integration",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "br-identity-domain"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "br-core-scope",
  "serde",
@@ -422,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "br-ops-contract"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "br-util-axum-readiness",
  "br-util-boot",
@@ -433,14 +433,14 @@ dependencies = [
 
 [[package]]
 name = "br-scope-declaration-contract"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "br-core-integration",
 ]
 
 [[package]]
 name = "br-test-support"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "sqlx",
  "uuid",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-auth"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "axum",
  "br-core-auth",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-readiness"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "axum",
  "tokio",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-boot"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
  "url",
@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-broadcast"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
  "tokio",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-directory"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-graphql"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "async-graphql",
  "axum",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-nats-fabric"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-observability"
-version = "1.4.0"
+version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "br-test-support",
  "br-util-boot",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-scope-declaration"
-version = "1.4.0"
+version = "0.0.0"
 dependencies = [
  "async-nats",
  "br-core-integration",

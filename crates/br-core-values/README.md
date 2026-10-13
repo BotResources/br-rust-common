@@ -107,7 +107,7 @@ deserializes back from that lowercase form (round-trip):
 
 ```toml
 [dev-dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v1.4.0", version = "1.4.0", features = ["conformance"] }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "br-core-values/v0.1.0", version = "0.1.0", features = ["conformance"] }
 ```
 
 ```rust,ignore
@@ -198,13 +198,13 @@ state. A non-canonical wire must not parse — there is no catch-all variant.
 ## Tier & dependencies
 
 Tier `core`: depends only on `serde` (+ `thiserror` for the error type). No I/O,
-no `async`, no `br-util-*`. Unified workspace versioning, distributed by git tag.
+no `async`, no `br-util-*`. Versioned on its own line, distributed by the git tag `br-core-values/v<version>`.
 
 ## Install
 
 ```toml
 [dependencies]
-br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "v1.4.0", version = "1.4.0" }
+br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "br-core-values/v0.1.0", version = "0.1.0" }
 ```
 
 ---
