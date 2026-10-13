@@ -9,10 +9,11 @@ changelogs were consolidated into that release; they remain reachable through th
 (`<crate>-vX.Y.Z`).
 
 **Releases are now per crate.** `1.4.0` is the last workspace-wide release; its sections below, and the
-`v1.4.0` tag and the tags before it, stay as history and are never rewritten. Each library crate now has its
-own version, its own `crates/<crate>/CHANGELOG.md` and its own git tag `<crate>/v<version>`, and its first
-release is `0.1.0`. Crates are released in waves, a crate only after the sibling crates it depends on; a crate
-not yet released stays at `0.0.0`.
+`v1.4.0` tag and the tags before it, are never rewritten. Each library crate now has its own version, its own
+`crates/<crate>/CHANGELOG.md` and its own git tag `<crate>/v<version>`, and its first release is `0.1.0`.
+Crates are released in waves, a crate only after the sibling crates it depends on. A crate not yet released on
+its own line stays at `0.0.0` in the tree, and `v1.4.0` remains the only tag a consumer can pin for it. Changes
+after `1.4.0` are written in the changelog of the crate they change, not here.
 
 The Helm library chart `br-rust-common-chart` is not versioned with the crates: it
 has its own version line and changelog,

@@ -24,5 +24,6 @@ guarantee of reward.
 
 ## Supported versions
 
-We support the latest tagged version of each crate (`<crate>-vX.Y.Z`). Older
-tags receive no fixes; upgrade to the latest tag.
+We support the latest tagged version of each crate (`<crate>/vX.Y.Z`; `v1.4.0` for
+a crate not yet released on its own line). Older tags receive no fixes; upgrade to
+the latest tag.
