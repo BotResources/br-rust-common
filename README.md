@@ -79,7 +79,8 @@ is never released). Crates are released in waves, a crate only after the sibling
 Release rule, enforced by `check-sibling-pins.sh`: a released crate pins each internal sibling it depends on by tag,
 as `{ git = "https://github.com/BotResources/br-rust-common", tag = "<sibling>/v<version>", version = "<version>" }`,
 with a root `[patch."https://github.com/BotResources/br-rust-common"]` to the local path of the sibling. A crate stays
-at `0.0.0` until the siblings it depends on are tagged.
+at `0.0.0` until the siblings it depends on are tagged. Sibling dev-dependencies are exempt from the tag-pin rule
+(`check-sibling-pins.sh` skips them, and a consumer's lockfile does not contain them).
 
 A crate marked `v1.4.0` only in the catalog is not yet released on its own line (it is at `0.0.0` in this tree).
 It has shipped in every `v1.x` workspace release: until its wave, the only pin for it is the workspace tag
@@ -92,18 +93,26 @@ br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", 
 Crates share types: any crate that names a type of a sibling in its public API has the same type as that sibling.
 For example `br-core-events` re-exports `UserId`, `ServiceAccountId` and `Actor` from `br-core-kernel`; `br-core-auth`
 re-exports `ScopeKey` from `br-core-scope` and names `Actor` from `br-core-kernel`; `br-identity-domain` re-exports
-`ScopeDeclaration` from `br-core-scope`; `br-core-integration` re-exports from `br-core-events`; `br-util-axum-auth`
-names `br-core-auth`'s `Passport`; `br-util-graphql` wraps `br-core-values`; `br-util-directory` returns
-`PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` from `br-core-directory`;
-`br-util-scope-declaration` takes `ScopeDeclaration` from `br-core-scope` and `ReadinessHandle` from
-`br-util-axum-readiness`. A consumer must not mix a per-crate pin and `v1.4.0` for crates that share types: the build
-then holds two copies of the same type. Move such crates together, all to per-crate pins or all to `v1.4.0`.
+`ScopeDeclaration` from `br-core-scope`; `br-core-integration` re-exports `EventMetadata` from `br-core-events` and,
+through it, `Actor`, `UserId` and `ServiceAccountId` from `br-core-kernel`, so `br-core-integration` moves with
+`br-core-events` and `br-core-kernel` (`br-core-integration/v0.1.0` and `br-core-events/v0.1.0` with
+`br-core-kernel` at `v1.4.0` fail with E0308); `br-util-axum-auth` inserts `br-core-auth`'s `Passport` into the request
+extensions; `br-util-graphql` wraps `br-core-values`; `br-util-directory` returns `PublishedUser`, `PublishedGroup`,
+`PublishedServiceAccount` and `DirectoryMeta` from `br-core-directory`; `br-util-scope-declaration` takes
+`ScopeDeclaration` from `br-core-scope` and `ReadinessHandle` from `br-util-axum-readiness`. A consumer must not mix a
+per-crate pin and `v1.4.0` for crates that share types: the build then holds two copies of the same type. Move such
+crates together, all to per-crate pins or all to `v1.4.0`.
+
+Crates still `v1.4.0` only already name types of released crates: `br-util-nats-fabric` re-exports `EventMetadata`
+(`br-core-events`) and `IntegrationEvent`, `IntegrationCommand` and `MessageOutcome` (`br-core-integration`);
+`br-scope-declaration-contract` returns `CommandCoords` and `EventCoords` (`br-core-integration`);
+`br-identity-app` takes `IntegrationCommand` and `CommandCoords` (`br-core-integration`); `br-util-scope-declaration`
+returns `Actor` (`br-core-integration`). None of them can be mixed with `br-core-integration/v0.1.0` or
+`br-core-events/v0.1.0`: they move with those crates in their own wave.
 
 Most mixes fail to compile. A type-keyed channel does not: `br-util-axum-auth` inserts `br-core-auth`'s `Passport` into
-the request extensions, and a handler reads it by that type. Take `br-util-axum-auth` and `br-core-auth` at `0.1.0`
-together: `br-util-axum-auth` at `v1.4.0` with `br-core-auth/v0.1.0` (or `br-util-axum-auth/v0.1.0` with
-`br-core-auth` at `v1.4.0`) compiles, holds two `Passport` types, and every handler answers 500
-`Missing request extension` or gets no passport. A service that still mounts `br-util-axum-auth` at `v1.4.0` keeps
+the request extensions, and a handler extracts it by that type, so `br-util-axum-auth` and the service must use the same
+`br-core-auth` source tag. `br-util-axum-auth/v0.1.0` pins `br-core-auth/v0.1.0`: take that pair together. Any other `br-core-auth` tag next to it (`v1.4.0`, or a later `br-core-auth/v0.1.x`), or `br-util-axum-auth` at `v1.4.0` next to `br-core-auth/v0.1.0`, compiles and holds two `Passport` types: every handler that extracts the `Passport` then gets a 500 `Missing request extension` (or `None` for an `Option` extractor). A request without the header still gets 401, and a handler that ignores the `Passport` still gets 200. A service that still mounts `br-util-axum-auth` at `v1.4.0` keeps
 `br-core-auth`, `br-core-kernel` and `br-core-scope` on `v1.4.0` until it moves `br-util-axum-auth` to `0.1.0`.
 
 Every pin must name the repository as `https://github.com/BotResources/br-rust-common` (a `.git` suffix or another case
@@ -128,6 +137,10 @@ deny-multiple-versions = true
 
 [[bans.deny]]
 crate = "br-core-scope"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-core-values"
 deny-multiple-versions = true
 ```
 
