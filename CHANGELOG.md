@@ -1,13 +1,18 @@
 # Changelog
 
-All notable changes to the `br-rust-common` workspace are documented here. The
-format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This file is the history of the `br-rust-common` workspace releases, up to and including `1.4.0`.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-From `0.8.0` on, every crate in the workspace shares a single version, this file
-is the single changelog, and the workspace ships under one git tag (`vX.Y.Z`).
-Earlier per-crate versions and their changelogs were consolidated into this
-release; they remain reachable through the historical per-crate tags
+From `0.8.0` to `1.4.0`, every crate in the workspace shared a single version, this file was the single
+changelog, and the workspace shipped under one git tag (`vX.Y.Z`). Earlier per-crate versions and their
+changelogs were consolidated into that release; they remain reachable through the historical per-crate tags
 (`<crate>-vX.Y.Z`).
+
+**Releases are now per crate.** `1.4.0` is the last workspace-wide release; its sections below, and the
+`v1.4.0` tag and the tags before it, stay as history and are never rewritten. Each library crate now has its
+own version, its own `crates/<crate>/CHANGELOG.md` and its own git tag `<crate>/v<version>`, and its first
+release is `0.1.0`. Crates are released in waves, a crate only after the sibling crates it depends on; a crate
+not yet released stays at `0.0.0`.
 
 The Helm library chart `br-rust-common-chart` is not versioned with the crates: it
 has its own version line and changelog,
