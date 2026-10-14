@@ -110,13 +110,13 @@ takes `ScopeDeclaration` from `br-core-scope` and `ReadinessHandle` from `br-uti
 per-crate pin and `v1.4.0` for crates that share types: the build then holds two copies of the same type. Move such
 crates together, all to per-crate pins or all to `v1.4.0`.
 
-Crates still `v1.4.0` only already name types of released crates: `br-identity-app` takes `Fabric` and `CommandCoords`
-and names `FabricError` and `IntegrationCommand`; `br-util-scope-declaration` takes `Fabric`, returns `FabricError` and
-`Actor`; `br-util-directory` takes `Fabric` and wraps `FabricError`. `Fabric` and `FabricError` are
-`br-util-nats-fabric`'s; `IntegrationCommand`, `CommandCoords` and `Actor` are `br-core-integration`'s. So
-`br-identity-app` and `br-util-scope-declaration` cannot be mixed with `br-util-nats-fabric/v0.1.0` or
-`br-core-integration/v0.1.0` (nor with `br-core-events/v0.1.0`, which `br-core-integration` carries), and
-`br-util-directory` cannot be mixed with `br-util-nats-fabric/v0.1.0`: they move with those crates in their own wave.
+A crate still `v1.4.0` only cannot be mixed with the per-crate tag of any released crate whose types appear in its public API: the build holds two copies of those types and passing one across fails to compile (E0308). Checked against `cargo public-api --all-features`:
+
+- `br-identity-app` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `IntegrationCommand` and `CommandCoords` (`br-core-integration`); `ServiceKey`, `DeclareServiceScopes` and `ScopeDeclarationError` (`br-core-scope`); `ScopeRegistry`, `DeclarationOutcome` and `RegistryHydrationError` (`br-identity-domain`).
+- `br-util-scope-declaration` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `ScopeDeclaration`, `ServiceKey` and `ServiceScopesRejected` (`br-core-scope`); `ReadinessHandle` (`br-util-axum-readiness`); and returns `Actor`, which is `br-core-kernel`'s type (`br-core-integration` and `br-core-events` re-export it).
+- `br-util-directory` names `Fabric`, `FabricError`, `KvKeyError`, `ProjectionError` and `WatchHealthReceiver` (`br-util-nats-fabric`); `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` (`br-core-directory`).
+
+Each of them moves with those crates in its own wave. The crates they carry types through (`br-core-integration` re-exports from `br-core-events`, which re-exports from `br-core-kernel`) move together as well.
 
 Most mixes fail to compile. A type-keyed channel does not: `br-util-axum-auth` inserts `br-core-auth`'s `Passport` into
 the request extensions, and a handler extracts it by that type, so `br-util-axum-auth` and the service must use the same

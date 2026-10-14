@@ -568,11 +568,10 @@ hatch; every write and read goes through a validated `KvKey` / `KvPrefix`. This
 crate ships **generic mechanics only**; the *policy* — which prefixes, which
 entries to copy, what to persist — is a set of **caller-owned seams**.
 
-> `br-util-directory` will be re-expressed on top of this crate's
-> Published-Language KV mechanics in the same v1.0.0 train; its own
-> `reconcile_entries` / `KvOp` reconcile engine is destined to disappear. The
-> `PublishedLanguagePublisher` / `PublishedLanguageConsumer` + reconcile here are
-> the canonical generic mechanism.
+> `br-util-directory` is built on these mechanics: its `DirectoryPublisher`
+> holds `PublishedLanguagePublisher`s and reconciles through them, and its
+> `DirectoryProjector` consumes through `PublishedLanguageConsumer`. The
+> publisher/consumer + reconcile here are the canonical generic mechanism.
 
 ### Keys
 
@@ -869,7 +868,7 @@ blind reuse-detection).
   is no `put_with_ttl`: an unconditional last-writer-wins write carrying a per-key
   TTL is not part of the public `async-nats` KV surface at any current version (only
   the CAS-flavoured `create_with_ttl` is), so use `create_with_ttl` for the one-time
-  code lifecycle (see the CHANGELOG note).
+  code lifecycle.
 - `keys(&KvPrefix) -> Result<Vec<KvKey>, FabricError>` enumerates the live keys
   under the prefix **without decoding** values — tombstoned (deleted / purged /
   TTL-expired) keys are excluded, consistent with `get_with_revision`. Identical
