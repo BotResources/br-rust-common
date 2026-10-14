@@ -49,4 +49,4 @@ br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)

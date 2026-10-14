@@ -129,4 +129,4 @@ br-identity-domain = { git = "https://github.com/BotResources/br-rust-common", p
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)

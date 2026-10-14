@@ -105,3 +105,7 @@ br-core-directory = { git = "https://github.com/BotResources/br-rust-common", pa
 | `PublishedEntity` has concrete `Users` / `Groups` / `ServiceAccounts` variants plus `Other(String)`, hand-written serde, not `#[serde(other)]` | A genuinely future entity must auto-degrade (captured, not dropped, and round-trips) on an old consumer; a *known* entity gets a concrete variant so adding it forces every match to be revisited and gives a `publishes_*` accessor. `service_accounts` is now known, so it is a variant — `Other` is reserved for the not-yet-modelled. |
 | The `extensions` bag is private with a validating `new` + custom `Deserialize`, not a `pub` `#[serde(flatten)]` field | The bag must never shadow a core key (these are write *and* read DTOs over KV). A `pub` flattened field can be mutated to insert a reserved key after construction; a private bag funnels every path through `new`'s `reject_reserved_keys`. The `Deserialize` impl is fail-closed **by construction** — it extracts the core keys out of the raw map, so the leftover bag structurally cannot contain one. |
 | `_meta` is shipped here though it is not yet live in be-botresources | It is the designed auto-degrade manifest the consumer kit and the P-suite conformance need frozen now; freezing the shape early is the point of the pre-freeze normalization. |
+
+---
+
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)

@@ -1,6 +1,6 @@
 [package]
 name = "br-identity-app"
-version = "0.0.0"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,11 +8,11 @@ repository.workspace = true
 description = "Identity bounded context — application/adapter half. Scope-registration slice: Postgres persistence, durable NATS consumer, and the load → judge → save → dispatch pipeline"
 
 [dependencies]
-br-core-integration = { workspace = true }
-br-core-scope = { workspace = true }
-br-identity-domain = { workspace = true }
-br-scope-declaration-contract = { workspace = true }
-br-util-nats-fabric = { workspace = true }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration/v0.1.0", version = "0.1.0" }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.0", version = "0.1.0" }
+br-identity-domain = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-domain", tag = "br-identity-domain/v0.1.0", version = "0.1.0" }
+br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.0", version = "0.1.0" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0" }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

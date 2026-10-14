@@ -72,5 +72,5 @@ External consumers of `br-rust-common` must **never** depend on this crate.
 
 ---
 
-Part of [`br-rust-common`](https://github.com/BotResources/br-rust-common). See
-[CHANGELOG.md](../../CHANGELOG.md). © BotResources — Apache-2.0.
+Part of [`br-rust-common`](https://github.com/BotResources/br-rust-common). Never released.
+© BotResources — Apache-2.0.

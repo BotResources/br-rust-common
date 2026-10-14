@@ -39,11 +39,11 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | `0.1.0` | [CHANGELOG](crates/br-util-broadcast/CHANGELOG.md) |
 | `br-util-graphql` | util | GraphQL/REST edge kit: `ErrorCode` cross-service contract, `Affordance` / `MutationResult` / `Connection` / `SubscriptionPayload`, fallible `br-core-values` wrappers | `0.1.0` | [CHANGELOG](crates/br-util-graphql/CHANGELOG.md) |
 | `br-util-nats-fabric` | util | The Project NATS Fabric API: coordinate-only publish/consume/await over the fixed `integration.…` subject grammar, the KV published-language projection, and the Postgres transactional outbox (store + subscribe-driven relay) | `0.1.0` | [CHANGELOG](crates/br-util-nats-fabric/CHANGELOG.md) |
-| `br-util-directory` | util | Publisher and consumer kit for the identity Published Language over the NATS Fabric: reconcile and orphan-delete (publisher), KV to Postgres projector over the `known_*` tables (consumer) | `v1.4.0` only | [CHANGELOG](crates/br-util-directory/CHANGELOG.md) |
+| `br-util-directory` | util | Publisher and consumer kit for the identity Published Language over the NATS Fabric: reconcile and orphan-delete (publisher), KV to Postgres projector over the `known_*` tables (consumer) | `0.1.0` | [CHANGELOG](crates/br-util-directory/CHANGELOG.md) |
 | `br-util-observability` | util | Boot-time observability: structured JSON logging, an always-200 liveness route on `LIVENESS_PATH` (`/livez`), the Prometheus exposition on `METRICS_PATH` (`/metrics`) | `0.1.0` | [CHANGELOG](crates/br-util-observability/CHANGELOG.md) |
-| `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | `v1.4.0` only | [CHANGELOG](crates/br-util-scope-declaration/CHANGELOG.md) |
+| `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | `0.1.0` | [CHANGELOG](crates/br-util-scope-declaration/CHANGELOG.md) |
 | `br-identity-domain` | bc | Identity bounded context, pure domain — scope-registration slice (`ScopeRegistry` aggregate, commands, events) | `0.1.0` | [CHANGELOG](crates/br-identity-domain/CHANGELOG.md) |
-| `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | `v1.4.0` only | [CHANGELOG](crates/br-identity-app/CHANGELOG.md) |
+| `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | `0.1.0` | [CHANGELOG](crates/br-identity-app/CHANGELOG.md) |
 | `br-test-support` | dev | Dev-only shared Postgres e2e test helpers (role/pool/name primitives); a path dev-dependency, never a normal dependency | not released | - |
 
 ## Helm chart
@@ -74,21 +74,19 @@ is stale, and the chart gate fails when the chart renders anything else.
 
 Not on crates.io. Every publishable crate is its own library: it has its own version, its own `CHANGELOG.md` and
 is released by its own git tag `{crate}/v{version}`, starting at `0.1.0` (`br-test-support` is `publish = false` and
-is never released). Crates are released in waves, a crate only after the sibling crates it depends on.
+is never released). All 20 crates of the catalog are released at `0.1.0`, in five waves, each crate after the sibling
+crates it depends on.
 
 Release rule, enforced by `check-sibling-pins.sh`: a released crate pins each internal sibling it depends on by tag,
 as `{ git = "https://github.com/BotResources/br-rust-common", tag = "<sibling>/v<version>", version = "<version>" }`,
-with a root `[patch."https://github.com/BotResources/br-rust-common"]` to the local path of the sibling. A crate stays
-at `0.0.0` until the siblings it depends on are tagged. Sibling dev-dependencies are exempt from the tag-pin rule
-(`check-sibling-pins.sh` skips them, and a consumer's lockfile does not contain them).
+with a root `[patch."https://github.com/BotResources/br-rust-common"]` to the local path of the sibling, so the
+workspace holds one copy of each. Sibling dev-dependencies are exempt from the tag-pin rule (`check-sibling-pins.sh`
+skips them, and a consumer's lockfile does not contain them).
 
-A crate marked `v1.4.0` only in the catalog is not yet released on its own line (it is at `0.0.0` in this tree).
-It has shipped in every `v1.x` workspace release: until its wave, the only pin for it is the workspace tag
-`v1.4.0`, the last release of the whole workspace under one version (tag stays, never rewritten):
-
-```toml
-br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "v1.4.0", version = "1.4.0", features = ["consumer"] }
-```
+`v1.4.0` is the legacy workspace tag: the last release of the whole workspace under one version, kept for the services
+still on it (the tag stays, never rewritten). Moving from `v1.4.0` to per-crate pins means moving **all** the
+`br-rust-common` crates a service uses to their `0.1.0` tags together. Mixing `v1.4.0` and per-crate pins for crates
+that share types breaks, as described next.
 
 Crates share types: any crate that names a type of a sibling in its public API has the same type as that sibling.
 For example `br-core-events` re-exports `UserId`, `ServiceAccountId` and `Actor` from `br-core-kernel`; `br-core-auth`
@@ -103,20 +101,18 @@ and `IntegrationEvent`, `IntegrationCommand`, `MessageOutcome` and the coordinat
 fails with E0308 where a coordinate or an envelope crosses); `br-scope-declaration-contract` returns `CommandCoords`,
 `EventCoords` and `CoordError` from `br-core-integration`, so it moves with `br-core-integration` (and with
 `br-util-nats-fabric` when the same coordinates are handed to the fabric); `br-util-axum-auth` inserts
-`br-core-auth`'s `Passport` into the request extensions; `br-util-graphql` wraps `br-core-values`;
-`br-util-directory` names `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and
-`DirectoryMeta` from `br-core-directory` in its `DirectorySource` trait and its publisher; `br-util-scope-declaration`
-takes `ScopeDeclaration` from `br-core-scope` and `ReadinessHandle` from `br-util-axum-readiness`. A consumer must not mix a
-per-crate pin and `v1.4.0` for crates that share types: the build then holds two copies of the same type. Move such
-crates together, all to per-crate pins or all to `v1.4.0`.
+`br-core-auth`'s `Passport` into the request extensions; `br-util-graphql` wraps `br-core-values`. A consumer must not
+mix a per-crate pin and `v1.4.0` for crates that share types: the build then holds two copies of the same type. Move
+such crates together, all to per-crate pins or all to `v1.4.0`.
 
-A crate still `v1.4.0` only cannot be mixed with the per-crate tag of any released crate whose types appear in its public API: the build holds two copies of those types and passing one across fails to compile (E0308). Checked against `cargo public-api --all-features`:
+The three crates built on the others name these types, checked against `cargo public-api --all-features`; each fails
+with E0308 where a value of one copy crosses to the other:
 
-- `br-identity-app` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `IntegrationCommand` and `CommandCoords` (`br-core-integration`); `ServiceKey`, `DeclareServiceScopes` and `ScopeDeclarationError` (`br-core-scope`); `ScopeRegistry`, `DeclarationOutcome` and `RegistryHydrationError` (`br-identity-domain`).
+- `br-util-directory` names `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` (`br-core-directory`); `Fabric`, `FabricError`, `KvKeyError`, `ProjectionError` and `WatchHealthReceiver` (`br-util-nats-fabric`). It also depends on `br-util-postgres` behind its `consumer` feature, with no `br-util-postgres` type in its API.
 - `br-util-scope-declaration` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `ScopeDeclaration`, `ServiceKey` and `ServiceScopesRejected` (`br-core-scope`); `ReadinessHandle` (`br-util-axum-readiness`); and returns `Actor`, which is `br-core-kernel`'s type (`br-core-integration` and `br-core-events` re-export it).
-- `br-util-directory` names `Fabric`, `FabricError`, `KvKeyError`, `ProjectionError` and `WatchHealthReceiver` (`br-util-nats-fabric`); `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` (`br-core-directory`).
+- `br-identity-app` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `IntegrationCommand` and `CommandCoords` (`br-core-integration`); `ServiceKey`, `DeclareServiceScopes` and `ScopeDeclarationError` (`br-core-scope`); `ScopeRegistry`, `DeclarationOutcome` and `RegistryHydrationError` (`br-identity-domain`). For example `br-identity-app/v0.1.0` with `br-core-scope` at `v1.4.0` fails to compile.
 
-Each of them moves with those crates in its own wave. The crates they carry types through (`br-core-integration` re-exports from `br-core-events`, which re-exports from `br-core-kernel`) move together as well.
+They move with those crates, and the crates those carry types through (`br-core-integration` re-exports from `br-core-events`, which re-exports from `br-core-kernel`).
 
 Most mixes fail to compile. A type-keyed channel does not: `br-util-axum-auth` inserts `br-core-auth`'s `Passport` into
 the request extensions, and a handler extracts it by that type, so `br-util-axum-auth` and the service must use the same
@@ -127,8 +123,8 @@ Every pin must name the repository as `https://github.com/BotResources/br-rust-c
 is the same repository): the sibling pins inside the crates hard-code that URL, so a pin through `ssh://git@...` splits
 every sibling into two copies. A consumer also needs `allow-git = ["https://github.com/BotResources/br-rust-common"]`
 under `[sources]` in its `deny.toml` (without it `cargo-deny` reports `source-not-allowed`) and keeps `version = "x.y.z"`
-beside each tag. To turn a silent second copy into a build failure, a consumer bans multiple versions of the shared
-crates:
+beside each tag. To turn a silent second copy into a build failure, a consumer bans multiple versions of the crates
+whose type appears in the public API of another crate:
 
 ```toml
 [[bans.deny]]
@@ -136,7 +132,15 @@ crate = "br-core-auth"
 deny-multiple-versions = true
 
 [[bans.deny]]
+crate = "br-core-directory"
+deny-multiple-versions = true
+
+[[bans.deny]]
 crate = "br-core-events"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-core-integration"
 deny-multiple-versions = true
 
 [[bans.deny]]
@@ -149,6 +153,18 @@ deny-multiple-versions = true
 
 [[bans.deny]]
 crate = "br-core-values"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-identity-domain"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-util-axum-readiness"
+deny-multiple-versions = true
+
+[[bans.deny]]
+crate = "br-util-nats-fabric"
 deny-multiple-versions = true
 ```
 
@@ -174,9 +190,12 @@ br-core-integration = { git = "https://github.com/BotResources/br-rust-common", 
 br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth/v0.1.0", version = "0.1.0" }
 br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.0", version = "0.1.0" }
 br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0", features = ["outbox"] }
+br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "br-util-directory/v0.1.0", version = "0.1.0", features = ["consumer"] }
+br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.0", version = "0.1.0" }
+br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "br-identity-app/v0.1.0", version = "0.1.0" }
 ```
 
-`br-util-graphql` exports nothing without `features = ["graphql"]`. `br-util-postgres` takes `features = ["migrate"]` for `migrations_status`, `br-util-nats-fabric` takes `features = ["outbox"]` for the Postgres transactional outbox (leave it off otherwise), and `br-core-auth` takes `features = ["test-support"]` as a dev-dependency only.
+`br-util-graphql` exports nothing without `features = ["graphql"]`. `br-util-postgres` takes `features = ["migrate"]` for `migrations_status`, `br-util-nats-fabric` takes `features = ["outbox"]` for the Postgres transactional outbox (leave it off otherwise), `br-util-directory` takes `features = ["consumer"]` (the `known_*` projection and readers), `features = ["publisher"]` (the roster writer) or both, and `br-core-auth` takes `features = ["test-support"]` as a dev-dependency only.
 
 The general form is `{ git = "https://github.com/BotResources/br-rust-common", package = "<crate>", tag = "<crate>/v<version>", version = "<version>" }`.
 

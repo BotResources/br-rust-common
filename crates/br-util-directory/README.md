@@ -357,11 +357,13 @@ orphan, the users-only scope, the absent-manifest fail-closed — is the
 
 ## Install
 
+`br-util-directory/v0.1.0` pins `br-core-directory/v0.1.0`, `br-util-nats-fabric/v0.1.0` and, behind `consumer`, `br-util-postgres/v0.1.0`. It names `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` (`br-core-directory`) and `Fabric`, `FabricError`, `KvKeyError`, `ProjectionError` and `WatchHealthReceiver` (`br-util-nats-fabric`). Take `br-core-directory` and `br-util-nats-fabric` (with `br-core-integration`, `br-core-events` and `br-core-kernel`, which the fabric carries) at their `0.1.0` tags in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a value across fails to compile (E0308).
+
 ```toml
 [dependencies]
-br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "v1.4.0", version = "1.4.0", features = ["consumer"] }
+br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "br-util-directory/v0.1.0", version = "0.1.0", features = ["consumer"] }
 # the identity side, which writes the roster:
-# br-util-directory = { git = "...", package = "br-util-directory", tag = "v1.4.0", version = "1.4.0", features = ["publisher"] }
+# br-util-directory = { git = "...", package = "br-util-directory", tag = "br-util-directory/v0.1.0", version = "0.1.0", features = ["publisher"] }
 ```
 
 `default = []`: pick `consumer` (the `known_*` projection + readers),
@@ -386,3 +388,7 @@ br-util-directory = { git = "https://github.com/BotResources/br-rust-common", pa
 | Manifest absent = fail-closed, not empty roster | Treating an absent manifest as empty orphan-deleted every local row (a PII purge) when a consumer merely booted ahead of identity. Fail-closed leaves the projection intact. |
 | Readers resolve over `DirectorySnapshot`, a pure projection | Resolution + auto-degrade stay unit-testable with no I/O; the PG-backed readers mirror the semantics, proven in the e2e conformance battery. |
 | `delete_group` relies on `ON DELETE CASCADE` | Purges the junction via the `known_user_group` group FK — the contract relies on it. |
+
+---
+
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)
