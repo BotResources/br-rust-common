@@ -568,11 +568,10 @@ hatch; every write and read goes through a validated `KvKey` / `KvPrefix`. This
 crate ships **generic mechanics only**; the *policy* — which prefixes, which
 entries to copy, what to persist — is a set of **caller-owned seams**.
 
-> `br-util-directory` will be re-expressed on top of this crate's
-> Published-Language KV mechanics in the same v1.0.0 train; its own
-> `reconcile_entries` / `KvOp` reconcile engine is destined to disappear. The
-> `PublishedLanguagePublisher` / `PublishedLanguageConsumer` + reconcile here are
-> the canonical generic mechanism.
+> `br-util-directory` is built on these mechanics: its `DirectoryPublisher`
+> holds `PublishedLanguagePublisher`s and reconciles through them, and its
+> `DirectoryProjector` consumes through `PublishedLanguageConsumer`. The
+> publisher/consumer + reconcile here are the canonical generic mechanism.
 
 ### Keys
 
@@ -869,7 +868,7 @@ blind reuse-detection).
   is no `put_with_ttl`: an unconditional last-writer-wins write carrying a per-key
   TTL is not part of the public `async-nats` KV surface at any current version (only
   the CAS-flavoured `create_with_ttl` is), so use `create_with_ttl` for the one-time
-  code lifecycle (see the CHANGELOG note).
+  code lifecycle.
 - `keys(&KvPrefix) -> Result<Vec<KvKey>, FabricError>` enumerates the live keys
   under the prefix **without decoding** values — tombstoned (deleted / purged /
   TTL-expired) keys are excluded, consistent with `get_with_revision`. Identical
@@ -1062,8 +1061,10 @@ from a fresh copy on recovery.
 
 ## Dependency
 
+`br-util-nats-fabric/v0.1.0` pins `br-core-integration/v0.1.0` and `br-core-events/v0.1.0`, and re-exports their `EventMetadata`, `IntegrationEvent`, `IntegrationCommand`, `MessageOutcome` and coordinate types (`Bc`, `Aggregate`, `Verb`, `PastFact`, `CommandCoords`, `EventCoords`, `CoordError`). Take `br-core-integration`, `br-core-events` and `br-core-kernel` at their `0.1.0` tags in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a coordinate or an envelope to the fabric then fails to compile (E0308). No type-keyed channel carries these types, so the mix never fails silently. `features = ["outbox"]` adds the Postgres transactional outbox; leave it off otherwise.
+
 ```toml
-br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.4.0", version = "1.4.0" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0" }
 # with the transactional outbox:
-# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "v1.4.0", version = "1.4.0", features = ["outbox"] }
+# br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0", features = ["outbox"] }
 ```
