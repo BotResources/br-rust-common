@@ -123,8 +123,8 @@ Every pin must name the repository as `https://github.com/BotResources/br-rust-c
 is the same repository): the sibling pins inside the crates hard-code that URL, so a pin through `ssh://git@...` splits
 every sibling into two copies. A consumer also needs `allow-git = ["https://github.com/BotResources/br-rust-common"]`
 under `[sources]` in its `deny.toml` (without it `cargo-deny` reports `source-not-allowed`) and keeps `version = "x.y.z"`
-beside each tag. To turn a silent second copy into a build failure, a consumer bans multiple versions of the shared
-crates:
+beside each tag. To turn a silent second copy into a build failure, a consumer bans multiple versions of the crates
+whose type appears in the public API of another crate:
 
 ```toml
 [[bans.deny]]
@@ -157,10 +157,6 @@ deny-multiple-versions = true
 
 [[bans.deny]]
 crate = "br-identity-domain"
-deny-multiple-versions = true
-
-[[bans.deny]]
-crate = "br-scope-declaration-contract"
 deny-multiple-versions = true
 
 [[bans.deny]]
