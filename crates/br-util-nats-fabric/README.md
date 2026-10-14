@@ -1068,3 +1068,7 @@ br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", 
 # with the transactional outbox:
 # br-util-nats-fabric = { git = "...", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0", features = ["outbox"] }
 ```
+
+---
+
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)

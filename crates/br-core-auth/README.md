@@ -267,4 +267,4 @@ br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)

@@ -124,11 +124,13 @@ check in the contract.
 
 ## Install
 
+`br-util-scope-declaration/v0.1.0` pins `br-core-integration/v0.1.0`, `br-core-scope/v0.1.0`, `br-scope-declaration-contract/v0.1.0`, `br-util-axum-readiness/v0.1.0` and `br-util-nats-fabric/v0.1.0`. It names `Fabric` and `FabricError` (`br-util-nats-fabric`), `ScopeDeclaration`, `ServiceKey` and `ServiceScopesRejected` (`br-core-scope`) and `ReadinessHandle` (`br-util-axum-readiness`), and returns `Actor`, `br-core-kernel`'s type. Take those siblings, `br-core-events` and `br-core-kernel` at their `0.1.0` tags in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a value across fails to compile (E0308).
+
 ```toml
 [dependencies]
-br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "v1.4.0", version = "1.4.0" }
+br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.0", version = "0.1.0" }
 ```
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)

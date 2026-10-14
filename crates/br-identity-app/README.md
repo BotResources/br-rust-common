@@ -248,11 +248,13 @@ run_scope_declarations(
 
 ## Install
 
+`br-identity-app/v0.1.0` pins `br-core-integration/v0.1.0`, `br-core-scope/v0.1.0`, `br-identity-domain/v0.1.0`, `br-scope-declaration-contract/v0.1.0` and `br-util-nats-fabric/v0.1.0`. It names `Fabric` and `FabricError` (`br-util-nats-fabric`), `IntegrationCommand` and `CommandCoords` (`br-core-integration`), `ServiceKey`, `DeclareServiceScopes` and `ScopeDeclarationError` (`br-core-scope`) and `ScopeRegistry`, `DeclarationOutcome` and `RegistryHydrationError` (`br-identity-domain`). Take those siblings, `br-core-events` and `br-core-kernel` at their `0.1.0` tags in the same service: any of them at another tag (such as `br-core-scope` at `v1.4.0`) holds a second copy of the type, and passing a value across fails to compile (E0308).
+
 ```toml
 [dependencies]
-br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "v1.4.0", version = "1.4.0" }
+br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "br-identity-app/v0.1.0", version = "0.1.0" }
 ```
 
 ---
 
-Part of [`br-rust-common`](../../README.md) · [Changelog](../../CHANGELOG.md) · [botresources.ai](https://botresources.ai)
+Part of [`br-rust-common`](../../README.md) · [Changelog](./CHANGELOG.md) · [botresources.ai](https://botresources.ai)

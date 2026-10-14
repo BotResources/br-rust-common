@@ -1,6 +1,6 @@
 [package]
 name = "br-util-scope-declaration"
-version = "0.0.0"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,11 +8,11 @@ repository.workspace = true
 description = "Boot-time scope-declaration handshake helper: a generic service declares its scopes to Identity and gates readiness on the confirmation"
 
 [dependencies]
-br-core-integration = { workspace = true }
-br-core-scope = { workspace = true }
-br-scope-declaration-contract = { workspace = true }
-br-util-axum-readiness = { workspace = true }
-br-util-nats-fabric = { workspace = true }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration/v0.1.0", version = "0.1.0" }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.0", version = "0.1.0" }
+br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.0", version = "0.1.0" }
+br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "br-util-axum-readiness/v0.1.0", version = "0.1.0" }
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0" }
 chrono = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
