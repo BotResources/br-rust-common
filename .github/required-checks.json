@@ -13,6 +13,14 @@
     "helm library chart (br-rust-common-chart)",
     "shellcheck",
     "release-line law and registry wiring tests",
-    "registry gate"
+    "registry gate",
+    "br-core-values --all-features (conformance)",
+    "br-util-postgres --all-features (migrate)",
+    "e2e (br-util-postgres TLS handshake)",
+    "e2e (br-util-nats-fabric vs NATS JetStream)",
+    "e2e (br-util-scope-declaration vs NATS JetStream)",
+    "e2e (br-identity-app vs PG 16 + NATS JetStream)",
+    "e2e (br-util-nats-fabric outbox vs PG 16 + NATS JetStream)",
+    "e2e (br-util-directory vs PG 16 + NATS JetStream)"
   ]
 }
