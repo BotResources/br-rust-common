@@ -43,7 +43,8 @@ publish` refuses it outright.
 | `generated_password() -> String` | `pw_{uuid v7}` — a fresh password generated at run time. The `br-util-postgres` tests use no password literal. |
 | `with_test_world(body) -> T` | Connects an admin pool from `TEST_DATABASE_URL`, runs `body(TestWorld)`, then always drops every registered isolated database and role, even when the body panics (the panic is re-raised after the teardown). |
 | `TestWorld` | Handle given to the body. `admin()` and `url()` expose the admin pool and URL; `unique_role()`, `caller()`, `isolated_database()` and `caller_in(&db)` create objects that are registered for the teardown as they are created. Databases are dropped first, then roles, newest first. |
-| `Caller { pool, role, password }` | A `LOGIN CREATEROLE NOSUPERUSER` role with its generated password and a pool (2 connections) already authenticated as it. |
+| `Caller { pool, role, password }` | A `LOGIN CREATEROLE NOSUPERUSER` role with its generated password and a pool (2 connections) already authenticated as it. The `CREATE ROLE` statement carries a SCRAM-SHA-256 verifier, never the clear password. |
+| `scram_verifier(password) -> String` | SCRAM-SHA-256 verifier of `password` (`postgres-protocol`, random salt, 4096 iterations), for a `CREATE ROLE ... PASSWORD '<verifier>'` statement. Panics with a fixed message, without printing the verifier, when the result is outside `[A-Za-z0-9+/=$:-]`. |
 | `setup_caller(admin, admin_url) -> Caller` | Creates a `Caller` with a generated password, then runs `GRANT CREATE ON SCHEMA public` under an advisory lock, retrying on catalog races (`XX000`, `23505`, `42710`; up to 20 attempts). Prefer `TestWorld::caller`, which also registers the role for the teardown. |
 | `IsolatedDatabase` | A throwaway database: private fields, read with `name()` and `url()`. `Clone`. |
 | `create_isolated_database(admin, admin_url) -> IsolatedDatabase` | `CREATE DATABASE br_test_{suffix}` and the URL pointing at it. |
@@ -61,6 +62,7 @@ Pools cap at `max_connections(2)` unless `wide_caller_pool` is given a size — 
 | Dev-dependency only | Test scaffolding must not enter any crate's dependency closure or public API; dev-deps are not transitive, so consumers stay unaffected. |
 | `cleanup_role` swallows errors | It is post-assertion teardown of an already-ephemeral role; failing it would mask the real test outcome, and `DROP … IF EXISTS` is idempotent. |
 | Passwords are generated at run time | These roles live only for the duration of one e2e test against a disposable database; they are never real credentials. |
+| Role statements carry a verifier | The clear password never sits in SQL text (server logs, `pg_stat_statements`, static analysis); the test keeps the clear password only to log in. The check duplicates the small alphabet check of `br-util-postgres` because this crate must not depend on its internals. |
 | Both an `Option` and a `require_*` reader per variable | A suite whose environment is genuinely optional self-skips on the `Option`; a suite that would otherwise pass while testing nothing takes the panicking reader, and the panic names the one variable that is missing rather than every variable the test might have wanted. |
 | `expect(...)` on setup, `Result` on `open_pool_as` | Setup failures are environment faults that should abort the test loudly; `open_pool_as` is also used to *assert* that a connection is refused, so it must return the error rather than panic. |
 

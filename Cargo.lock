@@ -452,6 +452,7 @@ name = "br-test-support"
 version = "0.0.0"
 dependencies = [
  "futures-util",
+ "postgres-protocol",
  "sqlx",
  "tokio",
  "url",

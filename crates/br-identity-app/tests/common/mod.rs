@@ -10,7 +10,9 @@ use br_identity_app::{
     ConfirmationPublisher, ScopeDeclarationPipeline, ScopeRegistryRepository, migrate,
 };
 pub use br_test_support::require_test_db_url;
-use br_test_support::{cleanup_role, open_pool_as, unique_suffix};
+use br_test_support::{
+    cleanup_role, generated_password, open_pool_as, scram_verifier, unique_suffix,
+};
 use br_util_nats_fabric::{Fabric, INTEGRATION_CMD, INTEGRATION_EVT, command_subject};
 use chrono::Utc;
 use sqlx::PgPool;
@@ -47,8 +49,10 @@ impl PgEnv {
             .expect("connect as admin");
 
         let owner = format!("br_test_owner_{}", unique_suffix());
+        let owner_password = generated_password();
+        let owner_verifier = scram_verifier(&owner_password);
         sqlx::query(&format!(
-            "CREATE ROLE \"{owner}\" LOGIN CREATEROLE NOSUPERUSER PASSWORD 'owner_pw_e2e_only'"
+            "CREATE ROLE \"{owner}\" LOGIN CREATEROLE NOSUPERUSER PASSWORD '{owner_verifier}'"
         ))
         .execute(&admin)
         .await
@@ -65,7 +69,7 @@ impl PgEnv {
         let owner_opts = PgConnectOptions::from_str(&db_url)
             .expect("parse url")
             .username(&owner)
-            .password("owner_pw_e2e_only");
+            .password(&owner_password);
         let owner_pool = PgPoolOptions::new()
             .max_connections(2)
             .connect_with(owner_opts)

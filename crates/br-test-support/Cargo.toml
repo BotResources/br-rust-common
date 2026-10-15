@@ -10,6 +10,7 @@ description = "Dev-only shared e2e test helpers (Postgres role/pool/name primiti
 
 [dependencies]
 futures-util = { workspace = true }
+postgres-protocol = { workspace = true }
 sqlx = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["time"] }
 url = { workspace = true }

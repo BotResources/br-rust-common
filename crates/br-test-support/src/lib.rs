@@ -4,6 +4,7 @@ mod env;
 mod names;
 mod pools;
 mod roles;
+mod verifier;
 mod world;
 
 pub use database::{IsolatedDatabase, create_isolated_database, drop_isolated_database};
@@ -14,4 +15,5 @@ pub use env::{
 pub use names::{generated_password, unique_role_name, unique_suffix, unique_table_name};
 pub use pools::{open_pool_as, wide_caller_pool};
 pub use roles::{Caller, cleanup_role, setup_caller};
+pub use verifier::scram_verifier;
 pub use world::{TestWorld, with_test_world};

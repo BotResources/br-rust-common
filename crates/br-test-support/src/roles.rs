@@ -3,6 +3,7 @@ use sqlx::PgPool;
 use crate::catalog_race::retry_catalog_race;
 use crate::names::{assert_plain_identifier, generated_password, unique_role_name};
 use crate::pools::open_pool_as;
+use crate::verifier::scram_verifier;
 
 const PUBLIC_SCHEMA_ACL_LOCK: i64 = 0x6272_5f74_6573_7431;
 
@@ -30,8 +31,9 @@ pub async fn setup_caller(admin: &PgPool, admin_url: &str) -> Caller {
 pub(crate) async fn create_caller(admin: &PgPool, admin_url: &str, role: String) -> Caller {
     assert_plain_identifier(&role);
     let password = generated_password();
+    let verifier = scram_verifier(&password);
     sqlx::query(&format!(
-        "CREATE ROLE \"{role}\" LOGIN CREATEROLE NOSUPERUSER PASSWORD '{password}'"
+        "CREATE ROLE \"{role}\" LOGIN CREATEROLE NOSUPERUSER PASSWORD '{verifier}'"
     ))
     .execute(admin)
     .await
