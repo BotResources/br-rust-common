@@ -1,34 +1,15 @@
-use std::str::FromStr;
 use std::sync::Arc;
 
 use br_test_support::{
-    CALLER_PASSWORD, cleanup_role, create_isolated_database, drop_isolated_database, open_pool_as,
-    require_test_db_url, setup_caller, unique_role_name, unique_table_name,
+    IsolatedDatabase, TestWorld, generated_password, open_pool_as, unique_table_name,
+    wide_caller_pool, with_test_world,
 };
 use br_util_postgres::{ensure_app_role, grant_app_access};
 use sqlx::PgPool;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tokio::sync::Barrier;
-use uuid::Uuid;
 
 const PARALLEL_CALLS: usize = 16;
 const ROUNDS: usize = 5;
-
-fn generated_password() -> String {
-    format!("pw_{}", Uuid::now_v7().simple())
-}
-
-async fn wide_caller_pool(url: &str, caller: &str) -> PgPool {
-    let options = PgConnectOptions::from_str(url)
-        .expect("TEST_DATABASE_URL must parse as a Postgres URL")
-        .username(caller)
-        .password(CALLER_PASSWORD);
-    PgPoolOptions::new()
-        .max_connections(PARALLEL_CALLS as u32)
-        .connect_with(options)
-        .await
-        .expect("connect as caller")
-}
 
 async fn parallel_grants(
     pool: &PgPool,
@@ -57,7 +38,7 @@ async fn parallel_grants(
 }
 
 async fn assert_round(
-    url: &str,
+    database: &IsolatedDatabase,
     owner_pool: &PgPool,
     roles: &[(String, String)],
     label: &str,
@@ -82,7 +63,7 @@ async fn assert_round(
         .expect("insert");
     let mut reads = Vec::new();
     for (role, password) in roles {
-        let app_pool = open_pool_as(url, role, password)
+        let app_pool = open_pool_as(database.url(), role, password)
             .await
             .expect("app login after grants");
         reads.push(
@@ -104,50 +85,40 @@ async fn assert_round(
     }
 }
 
-async fn run_rounds(label: &str, role_count: usize) {
-    let server_url = require_test_db_url();
-    let server = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&server_url)
-        .await
-        .expect("connect as admin");
-    let database = create_isolated_database(&server, &server_url).await;
-    let database_admin = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&database.url)
-        .await
-        .expect("connect as admin to the isolated database");
-    let (setup_pool, owner) = setup_caller(&database_admin, &database.url).await;
-    setup_pool.close().await;
-    database_admin.close().await;
-    let owner_pool = wide_caller_pool(&database.url, &owner).await;
+async fn run_rounds(world: &TestWorld, label: &str, role_count: usize) {
+    let database = world.isolated_database().await;
+    let owner = world.caller_in(&database).await;
+    let owner_pool = wide_caller_pool(
+        database.url(),
+        &owner.role,
+        &owner.password,
+        PARALLEL_CALLS as u32,
+    )
+    .await;
+    owner.pool.close().await;
 
-    let mut all_roles = Vec::new();
     for round in 0..ROUNDS {
         let mut roles = Vec::new();
         for _ in 0..role_count {
-            let role = unique_role_name();
+            let role = world.unique_role();
             let password = generated_password();
             ensure_app_role(&owner_pool, &role, &password)
                 .await
                 .expect("ensure app role");
             roles.push((role, password));
         }
-        assert_round(&database.url, &owner_pool, &roles, label, round).await;
-        all_roles.extend(roles.into_iter().map(|(role, _)| role));
+        assert_round(&database, &owner_pool, &roles, label, round).await;
     }
 
     owner_pool.close().await;
-    drop_isolated_database(&server, &database).await;
-    for role in &all_roles {
-        cleanup_role(&server, role).await;
-    }
-    cleanup_role(&server, &owner).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
 async fn parallel_grants_for_one_role_and_for_two_distinct_roles_all_succeed() {
-    run_rounds("one role", 1).await;
-    run_rounds("two roles", 2).await;
+    with_test_world(|world| async move {
+        run_rounds(&world, "one role", 1).await;
+        run_rounds(&world, "two roles", 2).await;
+    })
+    .await;
 }

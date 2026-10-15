@@ -5,7 +5,8 @@ environment readers that gate an `#[ignore]` suite (Postgres and NATS) plus the
 Postgres role/pool/name primitives that several crates' integration tests need
 to stand up an ephemeral, least-privilege Postgres world (create a `CREATEROLE`
 caller, open a pool as a given role, generate collision-free role/table names,
-tear a role down). Tier `util` — functions only, no aggregate, no policy, no
+tear a role down). Tier `util` — functions and three small handle types
+(`Caller`, `IsolatedDatabase`, `TestWorld`), no aggregate, no policy, no
 error type of its own (the helpers surface `sqlx::Error` directly).
 
 These helpers used to be copy-pasted across three sites
@@ -39,12 +40,19 @@ publish` refuses it outright.
 | `unique_suffix() -> String` | A 24-char collision-free suffix (truncated UUIDv7 simple form) for building per-test object names. |
 | `unique_role_name() -> String` | `br_test_{suffix}` — a fresh role name for one test. |
 | `unique_table_name() -> String` | `br_test_tbl_{suffix}` — a fresh table name for one test. |
-| `cleanup_role(admin, role)` | Best-effort teardown: `DROP OWNED BY … CASCADE` then `DROP ROLE IF EXISTS …`. Errors are swallowed (teardown is idempotent and runs after the assertions). |
-| `setup_caller(admin, admin_url) -> (PgPool, String)` | Creates a fresh `LOGIN CREATEROLE NOSUPERUSER` role, GRANTs `CREATE ON SCHEMA public`, and returns a pool already authenticated as it plus the role name. Use as the owner/caller that the code under test will itself create app roles from. |
-| `open_pool_as(admin_url, role, password) -> Result<PgPool, sqlx::Error>` | Opens a pool against `admin_url`'s host/db but authenticated as `role`/`password`. Returns the error so a test can assert a failed connection. |
+| `generated_password() -> String` | `pw_{uuid v7}` — a fresh password generated at run time. No test password is a literal. |
+| `with_test_world(body) -> T` | Connects an admin pool from `TEST_DATABASE_URL`, runs `body(TestWorld)`, then always drops every registered isolated database and role, even when the body panics (the panic is re-raised after the teardown). |
+| `TestWorld` | Handle given to the body. `admin()` and `url()` expose the admin pool and URL; `unique_role()`, `caller()`, `isolated_database()` and `caller_in(&db)` create objects that are registered for the teardown as they are created. Databases are dropped first, then roles, newest first. |
+| `Caller { pool, role, password }` | A `LOGIN CREATEROLE NOSUPERUSER` role with its generated password and a pool (2 connections) already authenticated as it. |
+| `setup_caller(admin, admin_url) -> Caller` | Creates a `Caller` with a generated password, then runs `GRANT CREATE ON SCHEMA public` under an advisory lock, retrying on catalog races (`XX000`, `23505`, `42710`; up to 20 attempts). Prefer `TestWorld::caller`, which also registers the role for the teardown. |
+| `IsolatedDatabase` | A throwaway database: private fields, read with `name()` and `url()`. `Clone`. |
+| `create_isolated_database(admin, admin_url) -> IsolatedDatabase` | `CREATE DATABASE br_test_{suffix}` and the URL pointing at it. |
+| `drop_isolated_database(admin, &db) -> Result<(), sqlx::Error>` | `DROP DATABASE IF EXISTS ... WITH (FORCE)`. The name is checked against `[a-z0-9_]+` first; any other name panics with a fixed message before reaching SQL. |
+| `cleanup_role(admin, role)` | Best-effort teardown: `DROP OWNED BY ... CASCADE` (retried up to 20 times on catalog races) then `DROP ROLE IF EXISTS ...`. Errors are swallowed. The name is checked against `[a-z0-9_]+` first; any other name panics with a fixed message before reaching SQL. |
+| `open_pool_as(url, role, password) -> Result<PgPool, sqlx::Error>` | Opens a pool (2 connections) against `url`'s host/db authenticated as `role`/`password`. Returns the error so a test can assert a failed connection. |
+| `wide_caller_pool(url, role, password, max_connections) -> PgPool` | Same, with a chosen pool size, for tests that run many calls in parallel; panics when the connection fails. |
 
-All pools cap at `max_connections(2)` — enough for a single e2e test, deliberately
-small so a leaked pool surfaces fast.
+Pools cap at `max_connections(2)` unless `wide_caller_pool` is given a size — small on purpose, so a leaked pool surfaces fast.
 
 ## Why
 

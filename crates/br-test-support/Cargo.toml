@@ -9,6 +9,7 @@ publish = false
 description = "Dev-only shared e2e test helpers (Postgres role/pool/name primitives and the NATS/Postgres environment readers) for the br-rust-common crates; consumed as a path dev-dependency, never a normal dependency"
 
 [dependencies]
+futures-util = { workspace = true }
 sqlx = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["time"] }
 url = { workspace = true }

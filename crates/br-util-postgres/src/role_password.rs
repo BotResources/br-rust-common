@@ -46,13 +46,10 @@ pub(crate) fn alter_role_verifier_sql(
 
 #[cfg(test)]
 mod tests {
+    use br_test_support::generated_password;
     use uuid::Uuid;
 
     use super::*;
-
-    fn generated_password() -> String {
-        format!("pw_{}", Uuid::now_v7().simple())
-    }
 
     #[test]
     fn verifier_has_scram_sha_256_shape_with_4096_iterations() {
