@@ -1,14 +1,15 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use br_test_support::{cleanup_role, require_test_db_url, setup_caller, unique_role_name};
+use br_test_support::{
+    CALLER_PASSWORD, cleanup_role, require_test_db_url, setup_caller, unique_role_name,
+};
 use br_util_postgres::ensure_app_role;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tokio::sync::Barrier;
 use uuid::Uuid;
 
-const CALLER_PW: &str = "caller_pw_for_e2e_only";
 const PARALLEL_CALLS: usize = 16;
 const ROUNDS: usize = 5;
 
@@ -20,7 +21,7 @@ async fn wide_caller_pool(url: &str, caller: &str, max_connections: u32) -> PgPo
     let options = PgConnectOptions::from_str(url)
         .expect("TEST_DATABASE_URL must parse as a Postgres URL")
         .username(caller)
-        .password(CALLER_PW);
+        .password(CALLER_PASSWORD);
     PgPoolOptions::new()
         .max_connections(max_connections)
         .connect_with(options)
@@ -37,7 +38,7 @@ async fn caller_pool_on_database(
     let options = PgConnectOptions::from_str(url)
         .expect("TEST_DATABASE_URL must parse as a Postgres URL")
         .username(caller)
-        .password(CALLER_PW)
+        .password(CALLER_PASSWORD)
         .database(database);
     PgPoolOptions::new()
         .max_connections(max_connections)
@@ -75,7 +76,7 @@ async fn parallel_first_calls(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn parallel_first_calls_for_the_same_role_all_succeed() {
     let url = require_test_db_url();
     let admin = PgPoolOptions::new()
@@ -118,7 +119,7 @@ async fn parallel_first_calls_for_the_same_role_all_succeed() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn parallel_first_calls_from_two_databases_of_one_cluster_all_succeed() {
     let url = require_test_db_url();
     let admin = PgPoolOptions::new()

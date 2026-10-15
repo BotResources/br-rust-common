@@ -3,6 +3,8 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
 use uuid::Uuid;
 
+pub const CALLER_PASSWORD: &str = "caller_pw_for_e2e_only";
+
 const PUBLIC_SCHEMA_ACL_LOCK: i64 = 0x6272_5f74_6573_7431;
 
 pub fn test_db_url() -> Option<String> {
@@ -52,7 +54,7 @@ pub async fn cleanup_role(admin: &PgPool, role: &str) {
 
 pub async fn setup_caller(admin: &PgPool, admin_url: &str) -> (PgPool, String) {
     let caller = unique_role_name();
-    let password = "caller_pw_for_e2e_only";
+    let password = CALLER_PASSWORD;
 
     let create_sql = format!(
         "CREATE ROLE \"{caller}\" LOGIN CREATEROLE NOSUPERUSER \

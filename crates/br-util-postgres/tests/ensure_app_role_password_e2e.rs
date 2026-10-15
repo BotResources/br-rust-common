@@ -1,10 +1,51 @@
+use std::fmt::Debug;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use br_test_support::{cleanup_role, require_test_db_url, setup_caller, unique_role_name};
 use br_util_postgres::{PostgresError, ensure_app_role};
 use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
 use sqlx::{Connection, PgPool};
+use tracing::field::{Field, Visit};
+use tracing::{Event, Subscriber};
+use tracing_subscriber::layer::{Context, SubscriberExt};
+use tracing_subscriber::{Layer, Registry};
 use uuid::Uuid;
+
+#[derive(Default)]
+struct StatementCapture {
+    statements: Arc<Mutex<Vec<String>>>,
+}
+
+struct StatementVisitor<'a> {
+    statements: &'a Mutex<Vec<String>>,
+}
+
+impl StatementVisitor<'_> {
+    fn push(&mut self, field: &Field, text: String) {
+        if field.name() == "db.statement" {
+            self.statements.lock().expect("capture lock").push(text);
+        }
+    }
+}
+
+impl Visit for StatementVisitor<'_> {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.push(field, value.to_string());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
+        self.push(field, format!("{value:?}"));
+    }
+}
+
+impl<S: Subscriber> Layer<S> for StatementCapture {
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        event.record(&mut StatementVisitor {
+            statements: &self.statements,
+        });
+    }
+}
 
 fn generated_password() -> String {
     format!("pw_{}", Uuid::now_v7().simple())
@@ -55,7 +96,7 @@ async fn admin_pool(url: &str) -> PgPool {
 }
 
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn role_logs_in_with_its_password_and_refuses_a_wrong_one() {
     let url = require_test_db_url();
     let admin = admin_pool(&url).await;
@@ -76,7 +117,7 @@ async fn role_logs_in_with_its_password_and_refuses_a_wrong_one() {
 }
 
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn stored_password_is_a_scram_verifier_without_the_clear_password() {
     let url = require_test_db_url();
     let admin = admin_pool(&url).await;
@@ -89,7 +130,7 @@ async fn stored_password_is_a_scram_verifier_without_the_clear_password() {
         .expect("ensure_app_role");
 
     let stored = stored_password(&admin, &role).await;
-    assert!(stored.starts_with("SCRAM-SHA-256$4096:"), "stored={stored}");
+    assert!(stored.starts_with("SCRAM-SHA-256$4096:"));
     assert!(!stored.contains(&password));
 
     caller_pool.close().await;
@@ -98,7 +139,7 @@ async fn stored_password_is_a_scram_verifier_without_the_clear_password() {
 }
 
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn calling_again_with_a_new_password_rotates_it() {
     let url = require_test_db_url();
     let admin = admin_pool(&url).await;
@@ -124,7 +165,7 @@ async fn calling_again_with_a_new_password_rotates_it() {
 }
 
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn calling_again_with_the_same_password_keeps_it_working() {
     let url = require_test_db_url();
     let admin = admin_pool(&url).await;
@@ -148,7 +189,7 @@ async fn calling_again_with_the_same_password_keeps_it_working() {
 }
 
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn password_with_quotes_and_dollars_logs_in() {
     let url = require_test_db_url();
     let admin = admin_pool(&url).await;
@@ -169,14 +210,78 @@ async fn password_with_quotes_and_dollars_logs_in() {
 }
 
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
 async fn empty_password_is_refused_before_any_statement_is_sent() {
     let url = require_test_db_url();
     let admin = admin_pool(&url).await;
     let (caller_pool, caller) = setup_caller(&admin, &url).await;
     let role = unique_role_name();
 
-    let result = ensure_app_role(&caller_pool, &role, "").await;
+    let empty = String::new();
+
+    let result = ensure_app_role(&caller_pool, &role, &empty).await;
+
+    assert!(matches!(result, Err(PostgresError::Config(_))));
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)")
+            .bind(&role)
+            .fetch_one(&admin)
+            .await
+            .expect("role lookup");
+    assert!(!exists);
+
+    caller_pool.close().await;
+    cleanup_role(&admin, &caller).await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn no_statement_sent_by_ensure_app_role_contains_the_clear_password() {
+    let url = require_test_db_url();
+    let admin = admin_pool(&url).await;
+    let (caller_pool, caller) = setup_caller(&admin, &url).await;
+    let role = unique_role_name();
+    let password = generated_password();
+    let capture = StatementCapture::default();
+    let statements = Arc::clone(&capture.statements);
+
+    let result = {
+        let _guard = tracing::subscriber::set_default(Registry::default().with(capture));
+        ensure_app_role(&caller_pool, &role, &password).await
+    };
+    result.expect("ensure_app_role");
+
+    let captured = statements.lock().expect("capture lock").clone();
+    assert!(
+        captured.iter().any(|sql| sql.contains("ALTER ROLE")),
+        "no ALTER ROLE statement was captured, the capture is blind"
+    );
+    assert!(
+        captured.iter().all(|sql| !sql.contains(&password)),
+        "a captured statement contains the clear password"
+    );
+    assert!(
+        captured
+            .iter()
+            .any(|sql| sql.contains("PASSWORD 'SCRAM-SHA-256$4096:")),
+        "the ALTER ROLE statement does not carry a SCRAM verifier"
+    );
+
+    caller_pool.close().await;
+    cleanup_role(&admin, &role).await;
+    cleanup_role(&admin, &caller).await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn password_with_a_nul_byte_is_refused_before_any_statement_is_sent() {
+    let url = require_test_db_url();
+    let admin = admin_pool(&url).await;
+    let (caller_pool, caller) = setup_caller(&admin, &url).await;
+    let role = unique_role_name();
+    let password = format!("{}\0{}", generated_password(), generated_password());
+
+    let result = ensure_app_role(&caller_pool, &role, &password).await;
 
     assert!(matches!(result, Err(PostgresError::Config(_))));
     let exists: bool =
