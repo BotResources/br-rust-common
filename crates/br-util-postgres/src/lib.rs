@@ -1,3 +1,4 @@
+mod advisory_lock;
 mod catalog_retry;
 mod dsn;
 pub mod env;

@@ -1,5 +1,6 @@
 use sqlx::PgPool;
 
+use crate::advisory_lock::lock_transaction_scope;
 use crate::catalog_retry::retry_concurrent_catalog_ddl;
 use crate::error::PostgresError;
 use crate::role_password::{alter_role_verifier_sql, scram_verifier};
@@ -44,10 +45,7 @@ async fn ensure_app_role_once(
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!("{ADVISORY_LOCK_NAMESPACE}{role_name}"))
-        .execute(&mut *tx)
-        .await?;
+    lock_transaction_scope(&mut tx, &format!("{ADVISORY_LOCK_NAMESPACE}{role_name}")).await?;
 
     let create_sql = format!(
         "DO $$ BEGIN \
