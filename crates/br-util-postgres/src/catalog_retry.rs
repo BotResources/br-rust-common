@@ -12,14 +12,16 @@ const DUPLICATE_OBJECT: &str = "42710";
 const UNIQUE_VIOLATION: &str = "23505";
 const INTERNAL_ERROR: &str = "XX000";
 
-fn is_concurrent_role_ddl(error: &dyn DatabaseError) -> bool {
+fn is_concurrent_catalog_ddl(error: &dyn DatabaseError) -> bool {
     matches!(
         error.code().as_deref(),
         Some(DUPLICATE_OBJECT | UNIQUE_VIOLATION | INTERNAL_ERROR)
     )
 }
 
-pub(crate) async fn retry_concurrent_role_ddl<F, Fut>(mut attempt: F) -> Result<(), PostgresError>
+pub(crate) async fn retry_concurrent_catalog_ddl<F, Fut>(
+    mut attempt: F,
+) -> Result<(), PostgresError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<(), sqlx::Error>>,
@@ -30,7 +32,7 @@ where
         match attempt().await {
             Ok(()) => return Ok(()),
             Err(sqlx::Error::Database(error))
-                if attempts < MAX_ATTEMPTS && is_concurrent_role_ddl(error.as_ref()) =>
+                if attempts < MAX_ATTEMPTS && is_concurrent_catalog_ddl(error.as_ref()) =>
             {
                 tokio::time::sleep(BACKOFF_STEP * attempts).await;
             }
@@ -96,7 +98,7 @@ mod tests {
         make_error: impl Fn() -> sqlx::Error,
     ) -> (Result<(), PostgresError>, u32) {
         let calls = AtomicU32::new(0);
-        let result = retry_concurrent_role_ddl(|| {
+        let result = retry_concurrent_catalog_ddl(|| {
             calls.fetch_add(1, Ordering::SeqCst);
             let error = make_error();
             async move { Err(error) }
@@ -117,7 +119,7 @@ mod tests {
     #[tokio::test]
     async fn a_retried_call_that_then_succeeds_stops_retrying() {
         let calls = AtomicU32::new(0);
-        let result = retry_concurrent_role_ddl(|| {
+        let result = retry_concurrent_catalog_ddl(|| {
             let attempt = calls.fetch_add(1, Ordering::SeqCst) + 1;
             async move {
                 if attempt < 3 {

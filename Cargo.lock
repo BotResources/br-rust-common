@@ -452,6 +452,8 @@ name = "br-test-support"
 version = "0.0.0"
 dependencies = [
  "sqlx",
+ "tokio",
+ "url",
  "uuid",
 ]
 

@@ -1,8 +1,8 @@
 use sqlx::PgPool;
 
+use crate::catalog_retry::retry_concurrent_catalog_ddl;
 use crate::error::PostgresError;
 use crate::role_password::{alter_role_verifier_sql, scram_verifier};
-use crate::role_retry::retry_concurrent_role_ddl;
 
 const MAX_ROLE_NAME_LEN: usize = 63;
 const ADVISORY_LOCK_NAMESPACE: &str = "br_util_postgres.ensure_app_role:";
@@ -34,7 +34,7 @@ pub async fn ensure_app_role(
 ) -> Result<(), PostgresError> {
     validate_role_name(role_name)?;
     let alter_sql = alter_role_verifier_sql(role_name, &scram_verifier(password)?)?;
-    retry_concurrent_role_ddl(|| ensure_app_role_once(pool, role_name, &alter_sql)).await
+    retry_concurrent_catalog_ddl(|| ensure_app_role_once(pool, role_name, &alter_sql)).await
 }
 
 async fn ensure_app_role_once(

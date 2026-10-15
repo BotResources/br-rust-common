@@ -10,4 +10,6 @@ description = "Dev-only shared e2e test helpers (Postgres role/pool/name primiti
 
 [dependencies]
 sqlx = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["time"] }
+url = { workspace = true }
 uuid = { workspace = true }

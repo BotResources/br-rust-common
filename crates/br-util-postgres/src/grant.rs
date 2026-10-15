@@ -1,10 +1,23 @@
 use sqlx::PgPool;
 
+use crate::catalog_retry::retry_concurrent_catalog_ddl;
 use crate::error::PostgresError;
 use crate::role::validate_role_name;
 
+const ADVISORY_LOCK_KEY: &str = "br_util_postgres.grant_app_access:public";
+
 pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), PostgresError> {
     validate_role_name(app_role)?;
+    retry_concurrent_catalog_ddl(|| grant_app_access_once(pool, app_role)).await
+}
+
+async fn grant_app_access_once(pool: &PgPool, app_role: &str) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(ADVISORY_LOCK_KEY)
+        .execute(&mut *tx)
+        .await?;
 
     for sql in [
         format!("GRANT USAGE ON SCHEMA public TO \"{app_role}\""),
@@ -21,12 +34,10 @@ pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), Postg
              GRANT USAGE, SELECT ON SEQUENCES TO \"{app_role}\""
         ),
     ] {
-        sqlx::query(&sql)
-            .execute(pool)
-            .await
-            .map_err(PostgresError::Db)?;
+        sqlx::query(&sql).execute(&mut *tx).await?;
     }
-    Ok(())
+
+    tx.commit().await
 }
 
 #[cfg(test)]
@@ -34,60 +45,89 @@ mod live_tests {
     use super::*;
     use crate::role::ensure_app_role;
     use br_test_support::{
-        cleanup_role, open_pool_as, require_test_db_url, setup_caller, unique_role_name,
-        unique_table_name,
+        IsolatedDatabase, cleanup_role, create_isolated_database, drop_isolated_database,
+        open_pool_as, require_test_db_url, setup_caller, unique_role_name, unique_table_name,
     };
     use sqlx::Row;
     use sqlx::postgres::PgPoolOptions;
 
-    const APP_PW: &str = "app_pw_for_e2e_only";
-
-    async fn bootstrap(url: &str) -> (sqlx::PgPool, sqlx::PgPool, String, String) {
-        let admin = PgPoolOptions::new()
-            .max_connections(2)
-            .connect(url)
-            .await
-            .expect("connect as admin");
-        let (owner_pool, owner) = setup_caller(&admin, url).await;
-        let app_role = unique_role_name();
-        ensure_app_role(&owner_pool, &app_role, APP_PW)
-            .await
-            .expect("ensure app role");
-        (admin, owner_pool, owner, app_role)
+    fn generated_password() -> String {
+        format!("pw_{}", uuid::Uuid::now_v7().simple())
     }
 
-    async fn teardown(
-        admin: sqlx::PgPool,
+    struct Fixture {
+        server: sqlx::PgPool,
+        database: IsolatedDatabase,
         owner_pool: sqlx::PgPool,
         owner: String,
         app_role: String,
-    ) {
-        owner_pool.close().await;
-        cleanup_role(&admin, &app_role).await;
-        cleanup_role(&admin, &owner).await;
+        app_password: String,
+    }
+
+    impl Fixture {
+        async fn new() -> Self {
+            let server = PgPoolOptions::new()
+                .max_connections(2)
+                .connect(&require_test_db_url())
+                .await
+                .expect("connect as admin");
+            let database = create_isolated_database(&server, &require_test_db_url()).await;
+            let database_admin = PgPoolOptions::new()
+                .max_connections(2)
+                .connect(&database.url)
+                .await
+                .expect("connect as admin to the isolated database");
+            let (owner_pool, owner) = setup_caller(&database_admin, &database.url).await;
+            database_admin.close().await;
+            let app_role = unique_role_name();
+            let app_password = generated_password();
+            ensure_app_role(&owner_pool, &app_role, &app_password)
+                .await
+                .expect("ensure app role");
+            Self {
+                server,
+                database,
+                owner_pool,
+                owner,
+                app_role,
+                app_password,
+            }
+        }
+
+        async fn app_pool(&self) -> sqlx::PgPool {
+            open_pool_as(&self.database.url, &self.app_role, &self.app_password)
+                .await
+                .expect("app login")
+        }
+
+        async fn teardown(self) {
+            self.owner_pool.close().await;
+            drop_isolated_database(&self.server, &self.database).await;
+            cleanup_role(&self.server, &self.app_role).await;
+            cleanup_role(&self.server, &self.owner).await;
+        }
     }
 
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_grants_table_dml() {
-        let url = require_test_db_url();
-        let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
+        let fixture = Fixture::new().await;
+        let owner_pool = &fixture.owner_pool;
+        let app_role = &fixture.app_role;
         let table = unique_table_name();
 
         sqlx::query(&format!("CREATE TABLE \"{table}\" (id int, val text)"))
-            .execute(&owner_pool)
+            .execute(owner_pool)
             .await
             .expect("create table");
         sqlx::query(&format!(
             "INSERT INTO \"{table}\" (id, val) VALUES (1, 'a'), (2, 'b')"
         ))
-        .execute(&owner_pool)
+        .execute(owner_pool)
         .await
         .expect("insert seed");
 
-        let app_pool_before = open_pool_as(&url, &app_role, APP_PW)
-            .await
-            .expect("app login before grant");
+        let app_pool_before = fixture.app_pool().await;
         let before = sqlx::query(&format!("SELECT id FROM \"{table}\""))
             .fetch_all(&app_pool_before)
             .await;
@@ -97,13 +137,11 @@ mod live_tests {
         );
         app_pool_before.close().await;
 
-        grant_app_access(&owner_pool, &app_role)
+        grant_app_access(owner_pool, app_role)
             .await
             .expect("grant_app_access");
 
-        let app_pool = open_pool_as(&url, &app_role, APP_PW)
-            .await
-            .expect("app login after grant");
+        let app_pool = fixture.app_pool().await;
         let rows = sqlx::query(&format!("SELECT id FROM \"{table}\" ORDER BY id"))
             .fetch_all(&app_pool)
             .await
@@ -125,32 +163,31 @@ mod live_tests {
             .expect("DELETE after grant");
 
         app_pool.close().await;
-        teardown(admin, owner_pool, owner, app_role).await;
+        fixture.teardown().await;
     }
 
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_covers_tables_created_after_grant() {
-        let url = require_test_db_url();
-        let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
+        let fixture = Fixture::new().await;
+        let owner_pool = &fixture.owner_pool;
+        let app_role = &fixture.app_role;
 
-        grant_app_access(&owner_pool, &app_role)
+        grant_app_access(owner_pool, app_role)
             .await
             .expect("grant_app_access");
 
         let late_table = unique_table_name();
         sqlx::query(&format!("CREATE TABLE \"{late_table}\" (id int)"))
-            .execute(&owner_pool)
+            .execute(owner_pool)
             .await
             .expect("create late table");
         sqlx::query(&format!("INSERT INTO \"{late_table}\" (id) VALUES (42)"))
-            .execute(&owner_pool)
+            .execute(owner_pool)
             .await
             .expect("insert into late table");
 
-        let app_pool = open_pool_as(&url, &app_role, APP_PW)
-            .await
-            .expect("app login");
+        let app_pool = fixture.app_pool().await;
         let row = sqlx::query(&format!("SELECT id FROM \"{late_table}\""))
             .fetch_one(&app_pool)
             .await
@@ -159,30 +196,29 @@ mod live_tests {
         assert_eq!(id, 42);
 
         app_pool.close().await;
-        teardown(admin, owner_pool, owner, app_role).await;
+        fixture.teardown().await;
     }
 
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_grants_sequence_usage() {
-        let url = require_test_db_url();
-        let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
+        let fixture = Fixture::new().await;
+        let owner_pool = &fixture.owner_pool;
+        let app_role = &fixture.app_role;
         let table = unique_table_name();
 
         sqlx::query(&format!(
             "CREATE TABLE \"{table}\" (id SERIAL PRIMARY KEY, val text)"
         ))
-        .execute(&owner_pool)
+        .execute(owner_pool)
         .await
         .expect("create serial table");
 
-        grant_app_access(&owner_pool, &app_role)
+        grant_app_access(owner_pool, app_role)
             .await
             .expect("grant_app_access");
 
-        let app_pool = open_pool_as(&url, &app_role, APP_PW)
-            .await
-            .expect("app login");
+        let app_pool = fixture.app_pool().await;
         let row = sqlx::query(&format!(
             "INSERT INTO \"{table}\" (val) VALUES ('a') RETURNING id"
         ))
@@ -193,22 +229,23 @@ mod live_tests {
         assert!(id >= 1);
 
         app_pool.close().await;
-        teardown(admin, owner_pool, owner, app_role).await;
+        fixture.teardown().await;
     }
 
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_is_idempotent() {
-        let url = require_test_db_url();
-        let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
+        let fixture = Fixture::new().await;
+        let owner_pool = &fixture.owner_pool;
+        let app_role = &fixture.app_role;
 
-        grant_app_access(&owner_pool, &app_role)
+        grant_app_access(owner_pool, app_role)
             .await
             .expect("first grant");
-        grant_app_access(&owner_pool, &app_role)
+        grant_app_access(owner_pool, app_role)
             .await
             .expect("second grant must be a no-op");
 
-        teardown(admin, owner_pool, owner, app_role).await;
+        fixture.teardown().await;
     }
 }
