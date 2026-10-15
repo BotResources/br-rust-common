@@ -53,7 +53,7 @@ br-util-axum-readiness = { path = "crates/br-util-axum-readiness", version = "0.
 br-util-boot = { path = "crates/br-util-boot", version = "0.1.0" }
 br-util-graphql = { path = "crates/br-util-graphql", version = "0.1.0" }
 br-util-observability = { path = "crates/br-util-observability", version = "0.1.0" }
-br-util-postgres = { path = "crates/br-util-postgres", version = "0.1.0" }
+br-util-postgres = { path = "crates/br-util-postgres", version = "0.1.1" }
 
 async-nats = "0.48"
 async-trait = "0.1"

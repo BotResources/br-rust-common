@@ -3,6 +3,8 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
 use uuid::Uuid;
 
+const PUBLIC_SCHEMA_ACL_LOCK: i64 = 0x6272_5f74_6573_7431;
+
 pub fn test_db_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL").ok()
 }
@@ -61,10 +63,17 @@ pub async fn setup_caller(admin: &PgPool, admin_url: &str) -> (PgPool, String) {
         .await
         .expect("create caller role");
 
+    let mut tx = admin.begin().await.expect("begin grant transaction");
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(PUBLIC_SCHEMA_ACL_LOCK)
+        .execute(&mut *tx)
+        .await
+        .expect("lock the public schema ACL");
     sqlx::query(&format!("GRANT CREATE ON SCHEMA public TO \"{caller}\""))
-        .execute(admin)
+        .execute(&mut *tx)
         .await
         .expect("grant CREATE on public to caller");
+    tx.commit().await.expect("commit grant transaction");
 
     let opts = PgConnectOptions::from_str(admin_url)
         .expect("TEST_DATABASE_URL must parse as a Postgres URL")

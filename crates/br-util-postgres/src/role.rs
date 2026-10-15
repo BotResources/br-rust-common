@@ -2,8 +2,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::PostgresError;
+use crate::role_retry::retry_concurrent_role_ddl;
 
 const MAX_ROLE_NAME_LEN: usize = 63;
+const ADVISORY_LOCK_NAMESPACE: &str = "br_util_postgres.ensure_app_role:";
 
 pub(crate) fn validate_role_name(name: &str) -> Result<(), PostgresError> {
     if is_valid_role_name(name) {
@@ -31,6 +33,20 @@ pub async fn ensure_app_role(
     password: &str,
 ) -> Result<(), PostgresError> {
     validate_role_name(role_name)?;
+    retry_concurrent_role_ddl(|| ensure_app_role_once(pool, role_name, password)).await
+}
+
+async fn ensure_app_role_once(
+    pool: &PgPool,
+    role_name: &str,
+    password: &str,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("{ADVISORY_LOCK_NAMESPACE}{role_name}"))
+        .execute(&mut *tx)
+        .await?;
 
     let create_sql = format!(
         "DO $$ BEGIN \
@@ -39,18 +55,15 @@ pub async fn ensure_app_role(
            END IF; \
          END $$"
     );
-    sqlx::query(&create_sql)
-        .execute(pool)
-        .await
-        .map_err(PostgresError::Db)?;
+    sqlx::query(&create_sql).execute(&mut *tx).await?;
 
     let tag = fresh_dollar_quote_tag();
     let alter_sql = build_alter_password_sql(role_name, password, &tag);
-    let result = sqlx::query(&alter_sql).execute(pool).await;
+    let result = sqlx::query(&alter_sql).execute(&mut *tx).await;
     drop(scrub(alter_sql));
-    result.map_err(PostgresError::Db)?;
+    result?;
 
-    Ok(())
+    tx.commit().await
 }
 
 pub(crate) fn build_alter_password_sql(role_name: &str, password: &str, tag: &str) -> String {

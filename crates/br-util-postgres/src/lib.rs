@@ -9,6 +9,7 @@ mod migrations;
 mod net;
 mod pool;
 mod role;
+mod role_retry;
 mod tls;
 
 pub use error::PostgresError;

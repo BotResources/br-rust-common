@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "br-test-support",
  "br-util-boot",
