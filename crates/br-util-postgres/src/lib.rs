@@ -1,4 +1,3 @@
-mod catalog_retry;
 mod dsn;
 pub mod env;
 mod error;
@@ -10,6 +9,7 @@ mod migrations;
 mod net;
 mod pool;
 mod role;
+mod role_retry;
 mod tls;
 
 pub use error::PostgresError;

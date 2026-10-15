@@ -1,8 +1,8 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::catalog_retry::retry_concurrent_catalog_ddl;
 use crate::error::PostgresError;
+use crate::role_retry::retry_concurrent_role_ddl;
 
 const MAX_ROLE_NAME_LEN: usize = 63;
 const ADVISORY_LOCK_NAMESPACE: &str = "br_util_postgres.ensure_app_role:";
@@ -33,7 +33,7 @@ pub async fn ensure_app_role(
     password: &str,
 ) -> Result<(), PostgresError> {
     validate_role_name(role_name)?;
-    retry_concurrent_catalog_ddl(|| ensure_app_role_once(pool, role_name, password)).await
+    retry_concurrent_role_ddl(|| ensure_app_role_once(pool, role_name, password)).await
 }
 
 async fn ensure_app_role_once(
