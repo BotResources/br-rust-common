@@ -6,10 +6,15 @@ use br_util_postgres::ensure_app_role;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tokio::sync::Barrier;
+use uuid::Uuid;
 
 const CALLER_PW: &str = "caller_pw_for_e2e_only";
 const PARALLEL_CALLS: usize = 16;
 const ROUNDS: usize = 5;
+
+fn generated_password() -> String {
+    format!("pw_{}", Uuid::now_v7().simple())
+}
 
 async fn wide_caller_pool(url: &str, caller: &str, max_connections: u32) -> PgPool {
     let options = PgConnectOptions::from_str(url)
@@ -84,10 +89,11 @@ async fn parallel_first_calls_for_the_same_role_all_succeed() {
 
     for round in 0..ROUNDS {
         let role = unique_role_name();
+        let password = generated_password();
         let results = parallel_first_calls(
             std::slice::from_ref(&pool),
             &role,
-            "race_pw_for_e2e_only",
+            &password,
             PARALLEL_CALLS,
         )
         .await;
@@ -137,8 +143,8 @@ async fn parallel_first_calls_from_two_databases_of_one_cluster_all_succeed() {
 
     for round in 0..ROUNDS {
         let role = unique_role_name();
-        let results =
-            parallel_first_calls(&pools, &role, "race_pw_for_e2e_only", PARALLEL_CALLS).await;
+        let password = generated_password();
+        let results = parallel_first_calls(&pools, &role, &password, PARALLEL_CALLS).await;
         let failures: Vec<_> = results.iter().filter_map(|r| r.as_ref().err()).collect();
         assert!(
             failures.is_empty(),
