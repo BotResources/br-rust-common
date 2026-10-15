@@ -40,7 +40,7 @@ publish` refuses it outright.
 | `unique_suffix() -> String` | A 24-char collision-free suffix (truncated UUIDv7 simple form) for building per-test object names. |
 | `unique_role_name() -> String` | `br_test_{suffix}` — a fresh role name for one test. |
 | `unique_table_name() -> String` | `br_test_tbl_{suffix}` — a fresh table name for one test. |
-| `generated_password() -> String` | `pw_{uuid v7}` — a fresh password generated at run time. No test password is a literal. |
+| `generated_password() -> String` | `pw_{uuid v7}` — a fresh password generated at run time. The `br-util-postgres` tests use no password literal. |
 | `with_test_world(body) -> T` | Connects an admin pool from `TEST_DATABASE_URL`, runs `body(TestWorld)`, then always drops every registered isolated database and role, even when the body panics (the panic is re-raised after the teardown). |
 | `TestWorld` | Handle given to the body. `admin()` and `url()` expose the admin pool and URL; `unique_role()`, `caller()`, `isolated_database()` and `caller_in(&db)` create objects that are registered for the teardown as they are created. Databases are dropped first, then roles, newest first. |
 | `Caller { pool, role, password }` | A `LOGIN CREATEROLE NOSUPERUSER` role with its generated password and a pool (2 connections) already authenticated as it. |
@@ -60,7 +60,7 @@ Pools cap at `max_connections(2)` unless `wide_caller_pool` is given a size — 
 |---|---|
 | Dev-dependency only | Test scaffolding must not enter any crate's dependency closure or public API; dev-deps are not transitive, so consumers stay unaffected. |
 | `cleanup_role` swallows errors | It is post-assertion teardown of an already-ephemeral role; failing it would mask the real test outcome, and `DROP … IF EXISTS` is idempotent. |
-| Passwords are inline literals | These roles live only for the duration of one e2e test against a disposable database; they are never real credentials. |
+| Passwords are generated at run time | These roles live only for the duration of one e2e test against a disposable database; they are never real credentials. |
 | Both an `Option` and a `require_*` reader per variable | A suite whose environment is genuinely optional self-skips on the `Option`; a suite that would otherwise pass while testing nothing takes the panicking reader, and the panic names the one variable that is missing rather than every variable the test might have wanted. |
 | `expect(...)` on setup, `Result` on `open_pool_as` | Setup failures are environment faults that should abort the test loudly; `open_pool_as` is also used to *assert* that a connection is refused, so it must return the error rather than panic. |
 
