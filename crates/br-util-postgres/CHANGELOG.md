@@ -14,6 +14,7 @@ form to decide whether a version ships.
 ### Fixed
 
 - **`ensure_app_role` no longer fails when several callers create the same role at once.** The check-then-create `DO` block had no lock and no retry, so parallel first calls raced on `CREATE ROLE` (`42710 duplicate_object` or a `pg_authid_rolname_index` unique violation) and on `ALTER ROLE ... PASSWORD` (`XX000 tuple concurrently updated`). The create and the password change now run in one transaction under a per-role `pg_advisory_xact_lock`, which serialises callers of one database. Callers on different databases of one cluster, which an advisory lock cannot order, retry up to 6 attempts with a short backoff on exactly these three SQLSTATEs; any other error, and the last failed attempt, is returned as `PostgresError::Db`. The public signature is unchanged. The crate now depends on `tokio` for the backoff sleep.
+- **`grant_app_access` no longer fails when several callers grant at once.** Its five `GRANT` / `ALTER DEFAULT PRIVILEGES` statements ran autocommit with no lock and no retry, so replicas starting together on a fresh database failed with `XX000 tuple concurrently updated` or a `pg_default_acl_role_nsp_obj_index` unique violation, including when two different app roles were granted at once. The five statements now run in one transaction under one database-wide `pg_advisory_xact_lock`, with the same bounded retry as `ensure_app_role` for callers the lock cannot order. The public signature is unchanged.
 
 ## 0.1.0
 

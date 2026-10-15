@@ -1,10 +1,23 @@
 use sqlx::PgPool;
 
+use crate::catalog_retry::retry_concurrent_catalog_ddl;
 use crate::error::PostgresError;
 use crate::role::validate_role_name;
 
+const ADVISORY_LOCK_KEY: &str = "br_util_postgres.grant_app_access:public";
+
 pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), PostgresError> {
     validate_role_name(app_role)?;
+    retry_concurrent_catalog_ddl(|| grant_app_access_once(pool, app_role)).await
+}
+
+async fn grant_app_access_once(pool: &PgPool, app_role: &str) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(ADVISORY_LOCK_KEY)
+        .execute(&mut *tx)
+        .await?;
 
     for sql in [
         format!("GRANT USAGE ON SCHEMA public TO \"{app_role}\""),
@@ -21,12 +34,10 @@ pub async fn grant_app_access(pool: &PgPool, app_role: &str) -> Result<(), Postg
              GRANT USAGE, SELECT ON SEQUENCES TO \"{app_role}\""
         ),
     ] {
-        sqlx::query(&sql)
-            .execute(pool)
-            .await
-            .map_err(PostgresError::Db)?;
+        sqlx::query(&sql).execute(&mut *tx).await?;
     }
-    Ok(())
+
+    tx.commit().await
 }
 
 #[cfg(test)]
@@ -41,6 +52,8 @@ mod live_tests {
     use sqlx::postgres::PgPoolOptions;
 
     const APP_PW: &str = "app_pw_for_e2e_only";
+
+    static PUBLIC_SCHEMA: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn bootstrap(url: &str) -> (sqlx::PgPool, sqlx::PgPool, String, String) {
         let admin = PgPoolOptions::new()
@@ -70,6 +83,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_grants_table_dml() {
+        let _public_schema = PUBLIC_SCHEMA.lock().await;
         let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
         let table = unique_table_name();
@@ -131,6 +145,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_covers_tables_created_after_grant() {
+        let _public_schema = PUBLIC_SCHEMA.lock().await;
         let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
 
@@ -165,6 +180,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_grants_sequence_usage() {
+        let _public_schema = PUBLIC_SCHEMA.lock().await;
         let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
         let table = unique_table_name();
@@ -199,6 +215,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser"]
     async fn grant_app_access_is_idempotent() {
+        let _public_schema = PUBLIC_SCHEMA.lock().await;
         let url = require_test_db_url();
         let (admin, owner_pool, owner, app_role) = bootstrap(&url).await;
 
