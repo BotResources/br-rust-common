@@ -12,11 +12,13 @@ migrate = ["sqlx/migrate"]
 
 [dependencies]
 br-util-boot = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-boot", tag = "br-util-boot/v0.1.0", version = "0.1.0" }
+postgres-protocol = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["time"] }
 url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
 br-test-support = { workspace = true }
+tokio = { workspace = true }
