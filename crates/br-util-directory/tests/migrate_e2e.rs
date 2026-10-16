@@ -128,10 +128,12 @@ async fn concurrent_migrations_converge_without_error() {
     let pool = bare_pool(&br_test_support::require_test_db_url()).await;
     importer().run(&pool).await.expect("importer migrations");
 
-    let runs = (0..4).map(|_| {
-        let pool = pool.clone();
-        tokio::spawn(async move { br_util_directory::migrate(&pool).await })
-    });
+    let runs: Vec<_> = (0..4)
+        .map(|_| {
+            let pool = pool.clone();
+            tokio::spawn(async move { br_util_directory::migrate(&pool).await })
+        })
+        .collect();
     for run in runs {
         run.await.expect("join").expect("concurrent migrate");
     }
