@@ -89,8 +89,8 @@ equals the host extracted from the URL, exactly:
 
 | Item | Role |
 |---|---|
-| `ensure_app_role(pool, role_name, password)` | Idempotent `CREATE ROLE … LOGIN` (guarded by an `IF NOT EXISTS` `DO` block) + `ALTER ROLE … PASSWORD`. Call at startup via the **owner** pool, before `sqlx::migrate`. Validates `role_name` against `^[a-z][a-z0-9_]*$` (≤63 bytes). The role inherits Postgres's no-privilege defaults from `CREATE ROLE … LOGIN` (NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT) — there is **no** explicit hardening `ALTER`, because on PG 16+ asserting those flags requires SUPERUSER. The password is embedded as a **dollar-quoted literal** with a per-call random UUIDv7 tag, not a bind parameter — Postgres rejects bind params in DDL (`ALTER ROLE … PASSWORD $1` is a syntax error), so dollar-quoting is used instead. The generated SQL is never logged. |
-| `grant_app_access(pool, app_role)` | Post-migration GRANTs on schema `public` (USAGE, full CRUD on tables, USAGE+SELECT on sequences) **plus** `ALTER DEFAULT PRIVILEGES` so tables created by future migrations are GRANTed automatically. Must run via the same role that owns subsequent migrations. |
+| `ensure_app_role(pool, role_name, password)` | Idempotent `CREATE ROLE … LOGIN` (guarded by an `IF NOT EXISTS` `DO` block) + `ALTER ROLE … PASSWORD`, in one transaction under a per-role advisory lock; safe to call from parallel replicas, with a bounded retry for concurrent callers on other databases of the cluster. Call at startup via the **owner** pool, before `sqlx::migrate`. Validates `role_name` against `^[a-z][a-z0-9_]*$` (≤63 bytes). The role inherits Postgres's no-privilege defaults from `CREATE ROLE … LOGIN` (NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT) — there is **no** explicit hardening `ALTER`, because on PG 16+ asserting those flags requires SUPERUSER. The clear password never reaches Postgres: the crate computes a SCRAM-SHA-256 verifier (random 16-byte salt, 4096 iterations, the Postgres default) with `postgres-protocol` and sends only `ALTER ROLE … PASSWORD 'SCRAM-SHA-256$4096:<salt>$<StoredKey>:<ServerKey>'`, which Postgres stores as is. Server logs, `pg_stat_statements` and `pg_authid.rolpassword` hold the verifier only. The verifier is checked against the alphabet `[A-Za-z0-9+/=$:-]` before it is put in the single-quoted literal; any other character is a `PostgresError::Config`. An empty password is refused with `PostgresError::Config` before any statement is sent. The salt is new on every call, so calling again with the same password rewrites an equivalent verifier. The stored secret is always SCRAM-SHA-256, whatever `password_encryption` says. Clients without SCRAM support cannot log in as this role. A password containing a NUL byte is refused with `PostgresError::Config`. The `ALTER ROLE` runs as a non-persistent statement, so sqlx does not keep the verifier in its statement cache. The iteration count is fixed at 4096, and a server-side password policy hook such as `passwordcheck` cannot see the plain password. |
+| `grant_app_access(pool, app_role)` | Post-migration GRANTs on schema `public` (USAGE, full CRUD on tables, USAGE+SELECT on sequences) **plus** `ALTER DEFAULT PRIVILEGES` so tables created by future migrations are GRANTed automatically. The five statements run in one transaction under one database-wide advisory lock, with the same bounded retry as `ensure_app_role` (6 attempts, short backoff, on `42710` / `23505` / `XX000`); safe to call from parallel replicas, for one role or for several. Must run via the same role that owns subsequent migrations. |
 
 ### Migration status (opt-in feature `migrate`)
 
@@ -224,9 +224,9 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.1", version = "0.1.1" }
 # with the migration-status helper:
-# br-util-postgres = { git = "...", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0", features = ["migrate"] }
+# br-util-postgres = { git = "...", package = "br-util-postgres", tag = "br-util-postgres/v0.1.1", version = "0.1.1", features = ["migrate"] }
 ```
 
 ## sqlx is part of the public contract

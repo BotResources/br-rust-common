@@ -33,7 +33,7 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-core-directory` | core | Frozen read contract for the identity Published Language: `PublishedUser` / `PublishedGroup` directory entries, the `identity/_meta` manifest and the KV key conventions | `0.1.0` | [CHANGELOG](crates/br-core-directory/CHANGELOG.md) |
 | `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | `0.1.0` | [CHANGELOG](crates/br-scope-declaration-contract/CHANGELOG.md) |
 | `br-util-boot` | util | The boot environment of a service: the names it reads at boot (`ENVIRONMENT`, `PORT`, `HOST`, `DATABASE_URL`, `NATS_URL`) and `BootEnv`, one typed, validating reader that reports every problem at once and never logs a credential | `0.1.0` | [CHANGELOG](crates/br-util-boot/CHANGELOG.md) |
-| `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs; owns the names `DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` | `0.1.0` | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
+| `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs; owns the names `DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` | `0.1.1` | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | `0.1.0` | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
 | `br-util-axum-readiness` | util | Readiness gate for HTTP services, served on `READINESS_PATH` (`/readyz`) | `0.1.0` | [CHANGELOG](crates/br-util-axum-readiness/CHANGELOG.md) |
 | `br-util-broadcast` | util | In-process event bus (tokio broadcast) for post-commit fan-out of domain events to same-process GraphQL subscriptions; the API shape forbids publishing before the tx commits | `0.1.0` | [CHANGELOG](crates/br-util-broadcast/CHANGELOG.md) |
@@ -184,7 +184,7 @@ br-util-observability = { git = "https://github.com/BotResources/br-rust-common"
 br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "br-core-events/v0.1.0", version = "0.1.0" }
 br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "br-core-auth/v0.1.0", version = "0.1.0" }
 br-identity-domain = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-domain", tag = "br-identity-domain/v0.1.0", version = "0.1.0" }
-br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.0", version = "0.1.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "br-util-postgres/v0.1.1", version = "0.1.1" }
 br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "br-util-graphql/v0.1.0", version = "0.1.0", features = ["graphql"] }
 br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration/v0.1.0", version = "0.1.0" }
 br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth/v0.1.0", version = "0.1.0" }

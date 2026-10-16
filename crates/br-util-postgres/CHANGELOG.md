@@ -9,6 +9,24 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.1.1
+
+### Changed
+
+- **`ensure_app_role` refuses an empty password.** It returns `PostgresError::Config` before any statement is sent; it used to clear the role password silently. A password containing a NUL byte is refused the same way.
+- **The stored secret is always SCRAM-SHA-256**, whatever `password_encryption` says, because the crate sends a verifier and Postgres stores it as is. Clients without SCRAM support cannot log in as this role.
+- **The verifier uses a fixed iteration count of 4096.** The `ALTER ROLE` runs as a non-persistent statement, so sqlx does not keep the verifier in its statement cache.
+- **A server-side password policy hook such as `passwordcheck` cannot see the plain password**, because Postgres only receives the verifier.
+
+### Fixed
+
+- **`ensure_app_role` no longer fails when several callers create the same role at once.** The check-then-create `DO` block had no lock and no retry, so parallel first calls raced on `CREATE ROLE` (`42710 duplicate_object` or a `pg_authid_rolname_index` unique violation) and on `ALTER ROLE ... PASSWORD` (`XX000 tuple concurrently updated`). The create and the password change now run in one transaction under a per-role `pg_advisory_xact_lock`, which serialises callers of one database. Callers on different databases of one cluster, which an advisory lock cannot order, retry up to 6 attempts with a short backoff on exactly these three SQLSTATEs; any other error, and the last failed attempt, is returned as `PostgresError::Db`. The public signature is unchanged. `tokio` is a new direct dependency, `time` feature only.
+- **`grant_app_access` no longer fails when several callers grant at once.** Its five `GRANT` / `ALTER DEFAULT PRIVILEGES` statements ran autocommit with no lock and no retry, so replicas starting together on a fresh database failed with `XX000 tuple concurrently updated` or a `pg_default_acl_role_nsp_obj_index` unique violation, including when two different app roles were granted at once. The five statements now run in one transaction under one database-wide `pg_advisory_xact_lock` (its own key namespace, distinct from the `ensure_app_role` one), with the same bounded retry as `ensure_app_role` for callers the lock cannot order; the retry helper is shared by both functions. The public signature and the error type are unchanged.
+
+### Security
+
+- **`ensure_app_role` no longer sends the clear password to Postgres.** It used to build ``ALTER ROLE "r" PASSWORD $tag$clear$tag$``, so the clear password sat in the statement text (server logs, `pg_stat_statements`, the wire). It now computes a SCRAM-SHA-256 verifier in the process (`postgres-protocol`, random 16-byte salt, 4096 iterations) and sends only ``ALTER ROLE "r" PASSWORD 'SCRAM-SHA-256$4096:...'``; `pg_authid.rolpassword` holds the verifier. The verifier is checked against the alphabet `[A-Za-z0-9+/=$:-]` before it is quoted, and a failed check is `PostgresError::Config`. The dollar-quote machinery and the buffer scrub are removed. The new dependency is `postgres-protocol` `0.6.12` or later, the first release outside RUSTSEC-2026-0179 and RUSTSEC-2026-0180; it adds `fallible-iterator` and the RustCrypto 0.11 line (`hmac`, `sha2`, `md-5`, `digest` and their small helper crates) next to the 0.10 line `sqlx` already uses.
+
 ## 0.1.0
 
 ### Changed

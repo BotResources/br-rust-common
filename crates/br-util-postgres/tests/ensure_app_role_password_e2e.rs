@@ -1,0 +1,287 @@
+use std::fmt::Debug;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+
+use br_test_support::{generated_password, with_test_world};
+use br_util_postgres::{PostgresError, ensure_app_role};
+use sqlx::postgres::{PgConnectOptions, PgConnection};
+use sqlx::{Connection, PgPool};
+use tracing::field::{Field, Visit};
+use tracing::{Event, Subscriber};
+use tracing_subscriber::layer::{Context, SubscriberExt};
+use tracing_subscriber::{Layer, Registry};
+use uuid::Uuid;
+
+#[derive(Default)]
+struct StatementCapture {
+    statements: Arc<Mutex<Vec<String>>>,
+}
+
+struct StatementVisitor<'a> {
+    statements: &'a Mutex<Vec<String>>,
+}
+
+impl StatementVisitor<'_> {
+    fn push(&mut self, field: &Field, text: String) {
+        if field.name() == "db.statement" {
+            self.statements.lock().expect("capture lock").push(text);
+        }
+    }
+}
+
+impl Visit for StatementVisitor<'_> {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.push(field, value.to_string());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
+        self.push(field, format!("{value:?}"));
+    }
+}
+
+impl<S: Subscriber> Layer<S> for StatementCapture {
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        event.record(&mut StatementVisitor {
+            statements: &self.statements,
+        });
+    }
+}
+
+async fn try_login(
+    admin_url: &str,
+    role: &str,
+    password: &str,
+) -> Result<PgConnection, sqlx::Error> {
+    let options = PgConnectOptions::from_str(admin_url)
+        .expect("TEST_DATABASE_URL must parse as a Postgres URL")
+        .username(role)
+        .password(password);
+    PgConnection::connect_with(&options).await
+}
+
+async fn assert_login_accepted(url: &str, role: &str, password: &str) {
+    try_login(url, role, password)
+        .await
+        .expect("login must be accepted")
+        .close()
+        .await
+        .ok();
+}
+
+async fn assert_login_refused(url: &str, role: &str, password: &str) {
+    assert!(
+        try_login(url, role, password).await.is_err(),
+        "login must be refused"
+    );
+}
+
+async fn stored_password(admin: &PgPool, role: &str) -> String {
+    sqlx::query_scalar("SELECT rolpassword FROM pg_authid WHERE rolname = $1")
+        .bind(role)
+        .fetch_one(admin)
+        .await
+        .expect("read pg_authid")
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn role_logs_in_with_its_password_and_refuses_a_wrong_one() {
+    with_test_world(|world| async move {
+        let url = world.url();
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+        let password = generated_password();
+
+        ensure_app_role(&caller_pool, &role, &password)
+            .await
+            .expect("ensure_app_role");
+
+        assert_login_accepted(url, &role, &password).await;
+        assert_login_refused(url, &role, &generated_password()).await;
+
+        caller_pool.close().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn stored_password_is_a_scram_verifier_without_the_clear_password() {
+    with_test_world(|world| async move {
+        let admin = world.admin();
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+        let password = generated_password();
+
+        ensure_app_role(&caller_pool, &role, &password)
+            .await
+            .expect("ensure_app_role");
+
+        let stored = stored_password(admin, &role).await;
+        assert!(stored.starts_with("SCRAM-SHA-256$4096:"));
+        assert!(!stored.contains(&password));
+
+        caller_pool.close().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn calling_again_with_a_new_password_rotates_it() {
+    with_test_world(|world| async move {
+        let url = world.url();
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+        let old_password = generated_password();
+        let new_password = generated_password();
+
+        ensure_app_role(&caller_pool, &role, &old_password)
+            .await
+            .expect("set old");
+        assert_login_accepted(url, &role, &old_password).await;
+
+        ensure_app_role(&caller_pool, &role, &new_password)
+            .await
+            .expect("rotate");
+        assert_login_accepted(url, &role, &new_password).await;
+        assert_login_refused(url, &role, &old_password).await;
+
+        caller_pool.close().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn calling_again_with_the_same_password_keeps_it_working() {
+    with_test_world(|world| async move {
+        let url = world.url();
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+        let password = generated_password();
+
+        ensure_app_role(&caller_pool, &role, &password)
+            .await
+            .expect("first call");
+        ensure_app_role(&caller_pool, &role, &password)
+            .await
+            .expect("second call");
+
+        assert_login_accepted(url, &role, &password).await;
+        assert_login_refused(url, &role, &generated_password()).await;
+
+        caller_pool.close().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn password_with_quotes_and_dollars_logs_in() {
+    with_test_world(|world| async move {
+        let url = world.url();
+        let admin = world.admin();
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+        let password = format!("weird $ pw $$ with $foo$ and 'quotes' {}", Uuid::now_v7());
+
+        ensure_app_role(&caller_pool, &role, &password)
+            .await
+            .expect("special-char password must be set");
+
+        assert_login_accepted(url, &role, &password).await;
+        assert!(!stored_password(admin, &role).await.contains(&password));
+
+        caller_pool.close().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn empty_password_is_refused_before_any_statement_is_sent() {
+    with_test_world(|world| async move {
+        let admin = world.admin();
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+
+        let empty = String::new();
+
+        let result = ensure_app_role(&caller_pool, &role, &empty).await;
+
+        assert!(matches!(result, Err(PostgresError::Config(_))));
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)")
+                .bind(&role)
+                .fetch_one(admin)
+                .await
+                .expect("role lookup");
+        assert!(!exists);
+
+        caller_pool.close().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn no_statement_sent_by_ensure_app_role_contains_the_clear_password() {
+    with_test_world(|world| async move {
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+        let password = generated_password();
+        let capture = StatementCapture::default();
+        let statements = Arc::clone(&capture.statements);
+
+        let result = {
+            let _guard = tracing::subscriber::set_default(Registry::default().with(capture));
+            ensure_app_role(&caller_pool, &role, &password).await
+        };
+        result.expect("ensure_app_role");
+
+        let captured = statements.lock().expect("capture lock").clone();
+        assert!(
+            captured.iter().any(|sql| sql.contains("ALTER ROLE")),
+            "no ALTER ROLE statement was captured, the capture is blind"
+        );
+        assert!(
+            captured.iter().all(|sql| !sql.contains(&password)),
+            "a captured statement contains the clear password"
+        );
+        assert!(
+            captured
+                .iter()
+                .any(|sql| sql.contains("PASSWORD 'SCRAM-SHA-256$4096:")),
+            "the ALTER ROLE statement does not carry a SCRAM verifier"
+        );
+
+        caller_pool.close().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing at a PG 16+ superuser with password authentication (not trust)"]
+async fn password_with_a_nul_byte_is_refused_before_any_statement_is_sent() {
+    with_test_world(|world| async move {
+        let admin = world.admin();
+        let caller_pool = world.caller().await.pool;
+        let role = world.unique_role();
+        let password = format!("{}\0{}", generated_password(), generated_password());
+
+        let result = ensure_app_role(&caller_pool, &role, &password).await;
+
+        assert!(matches!(result, Err(PostgresError::Config(_))));
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)")
+                .bind(&role)
+                .fetch_one(admin)
+                .await
+                .expect("role lookup");
+        assert!(!exists);
+
+        caller_pool.close().await;
+    })
+    .await;
+}
