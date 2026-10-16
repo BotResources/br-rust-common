@@ -9,6 +9,17 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.1.1
+
+### Fixed
+
+- **`migrate` no longer fails on a database whose `_sqlx_migrations` ledger holds another migration set.** It ran `sqlx::migrate!` against the importer's own ledger, so an importer with its own migrations got `VersionMissing` (the ledger held versions this crate does not know) or `VersionMismatch` (the same version number, another checksum), whichever side migrated first, and the importer's own migrator failed on the crate's version `1` in the same way. `migrate` now keeps its own ledger table `_br_directory_migrations` and never reads or writes the importer's, under one transaction-scoped advisory lock so concurrent callers converge. A recorded migration whose checksum drifted still fails, with `DirectoryError::Migrate(VersionMismatch)`. The public signature and the error type are unchanged.
+- **A database migrated by `0.1.0` is adopted without re-running the SQL.** When `_sqlx_migrations` holds this crate's migration with the same checksum, `migrate` records it in the new ledger and leaves the old row in place. An importer whose own migrator still lists that row can drop it, or keep ignoring missing versions.
+
+### Changed
+
+- Dependency pin: `br-util-postgres` moves from `br-util-postgres/v0.1.0` to `br-util-postgres/v0.1.1`. `br-util-postgres` types are not part of this crate's API.
+
 ## 0.1.0
 
 ### Changed

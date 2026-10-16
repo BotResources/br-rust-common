@@ -80,7 +80,7 @@ pub async fn fabric(url: &str) -> Fabric {
     Fabric::new(jetstream)
 }
 
-pub async fn isolated_pool(database_url: &str) -> PgPool {
+pub async fn bare_pool(database_url: &str) -> PgPool {
     let schema = format!("wp4_{}", br_test_support::unique_suffix());
     let admin = PgPoolOptions::new()
         .max_connections(1)
@@ -96,12 +96,15 @@ pub async fn isolated_pool(database_url: &str) -> PgPool {
     let options = PgConnectOptions::from_str(database_url)
         .expect("TEST_DATABASE_URL must parse as a Postgres URL")
         .options([("search_path", schema.as_str())]);
-    let pool = PgPoolOptions::new()
+    PgPoolOptions::new()
         .max_connections(4)
         .connect_with(options)
         .await
-        .expect("connect to the test schema");
+        .expect("connect to the test schema")
+}
 
+pub async fn isolated_pool(database_url: &str) -> PgPool {
+    let pool = bare_pool(database_url).await;
     br_util_directory::migrate(&pool)
         .await
         .expect("run the known_* migrations");
