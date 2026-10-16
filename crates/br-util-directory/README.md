@@ -76,7 +76,17 @@ trait DirectorySource {
   `known_*` projection, built through `br_util_postgres::init_pool`.
 - **`migrate(pool)`** — creates `known_users` (incl. a `jsonb extensions`
   column), `known_groups`, the junction `known_user_group`, and
-  `known_service_accounts` (`migrations/0001_known_directory.sql`).
+  `known_service_accounts` (`migrations/0001_known_directory.sql`). It keeps
+  its own ledger table `_br_directory_migrations`; it never writes the
+  importer's `_sqlx_migrations` and reads it only to adopt a row written by
+  `0.1.0`, so it runs beside any migration set of the importer, in
+  either order, and runs again without effect. Concurrent callers are
+  serialised by one transaction-scoped advisory lock. A recorded migration
+  whose checksum differs from the embedded one fails with
+  `DirectoryError::Migrate(VersionMismatch)`. A database the `0.1.0` release
+  migrated through `_sqlx_migrations` is adopted: the matching row there is
+  recorded in the new ledger without re-running the SQL, and the old row is
+  left untouched.
 - **`DirectoryProjector::new(fabric, pool)`** (or `with_config(fabric, pool,
   config)`) — the KV→PG projector over fabric consumers:
   - `reconcile()` — boot-time: read `identity/_meta`; if **absent**, fail closed
@@ -357,13 +367,13 @@ orphan, the users-only scope, the absent-manifest fail-closed — is the
 
 ## Install
 
-`br-util-directory/v0.1.0` pins `br-core-directory/v0.1.0`, `br-util-nats-fabric/v0.1.0` and, behind `consumer`, `br-util-postgres/v0.1.0`. It names `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` (`br-core-directory`) and `Fabric`, `FabricError`, `KvKeyError`, `ProjectionError` and `WatchHealthReceiver` (`br-util-nats-fabric`). Take `br-core-directory` and `br-util-nats-fabric` (with `br-core-integration`, `br-core-events` and `br-core-kernel`, which the fabric carries) at their `0.1.0` tags in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a value across fails to compile (E0308).
+`br-util-directory/v0.1.1` pins `br-core-directory/v0.1.0`, `br-util-nats-fabric/v0.1.0` and, behind `consumer`, `br-util-postgres/v0.1.1`. It names `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` (`br-core-directory`) and `Fabric`, `FabricError`, `KvKeyError`, `ProjectionError` and `WatchHealthReceiver` (`br-util-nats-fabric`). Take `br-core-directory` and `br-util-nats-fabric` (with `br-core-integration`, `br-core-events` and `br-core-kernel`, which the fabric carries) at their `0.1.0` tags in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a value across fails to compile (E0308).
 
 ```toml
 [dependencies]
-br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "br-util-directory/v0.1.0", version = "0.1.0", features = ["consumer"] }
+br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "br-util-directory/v0.1.1", version = "0.1.1", features = ["consumer"] }
 # the identity side, which writes the roster:
-# br-util-directory = { git = "...", package = "br-util-directory", tag = "br-util-directory/v0.1.0", version = "0.1.0", features = ["publisher"] }
+# br-util-directory = { git = "...", package = "br-util-directory", tag = "br-util-directory/v0.1.1", version = "0.1.1", features = ["publisher"] }
 ```
 
 `default = []`: pick `consumer` (the `known_*` projection + readers),
