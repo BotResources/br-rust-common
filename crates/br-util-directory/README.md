@@ -77,8 +77,9 @@ trait DirectorySource {
 - **`migrate(pool)`** — creates `known_users` (incl. a `jsonb extensions`
   column), `known_groups`, the junction `known_user_group`, and
   `known_service_accounts` (`migrations/0001_known_directory.sql`). It keeps
-  its own ledger table `_br_directory_migrations`, never the importer's
-  `_sqlx_migrations`, so it runs beside any migration set of the importer, in
+  its own ledger table `_br_directory_migrations`; it never writes the
+  importer's `_sqlx_migrations` and reads it only to adopt a row written by
+  `0.1.0`, so it runs beside any migration set of the importer, in
   either order, and runs again without effect. Concurrent callers are
   serialised by one transaction-scoped advisory lock. A recorded migration
   whose checksum differs from the embedded one fails with
