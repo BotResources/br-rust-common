@@ -28,10 +28,10 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-core-auth` | core | `Passport` DTO, `X-Passport` header codec, PAT bearer-token contract | `0.1.0` | [CHANGELOG](crates/br-core-auth/CHANGELOG.md) |
 | `br-core-events` | core | Shared event envelopes (`EventMetadata`, `DomainEvent`) | `0.1.0` | [CHANGELOG](crates/br-core-events/CHANGELOG.md) |
 | `br-core-integration` | core | Transport-independent integration contracts: message coordinates, `IntegrationEvent`/`IntegrationCommand` envelopes, `MessageOutcome`, and the pure outbox state machine (no NATS, no DB) | `0.1.0` | [CHANGELOG](crates/br-core-integration/CHANGELOG.md) |
-| `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | `0.1.0` | [CHANGELOG](crates/br-core-scope/CHANGELOG.md) |
+| `br-core-scope` | core | Scope self-declaration contract types (`ScopeKey`, `ScopeDeclaration`, declare/accepted/rejected payloads) | `0.1.1` | [CHANGELOG](crates/br-core-scope/CHANGELOG.md) |
 | `br-core-values` | core | Universal value objects: `Localized<F, L>` text family + ISO `Money` / `Currency` / `CountryCode` | `0.1.0` | [CHANGELOG](crates/br-core-values/CHANGELOG.md) |
 | `br-core-directory` | core | Frozen read contract for the identity Published Language: `PublishedUser` / `PublishedGroup` directory entries, the `identity/_meta` manifest and the KV key conventions | `0.1.0` | [CHANGELOG](crates/br-core-directory/CHANGELOG.md) |
-| `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | `0.1.0` | [CHANGELOG](crates/br-scope-declaration-contract/CHANGELOG.md) |
+| `br-scope-declaration-contract` | core | Single source of the identity service-scope declaration wire coordinates (bc/aggregate/version/command + subject helpers), shared by `br-identity-app` and `br-util-scope-declaration` | `0.1.1` | [CHANGELOG](crates/br-scope-declaration-contract/CHANGELOG.md) |
 | `br-util-boot` | util | The boot environment of a service: the names it reads at boot (`ENVIRONMENT`, `PORT`, `HOST`, `DATABASE_URL`, `NATS_URL`) and `BootEnv`, one typed, validating reader that reports every problem at once and never logs a credential | `0.1.0` | [CHANGELOG](crates/br-util-boot/CHANGELOG.md) |
 | `br-util-postgres` | util | Postgres pools, TLS, app role, GRANTs; owns the names `DATABASE_URL_OWNER`, `TRUSTED_NETWORK_HOSTS` | `0.1.1` | [CHANGELOG](crates/br-util-postgres/CHANGELOG.md) |
 | `br-util-axum-auth` | util | Axum middleware that injects `Passport` from `X-Passport` | `0.1.0` | [CHANGELOG](crates/br-util-axum-auth/CHANGELOG.md) |
@@ -175,7 +175,7 @@ carries a `*` version requirement, which `cargo-deny` rejects):
 [dependencies]
 br-core-kernel = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-kernel", tag = "br-core-kernel/v0.1.0", version = "0.1.0" }
 br-core-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-directory", tag = "br-core-directory/v0.1.0", version = "0.1.0" }
-br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.0", version = "0.1.0" }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.1", version = "0.1.1" }
 br-core-values = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-values", tag = "br-core-values/v0.1.0", version = "0.1.0" }
 br-util-boot = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-boot", tag = "br-util-boot/v0.1.0", version = "0.1.0" }
 br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "br-util-axum-readiness/v0.1.0", version = "0.1.0" }
@@ -188,7 +188,7 @@ br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", pac
 br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "br-util-graphql/v0.1.0", version = "0.1.0", features = ["graphql"] }
 br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "br-core-integration/v0.1.0", version = "0.1.0" }
 br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "br-util-axum-auth/v0.1.0", version = "0.1.0" }
-br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.0", version = "0.1.0" }
+br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.1", version = "0.1.1" }
 br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0", features = ["outbox"] }
 br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "br-util-directory/v0.1.1", version = "0.1.1", features = ["consumer"] }
 br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.0", version = "0.1.0" }

@@ -5,17 +5,26 @@ use br_core_integration::{Aggregate, Bc, CommandCoords, CoordError, EventCoords,
 pub const BC: &str = "identity";
 pub const AGGREGATE: &str = "service_scope";
 pub const VERSION: u8 = 1;
+pub const VERSION_V2: u8 = 2;
 pub const COMMAND_NAME: &str = "declare";
 pub const ACCEPTED: &str = "accepted";
 pub const REJECTED: &str = "rejected";
 pub const UNREPRESENTABLE_SERVICE: &str = "unrepresentable_service";
 
 pub fn declare_command_coords() -> Result<CommandCoords, CoordError> {
+    command_coords(VERSION)
+}
+
+pub fn declare_v2_command_coords() -> Result<CommandCoords, CoordError> {
+    command_coords(VERSION_V2)
+}
+
+fn command_coords(version: u8) -> Result<CommandCoords, CoordError> {
     Ok(CommandCoords {
         receiver: Bc::new(BC)?,
         aggregate: Aggregate::new(AGGREGATE)?,
         verb: Verb::new(COMMAND_NAME)?,
-        version: VERSION,
+        version,
     })
 }
 
@@ -55,6 +64,17 @@ mod tests {
         assert_eq!(coords.aggregate.as_str(), "service_scope");
         assert_eq!(coords.verb.as_str(), "declare");
         assert_eq!(coords.version, 1);
+    }
+
+    #[test]
+    fn declare_v2_command_coords_differ_from_v1_by_the_version_only() {
+        let v1 = declare_command_coords().unwrap();
+        let v2 = declare_v2_command_coords().unwrap();
+        assert_eq!(v2.receiver, v1.receiver);
+        assert_eq!(v2.aggregate, v1.aggregate);
+        assert_eq!(v2.verb, v1.verb);
+        assert_eq!(v2.version, 2);
+        assert_eq!(v1.version, 1);
     }
 
     #[test]

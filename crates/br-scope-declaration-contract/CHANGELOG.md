@@ -9,6 +9,17 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.1.1
+
+### Added
+
+- `VERSION_V2` (`2`) and `declare_v2_command_coords()`: the coordinates of the v2 declare command, rendered by the Fabric as `integration.cmd.identity.service_scope.declare.v2`. It carries `br-core-scope`'s `DeclareServiceScopesV2` (scope implications, service-account-only scopes) and is answered on the existing `accepted.v1` / `rejected.v1` facts.
+
+### Unchanged
+
+- `VERSION`, `declare_command_coords()` and the event coordinates: the v1 command and the replies keep their subjects.
+- Dependency pin: `{ git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.1", version = "0.1.1" }`.
+
 ## 0.1.0
 
 ### Changed

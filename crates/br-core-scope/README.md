@@ -57,6 +57,22 @@ timestamps — those are `br-core-integration`'s `IntegrationCommand<T>` /
   the bus is auth-less behind a default-deny NetworkPolicy, so there is no
   authenticated principal to bind a declaration to — shipping such a check would
   be a false guarantee.
+- **Implications and service-account-only scopes (v2).** The v2 declaration
+  (`ScopeDeclarationV2`, carried by `DeclareServiceScopesV2` on
+  `…service_scope.declare.v2`) adds two fields per scope: `implies`, the keys of
+  other scopes **of the same declaration** that this scope implies, and
+  `service_accounts_only`, which restricts the scope to service accounts. Both
+  default (`[]`, `false`) on deserialization, so a minimal v2 payload parses.
+  `ScopeDeclarationV2::new` (and deserialization, and
+  `RawScopeDeclarationV2::validate`) keeps every v1 rule, then checks each
+  implied key: of another service → `ImpliedScopePrefixMismatch`; not declared
+  → `UnknownImpliedScope`; and finally the implication graph must be acyclic →
+  `ImplicationCycle { cycle }`, where `cycle` lists the keys along the cycle,
+  first key repeated at the end (`[a, a]` for a self-implication). The v1 types
+  and their wire bytes are unchanged; `ScopeDeclarationV2::from(ScopeDeclaration)`
+  lifts a v1 declaration with the defaults, so a receiver can handle both
+  versions on one path. What `service_accounts_only` means at grant time is the
+  receiver's policy, not this crate's.
 - **No `Deref`.** Like the kernel id types, the newtypes expose `as_str()` /
   `AsRef<str>`, never `Deref`, so every raw access is explicit.
 
@@ -70,9 +86,13 @@ timestamps — those are `br-core-integration`'s `IntegrationCommand<T>` /
 | `ServiceManifest` | The declaring service's card: `key: ServiceKey`, `label_key`, `description_key`. |
 | `ScopeDeclaration` | A manifest + its `ScopeSpec`s. `new` validates atomically (every scope owned by the manifest's service; no duplicate keys); deserialize re-runs it (fail closed, opaque serde error). Private fields, read via `manifest()` / `scopes()`. The validated type. |
 | `RawScopeDeclaration` | The receiver-side raw (unvalidated) wire form: `RawServiceManifest` + `Vec<RawScopeSpec>`, keys as plain `String`. Always deserializes from structurally-valid JSON; `validate()` → `Result<ScopeDeclaration, ScopeDeclarationError>` (the explicit step that yields the structured `InvalidScopeKey`). `From<&ScopeDeclaration>` / `From<ScopeDeclaration>` for the sender path; wire shape byte-identical to `ScopeDeclaration`. A boundary artifact, never a declaration. |
+| `ScopeSpecV2` | One v2 scope: the `ScopeSpec` fields plus `implies: Vec<ScopeKey>` and `service_accounts_only: bool` (both `#[serde(default)]`). `#[non_exhaustive]`: build with `new(key, label_key, description_key, platform_only)` then `with_implies(..)` / `with_service_accounts_only(..)`. `From<ScopeSpec>`. |
+| `ScopeDeclarationV2` | A manifest + its `ScopeSpecV2`s. `new` validates atomically: the v1 rules, then implied keys (same service, declared) and an acyclic implication graph; deserialize re-runs it. `manifest()` / `scopes()`. `From<ScopeDeclaration>` (defaults). |
+| `RawScopeDeclarationV2` / `RawScopeSpecV2` | The v2 receiver-side raw form (keys and implied keys as `String`, the two new fields defaulted). `validate()` → `Result<ScopeDeclarationV2, ScopeDeclarationError>`; a malformed implied key yields `InvalidScopeKey` with that key. `From<&ScopeDeclarationV2>` / `From<ScopeDeclarationV2>`; wire shape byte-identical to `ScopeDeclarationV2`. |
 | `KeyValidationError` | Why a key string is malformed: `Empty`, `TooLong { max, actual }`, `InvalidCharset`, `MalformedSegments`. `#[non_exhaustive]`; internally tagged on `validation`. |
-| `ScopeDeclarationError` | Shared rejection language: `InvalidScopeKey`, `ScopePrefixMismatch`, `DuplicateScopeInDeclaration`, `ScopeOwnedByAnotherService`. `#[non_exhaustive]`; internally tagged on `reason`; (de)serializes (it is the `ServiceScopesRejected` payload). |
+| `ScopeDeclarationError` | Shared rejection language: `InvalidScopeKey`, `ScopePrefixMismatch`, `DuplicateScopeInDeclaration`, `ScopeOwnedByAnotherService`, and for v2 `UnknownImpliedScope { key, implied }`, `ImpliedScopePrefixMismatch { key, implied, declaring_service }`, `ImplicationCycle { cycle }`. `#[non_exhaustive]`; internally tagged on `reason`; (de)serializes (it is the `ServiceScopesRejected` payload). |
 | `DeclareServiceScopes` | Command payload carrying the declaration in raw form (private). `new(ScopeDeclaration)` for the sender (validated-only); `validate()` → `Result<ScopeDeclaration, ScopeDeclarationError>` for the receiver; `raw()` for read-only inspection. Composed by a consumer as the `T` of an `IntegrationCommand`. |
+| `DeclareServiceScopesV2` | The v2 command payload, same shape as `DeclareServiceScopes` around a `RawScopeDeclarationV2`: `new(ScopeDeclarationV2)`, `validate()`, `raw()`. Its replies are the same `ServiceScopesAccepted` / `ServiceScopesRejected`. |
 | `ServiceScopesAccepted` | Accepted-event payload: `{ service: ServiceKey }`. Composed as the `T` of an `IntegrationEvent`. |
 | `ServiceScopesRejected` | Rejected-event payload: `{ service: ServiceKey, reason: ScopeDeclarationError }` (one reason; rejection is atomic). |
 
@@ -124,7 +144,7 @@ let payload = DeclareServiceScopes::new(declaration);
 
 ```toml
 [dependencies]
-br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.0", version = "0.1.0" }
+br-core-scope = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-scope", tag = "br-core-scope/v0.1.1", version = "0.1.1" }
 ```
 
 ---

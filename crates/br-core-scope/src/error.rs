@@ -32,6 +32,16 @@ pub enum ScopeDeclarationError {
     DuplicateScopeInDeclaration { key: String },
     #[error("scope_owned_by_another_service")]
     ScopeOwnedByAnotherService { key: String, owner: String },
+    #[error("unknown_implied_scope")]
+    UnknownImpliedScope { key: String, implied: String },
+    #[error("implied_scope_prefix_mismatch")]
+    ImpliedScopePrefixMismatch {
+        key: String,
+        implied: String,
+        declaring_service: String,
+    },
+    #[error("implication_cycle")]
+    ImplicationCycle { cycle: Vec<String> },
 }
 
 #[cfg(test)]
@@ -62,6 +72,63 @@ mod tests {
             owner: "other".to_string(),
         };
         assert_eq!(owned.to_string(), "scope_owned_by_another_service");
+    }
+
+    #[test]
+    fn implication_error_codes_are_stable_keys() {
+        let unknown = ScopeDeclarationError::UnknownImpliedScope {
+            key: "notifier:admin".to_string(),
+            implied: "notifier:ghost".to_string(),
+        };
+        assert_eq!(unknown.to_string(), "unknown_implied_scope");
+
+        let foreign = ScopeDeclarationError::ImpliedScopePrefixMismatch {
+            key: "notifier:admin".to_string(),
+            implied: "billing:read".to_string(),
+            declaring_service: "notifier".to_string(),
+        };
+        assert_eq!(foreign.to_string(), "implied_scope_prefix_mismatch");
+
+        let cycle = ScopeDeclarationError::ImplicationCycle {
+            cycle: vec!["notifier:a".to_string(), "notifier:a".to_string()],
+        };
+        assert_eq!(cycle.to_string(), "implication_cycle");
+    }
+
+    #[test]
+    fn implication_error_wire_shapes_are_tagged_on_reason() {
+        let unknown = serde_json::to_value(ScopeDeclarationError::UnknownImpliedScope {
+            key: "notifier:admin".to_string(),
+            implied: "notifier:ghost".to_string(),
+        })
+        .unwrap();
+        assert_eq!(unknown["reason"], "unknown_implied_scope");
+        assert_eq!(unknown["key"], "notifier:admin");
+        assert_eq!(unknown["implied"], "notifier:ghost");
+
+        let foreign = serde_json::to_value(ScopeDeclarationError::ImpliedScopePrefixMismatch {
+            key: "notifier:admin".to_string(),
+            implied: "billing:read".to_string(),
+            declaring_service: "notifier".to_string(),
+        })
+        .unwrap();
+        assert_eq!(foreign["reason"], "implied_scope_prefix_mismatch");
+        assert_eq!(foreign["implied"], "billing:read");
+        assert_eq!(foreign["declaring_service"], "notifier");
+
+        let cycle = serde_json::to_value(ScopeDeclarationError::ImplicationCycle {
+            cycle: vec![
+                "notifier:a".to_string(),
+                "notifier:b".to_string(),
+                "notifier:a".to_string(),
+            ],
+        })
+        .unwrap();
+        assert_eq!(cycle["reason"], "implication_cycle");
+        assert_eq!(
+            cycle["cycle"],
+            serde_json::json!(["notifier:a", "notifier:b", "notifier:a"])
+        );
     }
 
     #[test]
@@ -102,6 +169,18 @@ mod tests {
             ScopeDeclarationError::ScopeOwnedByAnotherService {
                 key: "notifier:read".to_string(),
                 owner: "other".to_string(),
+            },
+            ScopeDeclarationError::UnknownImpliedScope {
+                key: "notifier:admin".to_string(),
+                implied: "notifier:ghost".to_string(),
+            },
+            ScopeDeclarationError::ImpliedScopePrefixMismatch {
+                key: "notifier:admin".to_string(),
+                implied: "billing:read".to_string(),
+                declaring_service: "notifier".to_string(),
+            },
+            ScopeDeclarationError::ImplicationCycle {
+                cycle: vec!["notifier:a".to_string(), "notifier:a".to_string()],
             },
         ];
         for v in variants {
