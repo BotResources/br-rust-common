@@ -1,11 +1,13 @@
 use br_core_integration::{CommandCoords, EventCoords};
 use br_scope_declaration_contract::{
-    accepted_event_coords, command_type, declare_command_coords, rejected_event_coords,
+    accepted_event_coords, command_type, declare_command_coords, declare_v2_command_coords,
+    rejected_event_coords,
 };
 use br_util_nats_fabric::event_subject;
 
 pub(crate) struct DeclarationCoords {
     pub declare: CommandCoords,
+    pub declare_v2: CommandCoords,
     pub accepted: EventCoords,
     pub rejected: EventCoords,
     pub accepted_subject: String,
@@ -18,6 +20,7 @@ impl DeclarationCoords {
         let accepted_subject = event_subject(&accepted);
         Self {
             declare: declare_command_coords().expect("contract coordinates are valid"),
+            declare_v2: declare_v2_command_coords().expect("contract coordinates are valid"),
             accepted,
             rejected,
             accepted_subject,

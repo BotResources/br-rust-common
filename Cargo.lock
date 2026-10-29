@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "br-util-scope-declaration"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-nats",
  "br-core-integration",
@@ -598,6 +598,7 @@ dependencies = [
  "br-util-nats-fabric",
  "chrono",
  "futures-util",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

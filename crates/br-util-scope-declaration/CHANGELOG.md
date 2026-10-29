@@ -9,6 +9,21 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.1.1
+
+### Added
+
+- `declare_scopes_v2(fabric, ScopeDeclarationV2, readiness, config)`: the same handshake as `declare_scopes` for a declaration that carries scope implications (`implies`) or service-account-only scopes (`service_accounts_only`). It publishes `IntegrationCommand<DeclareServiceScopesV2>` (envelope `version` 2) on `integration.cmd.identity.service_scope.declare.v2` and awaits the same `accepted.v1` / `rejected.v1` confirmations, with the same readiness gating and the same outcome type. Identity must handle `declare.v2` before a service switches to it.
+
+### Unchanged
+
+- `declare_scopes` (v1): same subject, same payload, same behaviour.
+
+### Changed
+
+- Dependency pins: `br-core-scope` moves to `br-core-scope/v0.1.1` and `br-scope-declaration-contract` to `br-scope-declaration-contract/v0.1.1` (they carry the v2 types and coordinates). `serde` is a new direct dependency.
+- Dependency pin: `{ git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.1", version = "0.1.1" }`.
+
 ## 0.1.0
 
 ### Changed

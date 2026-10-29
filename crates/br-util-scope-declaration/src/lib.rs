@@ -8,5 +8,5 @@ mod subjects;
 
 pub use actor::declaring_actor;
 pub use config::ScopeDeclarationConfig;
-pub use handshake::declare_scopes;
+pub use handshake::{declare_scopes, declare_scopes_v2};
 pub use outcome::ScopeDeclarationOutcome;

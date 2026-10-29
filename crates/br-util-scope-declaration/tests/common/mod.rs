@@ -3,8 +3,8 @@
 use br_core_integration::{EventMetadata, IntegrationEvent};
 use br_core_kernel::{Actor, UserId};
 use br_core_scope::{
-    ScopeDeclaration, ScopeKey, ScopeSpec, ServiceKey, ServiceManifest, ServiceScopesAccepted,
-    ServiceScopesRejected,
+    ScopeDeclaration, ScopeDeclarationV2, ScopeKey, ScopeSpec, ScopeSpecV2, ServiceKey,
+    ServiceManifest, ServiceScopesAccepted, ServiceScopesRejected,
 };
 use br_scope_declaration_contract::{accepted_event_coords, rejected_event_coords};
 use br_util_nats_fabric::{Fabric, INTEGRATION_CMD, INTEGRATION_EVT};
@@ -13,6 +13,7 @@ use futures_util::StreamExt;
 use uuid::Uuid;
 
 pub const DECLARE_SUBJECT: &str = "integration.cmd.identity.service_scope.declare.v1";
+pub const DECLARE_V2_SUBJECT: &str = "integration.cmd.identity.service_scope.declare.v2";
 
 pub fn require_nats_url() -> String {
     std::env::var("NATS_URL").expect("NATS_URL is required for this ignored suite")
@@ -40,6 +41,33 @@ pub fn notifier_declaration() -> ScopeDeclaration {
             "desc.read",
             false,
         )],
+    )
+    .unwrap()
+}
+
+pub fn notifier_declaration_v2() -> ScopeDeclarationV2 {
+    ScopeDeclarationV2::new(
+        ServiceManifest::new(
+            ServiceKey::new("notifier").unwrap(),
+            "label.notifier",
+            "desc.notifier",
+        ),
+        vec![
+            ScopeSpecV2::new(
+                ScopeKey::new("notifier:read").unwrap(),
+                "label.read",
+                "desc.read",
+                false,
+            ),
+            ScopeSpecV2::new(
+                ScopeKey::new("notifier:send").unwrap(),
+                "label.send",
+                "desc.send",
+                false,
+            )
+            .with_implies([ScopeKey::new("notifier:read").unwrap()])
+            .with_service_accounts_only(true),
+        ],
     )
     .unwrap()
 }
@@ -79,6 +107,7 @@ pub async fn teardown(js: &async_nats::jetstream::Context) {
 pub enum StubReply {
     Accept,
     Reject,
+    RejectCycle,
 }
 
 pub struct StubReceiver {
@@ -97,12 +126,28 @@ impl StubReceiver {
         reply: StubReply,
         duplicates: usize,
     ) -> Self {
-        let mut messages = declare_consumer(js).await;
+        Self::spawn_on(js, DECLARE_SUBJECT, reply, duplicates, None).await
+    }
+
+    pub async fn spawn_on(
+        js: &async_nats::jetstream::Context,
+        subject: &str,
+        reply: StubReply,
+        duplicates: usize,
+        received: Option<tokio::sync::mpsc::UnboundedSender<serde_json::Value>>,
+    ) -> Self {
+        let mut messages = declare_consumer_on(js, subject).await;
         let fabric = Fabric::new(js.clone());
         let duplicates = duplicates.max(1);
 
         let handle = tokio::spawn(async move {
             while let Some(Ok(msg)) = messages.next().await {
+                if let (Some(tx), Ok(body)) = (
+                    received.as_ref(),
+                    serde_json::from_slice::<serde_json::Value>(&msg.payload),
+                ) {
+                    let _ = tx.send(body);
+                }
                 let Some(correlation_id) = correlation_of(&msg.payload) else {
                     continue;
                 };
@@ -142,6 +187,13 @@ pub async fn spawn_delayed_accept_stub(
 async fn declare_consumer(
     js: &async_nats::jetstream::Context,
 ) -> async_nats::jetstream::consumer::pull::Stream {
+    declare_consumer_on(js, DECLARE_SUBJECT).await
+}
+
+async fn declare_consumer_on(
+    js: &async_nats::jetstream::Context,
+    subject: &str,
+) -> async_nats::jetstream::consumer::pull::Stream {
     let stream = js
         .get_stream(INTEGRATION_CMD)
         .await
@@ -151,7 +203,7 @@ async fn declare_consumer(
             durable_name: None,
             deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
             ack_policy: async_nats::jetstream::consumer::AckPolicy::None,
-            filter_subject: DECLARE_SUBJECT.to_string(),
+            filter_subject: subject.to_string(),
             ..Default::default()
         })
         .await
@@ -171,6 +223,12 @@ async fn publish_reply(fabric: &Fabric, reply: StubReply, correlation_id: Uuid) 
             let coords = rejected_event_coords().unwrap();
             let _ = fabric
                 .publish_event(&coords, &rejected_event(correlation_id))
+                .await;
+        }
+        StubReply::RejectCycle => {
+            let coords = rejected_event_coords().unwrap();
+            let _ = fabric
+                .publish_event(&coords, &rejected_cycle_event(correlation_id))
                 .await;
         }
     }
@@ -218,6 +276,22 @@ fn rejected_event(correlation_id: Uuid) -> IntegrationEvent<ServiceScopesRejecte
             br_core_scope::ScopeDeclarationError::ScopeOwnedByAnotherService {
                 key: "notifier:read".to_string(),
                 owner: "billing".to_string(),
+            },
+        ),
+    )
+}
+
+fn rejected_cycle_event(correlation_id: Uuid) -> IntegrationEvent<ServiceScopesRejected> {
+    IntegrationEvent::new(
+        Uuid::now_v7(),
+        "service_scope.rejected",
+        1,
+        Utc::now(),
+        metadata(correlation_id),
+        ServiceScopesRejected::new(
+            ServiceKey::new("notifier").unwrap(),
+            br_core_scope::ScopeDeclarationError::ImplicationCycle {
+                cycle: vec!["notifier:send".to_string(), "notifier:send".to_string()],
             },
         ),
     )

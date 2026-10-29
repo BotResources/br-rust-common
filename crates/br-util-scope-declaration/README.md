@@ -45,6 +45,43 @@ match declare_scopes(
 # }
 ```
 
+## Declaring implications and service-account-only scopes (v2)
+
+A service whose scopes imply one another, or that owns scopes only service
+accounts may hold, builds a `br_core_scope::ScopeDeclarationV2` and calls
+`declare_scopes_v2` instead — same arguments, same outcome, same readiness
+gating:
+
+```rust,no_run
+use br_core_scope::{ScopeDeclarationV2, ScopeKey, ScopeSpecV2, ServiceKey, ServiceManifest};
+use br_util_axum_readiness::ReadinessHandle;
+use br_util_nats_fabric::Fabric;
+use br_util_scope_declaration::{declare_scopes_v2, ScopeDeclarationConfig};
+
+# async fn boot(fabric: Fabric, readiness: ReadinessHandle) -> Result<(), Box<dyn std::error::Error>> {
+let declaration = ScopeDeclarationV2::new(
+    ServiceManifest::new(ServiceKey::new("notifier")?, "label.notifier", "desc.notifier"),
+    vec![
+        ScopeSpecV2::new(ScopeKey::new("notifier:read")?, "label.read", "desc.read", false),
+        ScopeSpecV2::new(ScopeKey::new("notifier:send")?, "label.send", "desc.send", false)
+            .with_implies([ScopeKey::new("notifier:read")?])
+            .with_service_accounts_only(true),
+    ],
+)?; // implied keys must be declared here, of this service, with no cycle
+let _outcome = declare_scopes_v2(&fabric, declaration, readiness, ScopeDeclarationConfig::enabled()).await?;
+# Ok(())
+# }
+```
+
+`declare_scopes_v2` publishes `IntegrationCommand<DeclareServiceScopesV2>`
+(envelope `version` 2) on `integration.cmd.identity.service_scope.declare.v2`
+and awaits the same `accepted.v1` / `rejected.v1` confirmations; a rejection
+may carry the v2 reasons (`unknown_implied_scope`,
+`implied_scope_prefix_mismatch`, `implication_cycle`). Identity must handle
+`declare.v2` before a service switches to it: on an Identity that does not, the
+command is never confirmed and readiness stays DOWN. `declare_scopes` (v1) is
+unchanged.
+
 ## The handshake protocol
 
 `declare_scopes` implements **subscribe-first / re-publish-on-timeout**:
@@ -124,11 +161,11 @@ check in the contract.
 
 ## Install
 
-`br-util-scope-declaration/v0.1.0` pins `br-core-integration/v0.1.0`, `br-core-scope/v0.1.0`, `br-scope-declaration-contract/v0.1.0`, `br-util-axum-readiness/v0.1.0` and `br-util-nats-fabric/v0.1.0`. It names `Fabric` and `FabricError` (`br-util-nats-fabric`), `ScopeDeclaration`, `ServiceKey` and `ServiceScopesRejected` (`br-core-scope`) and `ReadinessHandle` (`br-util-axum-readiness`), and returns `Actor`, `br-core-kernel`'s type. Take those siblings, `br-core-events` and `br-core-kernel` at their `0.1.0` tags in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a value across fails to compile (E0308).
+`br-util-scope-declaration/v0.1.1` pins `br-core-integration/v0.1.0`, `br-core-scope/v0.1.1`, `br-scope-declaration-contract/v0.1.1`, `br-util-axum-readiness/v0.1.0` and `br-util-nats-fabric/v0.1.0`. It names `Fabric` and `FabricError` (`br-util-nats-fabric`), `ScopeDeclaration`, `ScopeDeclarationV2`, `ServiceKey` and `ServiceScopesRejected` (`br-core-scope`) and `ReadinessHandle` (`br-util-axum-readiness`), and returns `Actor`, `br-core-kernel`'s type. Take those siblings, `br-core-events` and `br-core-kernel` at the tags above in the same service: any of them at another tag (such as `v1.4.0`) holds a second copy of the type, and passing a value across fails to compile (E0308).
 
 ```toml
 [dependencies]
-br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.0", version = "0.1.0" }
+br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.1", version = "0.1.1" }
 ```
 
 ---

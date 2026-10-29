@@ -41,7 +41,7 @@ Small, reusable Rust crates for [BotResources](https://botresources.ai) services
 | `br-util-nats-fabric` | util | The Project NATS Fabric API: coordinate-only publish/consume/await over the fixed `integration.…` subject grammar, the KV published-language projection, and the Postgres transactional outbox (store + subscribe-driven relay) | `0.1.0` | [CHANGELOG](crates/br-util-nats-fabric/CHANGELOG.md) |
 | `br-util-directory` | util | Publisher and consumer kit for the identity Published Language over the NATS Fabric: reconcile and orphan-delete (publisher), KV to Postgres projector over the `known_*` tables (consumer) | `0.1.1` | [CHANGELOG](crates/br-util-directory/CHANGELOG.md) |
 | `br-util-observability` | util | Boot-time observability: structured JSON logging, an always-200 liveness route on `LIVENESS_PATH` (`/livez`), the Prometheus exposition on `METRICS_PATH` (`/metrics`) | `0.1.0` | [CHANGELOG](crates/br-util-observability/CHANGELOG.md) |
-| `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | `0.1.0` | [CHANGELOG](crates/br-util-scope-declaration/CHANGELOG.md) |
+| `br-util-scope-declaration` | util | Boot-time scope-declaration handshake helper (declare scopes to Identity, gate readiness on the confirmation) | `0.1.1` | [CHANGELOG](crates/br-util-scope-declaration/CHANGELOG.md) |
 | `br-identity-domain` | bc | Identity bounded context, pure domain — scope-registration slice (`ScopeRegistry` aggregate, commands, events) | `0.1.0` | [CHANGELOG](crates/br-identity-domain/CHANGELOG.md) |
 | `br-identity-app` | bc | Identity bounded context, application/adapter half — scope-registration slice (Postgres persistence, durable NATS consumer, `load → judge → save → dispatch` pipeline, confirmations) | `0.1.0` | [CHANGELOG](crates/br-identity-app/CHANGELOG.md) |
 | `br-test-support` | dev | Dev-only shared Postgres e2e test helpers (role/pool/name primitives); a path dev-dependency, never a normal dependency | not released | - |
@@ -109,7 +109,7 @@ The three crates built on the others name these types, checked against `cargo pu
 with E0308 where a value of one copy crosses to the other:
 
 - `br-util-directory` names `PublishedUser`, `PublishedGroup`, `PublishedServiceAccount` and `DirectoryMeta` (`br-core-directory`); `Fabric`, `FabricError`, `KvKeyError`, `ProjectionError` and `WatchHealthReceiver` (`br-util-nats-fabric`). It also depends on `br-util-postgres` behind its `consumer` feature, with no `br-util-postgres` type in its API.
-- `br-util-scope-declaration` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `ScopeDeclaration`, `ServiceKey` and `ServiceScopesRejected` (`br-core-scope`); `ReadinessHandle` (`br-util-axum-readiness`); and returns `Actor`, which is `br-core-kernel`'s type (`br-core-integration` and `br-core-events` re-export it).
+- `br-util-scope-declaration` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `ScopeDeclaration`, `ScopeDeclarationV2`, `ServiceKey` and `ServiceScopesRejected` (`br-core-scope`); `ReadinessHandle` (`br-util-axum-readiness`); and returns `Actor`, which is `br-core-kernel`'s type (`br-core-integration` and `br-core-events` re-export it).
 - `br-identity-app` names `Fabric` and `FabricError` (`br-util-nats-fabric`); `IntegrationCommand` and `CommandCoords` (`br-core-integration`); `ServiceKey`, `DeclareServiceScopes` and `ScopeDeclarationError` (`br-core-scope`); `ScopeRegistry`, `DeclarationOutcome` and `RegistryHydrationError` (`br-identity-domain`). For example `br-identity-app/v0.1.0` with `br-core-scope` at `v1.4.0` fails to compile.
 
 They move with those crates, and the crates those carry types through (`br-core-integration` re-exports from `br-core-events`, which re-exports from `br-core-kernel`).
@@ -191,7 +191,7 @@ br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", pa
 br-scope-declaration-contract = { git = "https://github.com/BotResources/br-rust-common", package = "br-scope-declaration-contract", tag = "br-scope-declaration-contract/v0.1.1", version = "0.1.1" }
 br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "br-util-nats-fabric/v0.1.0", version = "0.1.0", features = ["outbox"] }
 br-util-directory = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-directory", tag = "br-util-directory/v0.1.1", version = "0.1.1", features = ["consumer"] }
-br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.0", version = "0.1.0" }
+br-util-scope-declaration = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-scope-declaration", tag = "br-util-scope-declaration/v0.1.1", version = "0.1.1" }
 br-identity-app = { git = "https://github.com/BotResources/br-rust-common", package = "br-identity-app", tag = "br-identity-app/v0.1.0", version = "0.1.0" }
 ```
 
