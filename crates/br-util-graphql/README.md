@@ -121,9 +121,9 @@ a rejected user value can never turn into a panic.
 ## Fallible value-object wrappers (`values`)
 
 `TryFrom` / seam conversions over [`br-core-values`](../br-core-values/README.md)
-that **fail with a typed code, never silently coerce** — the deliberate inverse
-of the Hanshow seed (which coerced unknown locales to the default, accepted
-missing primary content, and truncated `Money` i64→i32):
+that **fail with a typed code, never silently coerce**: an unknown locale is
+never coerced to the default, missing primary content is never accepted, and
+`Money` is never truncated i64→i32:
 
 | Wrapper | Conversion | Fails with |
 |---|---|---|
